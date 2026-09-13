@@ -4,6 +4,7 @@
 import { log } from '../core/log.js'
 import { write3MFProject, writeSTL } from '../core/write_3mf.js'
 import { assertUniformTechnology, assertHomogeneousBeds } from '../core/plate_settings.js'
+import { DEFAULT_BED } from '../core/viewer_defaults.js'
 
 // The kernel is not guaranteed to answer (an old build has no selector_export_paint binding, and a worker that is
 //  busy slicing replies late), so the wait is bounded. On timeout the save proceeds with whatever painting was
@@ -131,8 +132,8 @@ export function makeExportActions(deps) {
       const bytes = await write3MFProject(objects, settingsRef.current, {
         paintExport: exported,
         paintKind: getWorker?.()?.__paintImportKind === 'supports' ? 'supports' : 'color',
-        bedWidth: bedRef.current?.bedW ?? 200,
-        bedDepth: bedRef.current?.bedD ?? 200,
+        bedWidth: bedRef.current?.bedW ?? DEFAULT_BED.width,
+        bedDepth: bedRef.current?.bedD ?? DEFAULT_BED.depth,
         plateCount: plateCountRef.current ?? 1,
       })
       // Same [vp-prof] channel the model load uses — the three stages have very different cost profiles (the
