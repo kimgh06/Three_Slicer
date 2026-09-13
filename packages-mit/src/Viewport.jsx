@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw } from 'three-slicer-viewer/settings'
 import ShadowHost from './shadow_host.jsx'
-import { useSliceRequest } from './use_slice_request.js'
+import { useSliceRequest, useAutoSlice } from './use_slice_request.js'
 import { useStaleSlice } from './use_stale_slice.js'
 import { useInitialFiles } from './use_initial_files.js'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
@@ -20,7 +20,7 @@ import { useThreeScene } from './scene/use_three_scene.js'
 import {
   makeToolpathView, useNoopSlicer, makeSupportPaint, MAX_PAINT_EXTRUDERS,
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
-  makeFilamentColors, DEFAULT_FILAMENT_COLORS,
+  makeFilamentColors, DEFAULT_FILAMENT_COLORS, makePreviewControls,
 } from './actions/index.js'
 import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
@@ -33,6 +33,8 @@ import {
   TopBar, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, TowerCard, writeTowerPosition,
 } from './ui/index.js'
+import { DEFAULT_BED, DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
+import { THEME_CSS } from './core/theme.js'
 
 // 3D viewport + browser-only slicing (WASM, track C stage 4).
 //  - Slice parameters are derived from the right-hand editor panel values (deriveKernelParams) — no duplicate form.
@@ -116,7 +118,7 @@ export default function Viewport({
   const keyRef = useRef(null)          // shortcut handler (component scope — captures the latest state). The effect only forwards.
   const clipboardRef = useRef(null)    // in-app copy buffer (object snapshot) — the OS clipboard is not used
   const canvasModeRef = useRef('prepare')  // S2: interaction gating (gizmo/painting disabled in preview)
-  const lineWidthRef = useRef(0.42)    // line_width of the last slice (default width; layer height is derived from the z increment by buildSegmentData)
+  const lineWidthRef = useRef(DEFAULT_LINE_WIDTH)    // line_width of the last slice (default width; layer height is derived from the z increment by buildSegmentData)
   // Stage 20: manual support painting (enforcer/blocker), extended to material painting (paint a region onto
   //  another extruder). One mode variable, because one facet carries one selector state — see support_paint.js.
   const paintModeRef = useRef('off')   // 'off' | 'enforcer' | 'blocker' | 'material'
@@ -295,7 +297,7 @@ export default function Viewport({
   //  effects and callbacks that would otherwise see the render they were created in.
   const frameOf = (plate) => plateContext(settingsRef.current, plateSettingsRef.current, plate, DIMS)
   // The global frame in ref form for the 3mf writer's plate stride (uniform by construction — mixed beds are refused).
-  const bedRef = useRef({ bedW: 200, bedD: 200, bedH: 0 })
+  const bedRef = useRef({ bedW: DEFAULT_BED.width, bedD: DEFAULT_BED.depth, bedH: 0 })
   bedRef.current = { bedW: globalFrame.bedW, bedD: globalFrame.bedD, bedH: globalFrame.bedH }
   // checkBed rides along because the bed can change WITHOUT anything moving — a printer pick, or the FFF->SLA
   //  switch (the resin display is a fraction of a filament bed); a stale null here hid the over-bed state until
@@ -383,46 +385,26 @@ export default function Viewport({
   })
   selectPlateRef.current = selectPlate
 
-  // Adopt an imported project's filament list. This has to run BEFORE the per-object extruder assignment: a real
-  //  MakerWorld project routinely uses six or eight of them, and setObjectExtruder colours an object by looking its
-  //  extruder up in this array — with the default two cards, every object above T2 would stay T1-coloured and the
-  //  filament panel would not show the materials the project actually names.
-  const applyProjectFilaments = (colors) => {
-    const next = colors.slice(0, MAX_PAINT_EXTRUDERS)
-    if (!next.length) return
-    setExtruderColors(next)
-    apiRef.current?.recolorObjects()
-    applyViewColors()
-  }
-
-  // Grow the bed to the plate count an imported 3mf project needs, then let it place its objects. setPlates is
-  //  called directly as well as through setPlateCount because it writes plateCountRef and plateBWRef/plateBDRef
-  //  SYNCHRONOUSLY, and those are what the plate origins are computed from — going through React state alone would
-  //  place every object against the OLD grid and let the effect below re-lay the plates underneath them.
-  // The bed must come from the PROJECT, not from `kp`: kp is derived from the settings of the render this callback
-  //  was created in, and setSettings has not landed yet. Getting that wrong is not a rounding error — the default
-  //  bed is 200mm and a Bambu project is 256mm, so the grid step moved 240 -> 296 right after placement and every
-  //  plate past the first drifted by 56mm per column (plate 2 by 112mm), which is exactly what it looked like.
-  const applyProjectPlates = (needed, bedWidth, bedDepth, place) => {
-    const n = Math.min(MAX_PLATES, Math.max(plateCountRef.current, needed))
-    const width = bedWidth > 0 ? bedWidth : globalFrame.bedW
-    const depth = bedDepth > 0 ? bedDepth : globalFrame.bedD
-    apiRef.current?.setPlates(n, width, depth, selectedPlateRef.current)
-    setPlateCount(n)
-    place(n)
-  }
-
   // Presets before model loading: loadFiles routes preset extensions to loadPresetFile, so the reader has to
   //  exist first. (The file side of the printer card; also reached by drop and the `files` prop.)
   const { exportPrinterPreset, loadPresetFile, openPresetPicker } = makePresetActions({
     ...wiring, onExport, settingsRef: settingsForPresetRef, fileInputRef: presetInputRef,
   })
 
+  // The filament palette (actions/filament_colors.js) — it also mirrors every change into `filament_colour`,
+  //  which is the settings key the panel edits and a 3mf save writes. Built before the model loader because a
+  //  project import adopts its filament list through `replaceAll`, and that has to run BEFORE the per-object
+  //  extruder assignment: setObjectExtruder colours an object by looking its extruder up in this list, so with the
+  //  default two cards every object above T2 would stay T1-coloured.
+  const { setExtColor, addFilament, removeFilament, replaceAll: applyProjectFilaments } = makeFilamentColors({
+    ...wiring, setExtruderColors, refreshObjects, applyViewColors, selectFilament,
+  })
+
   // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker, drag-and-drop
   //  and the `files` prop ----
   const { loadFiles, onFiles, removeObject, onDrop, onDragOver, onDragLeave } = makeModelLoad({
-    ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectPlates, applyProjectFilaments, importSl1, loadPresetFile,
-    selectedPlateRef, disposePlateToolpath,
+    ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectFilaments, importSl1, loadPresetFile,
+    selectedPlateRef, disposePlateToolpath, bedRef,
   })
 
   // Initial content (the `files` prop): mount-only import + a warning on a later change (use_initial_files.js).
@@ -437,24 +419,8 @@ export default function Viewport({
     ...wiring, onExport, getWorker, settingsRef, plateSettingsRef, bedRef,
   })
 
-  // G004: auto re-slice — 0.8s debounce after a settings or model change, for the current plate.
-  //  If a slice is running it is canceled (G002) and the re-slice waits for it to finish. Thanks to incremental slicing (G003) it usually just re-runs emit (~1s).
-  //  The first slice used to stay manual (it required a cached plate result). That gate is gone because it made
-  //  autoSlice unusable without the slice bar: a host that hides the panels has no other way to start one, so
-  //  "auto" that cannot perform the first slice is just off. Turning it on with a model loaded now slices.
-  useEffect(() => {
-    // An injected plate (G-code or .sl1) is not ours to overwrite. The sl1 half matters more than it looks: its
-    //  import writes the archive's own settings through setSettings, which is exactly what wakes this debounce —
-    //  without the guard the injection would trigger the slice that erases it.
-    if (!autoSlice || !objects.length || gcode != null || sl1 != null) return
-    clearTimeout(autoTimerRef.current)
-    const fire = () => {
-      if (pendingSliceRef.current) { cancelSlice(); autoTimerRef.current = setTimeout(fire, 300); return }
-      onSlice('current')
-    }
-    autoTimerRef.current = setTimeout(fire, 800)
-    return () => clearTimeout(autoTimerRef.current)
-  }, [settings, plateSettings, autoSlice, objects.length])   // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto re-slice after a settings or model change (use_slice_request.js has the debounce and the guards).
+  useAutoSlice({ autoSlice, settings, plateSettings, objectCount: objects.length, gcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
 
   // The host's Slice button — an identity change on the prop requests one slice (use_slice_request.js).
   useSliceRequest({ sliceRequest, objectCount: objects.length, gcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
@@ -486,31 +452,10 @@ export default function Viewport({
   }
   function setObjExtruder(id, e) { recordHistoryRef.current?.(); apiRef.current?.setObjectExtruder(id, e); setObjects(objectRows(objectsRef.current, apiRef.current)) }
 
-  // Stage 25 S6: dual slider (lo/hi) — in single-layer mode both thumbs move together.
-  function setRange(lo, hi) {
-    const max = Math.max(0, layerCount - 1)
-    lo = Math.max(0, Math.min(max, lo)); hi = Math.max(0, Math.min(max, hi))
-    if (lo > hi) { const t = lo; lo = hi; hi = t }
-    setLayerLo(lo); setLayerHi(hi); applyLayerRange()
-    // A resin preview is solid meshes, so the slider becomes a section cut: clip below the lower layer's
-    //  bottom and above the upper layer's top. Fully-open ends pass null (no plane on that side).
-    const L = layersDataRef.current
-    const slaRes = plateResultsRef.current[selectedPlateRef.current]
-    if (L && slaRes?.stats?.sla) {
-      // Until an imported SL1's mesh is reconstructed, the slider shows ONE mask (the upper thumb) instead of
-      //  a section cut; once r.modelIndexed exists the solid path's clipping takes over like any sliced result.
-      if (slaRes.slaRaster && !slaRes.modelIndexed && !slaRes.modelSTL) apiRef.current?.setSlaRasterLayer?.(hi)
-      else apiRef.current?.setSlaClip?.(lo <= 0 ? null : (L[lo - 1]?.z ?? null),
-                                        hi >= L.length - 1 ? null : (L[hi]?.z ?? null))
-    }
-  }
-  function onLo(e) { const v = parseInt(e.target.value, 10); if (singleLayer) setRange(v, v); else setRange(v, layerHiRef.current) }
-  function onHi(e) { const v = parseInt(e.target.value, 10); if (singleLayer) setRange(v, v); else setRange(layerLoRef.current, v) }
-  function toggleSingle() {
-    const next = !singleLayer; setSingleLayer(next)
-    if (next) setRange(layerHiRef.current, layerHiRef.current)   // single layer = the upper-bound layer only
-  }
-  function onViewType(e) { setViewType(e.target.value); applyViewColors() }
+  // The preview card's controls — the dual layer slider, single-layer mode, the view type, travel (actions/preview_controls.js).
+  const { setRange, onLo, onHi, toggleSingle, onViewType, onToggleTravel } = makePreviewControls({
+    ...wiring, layerCount, singleLayer, setSingleLayer, setViewType, setShowTravel, applyLayerRange, applyViewColors,
+  })
   // A multi-tool slice landing on the Feature type view paints walls orange and infill blue — which reads as "my
   //  filaments are gone", when the data has them (measured complaint: painted model, by-tool split present, screen
   //  all orange). Land on the Filament view instead. Only from the untouched default: a view the user picked stays.
@@ -522,7 +467,6 @@ export default function Viewport({
       setViewType('filament'); applyViewColors()
     }
   }, [stats])   // eslint-disable-line react-hooks/exhaustive-deps
-  function onToggleTravel(e) { const v = e.target.checked; setShowTravel(v); for (const p of Object.values(plateTpRef.current)) p.ctl.setTravelVisible(v) }
   // Plate-scoped support state for the Objects card (core/support_settings.js — reads the selected plate's
   //  effective map, writes its override; overhang shading below uses the same threshold the kernel slices with).
   const { writePlateKey, onToggleSupport, supportOn, supportOnOf, supportStyles, supportStyle,
@@ -561,11 +505,6 @@ export default function Viewport({
     e.preventDefault(); e.stopPropagation()
     travelHistory(direction)
   }
-  // The filament palette (actions/filament_colors.js) — it also mirrors every change into `filament_colour`,
-  //  which is the settings key the panel edits and a 3mf save writes.
-  const { setExtColor, addFilament, removeFilament } = makeFilamentColors({
-    ...wiring, setExtruderColors, refreshObjects, applyViewColors, selectFilament,
-  })
   function toggleObjVisible(id) { recordHistoryRef.current?.(); const o = objectsRef.current.find(x => x.id === id); apiRef.current?.setObjectVisible(id, !(o?.visible !== false)); refreshObjects() }
   // Both brushes take the pointer away from the gizmos, so the rail/object-card toggle reads "a brush is active"
   //  rather than "the support brush is active": while material painting, the move gizmo must not look selected.
@@ -657,7 +596,7 @@ export default function Viewport({
       moveScrub={!stats?.sla && showPanel('moveBar') ? moveScrub : null} />
   )
   // The per-tool filament split and the purge total are kernel stats of the focused plate's cached result
-  //  (`filament_mm_by_tool` / `filament_mm_purge` — the names wasm-core/test.mjs asserts). The `stats` state was
+  //  (`filament_mm_by_tool` / `filament_mm_purge` — the names wasm-core/tests/test.mjs asserts). The `stats` state was
   //  reduced in use_slicer/plate_actions before those fields existed, so they are picked up from the raw result here
   //  instead of reshaping that reduction. A kernel that reports neither leaves both undefined, and StatsCard then
   //  renders exactly the single Filament line it always has.
@@ -685,7 +624,7 @@ export default function Viewport({
   const EXT_LABEL = PICKER_EXT.map(e => e.toUpperCase()).join(' · ')
 
   return (
-    <ShadowHost css={shadowCss}>
+    <ShadowHost css={THEME_CSS + shadowCss}>
     {/* Ctrl+Z is bound HERE, on the component's own root, not on window like the other shortcuts. It is the one
         shortcut a host application is likely to own as well (text fields, its own editor), so it must not leak out
         of the viewer — an element listener only fires when focus is inside, which is exactly the rule wanted. The
@@ -864,10 +803,7 @@ export default function Viewport({
               {/* (3) Process (settings panel) — ProcessCard.jsx holds the per-plate scope toggle/projection. */}
               {showPanel('processCard') && (
                 <Panel panels={panels} name="processCard">
-                <ProcessCard processPanel={processPanel} settings={settings} setSettings={setSettings}
-                  plateSettings={plateSettings} setPlateSettings={setPlateSettings}
-                  plateCount={plateCount} selectedPlate={selectedPlate}
-                  settingsScope={settingsScope} setSettingsScope={setSettingsScope} />
+                <ProcessCard processPanel={processPanel} settings={settings} setSettings={setSettings} {...scopeProps} />
                 </Panel>
 )}
             </div>
