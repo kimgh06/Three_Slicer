@@ -6,6 +6,7 @@
 // The XML is read with regexes: vertex/triangle/component/item in 3mf are all attribute-only self-closing tags and
 //  objects do not nest, so no scanner is needed. With no DOMParser dependency it is testable under node as-is.
 import { unzipSync, unzip } from 'three/examples/jsm/libs/fflate.module.js'
+import { SLA_POINT_RADIUS } from './viewer_defaults.js'
 
 // Decompression is the single largest fixed cost of reading a project (measured on a 52MB / 315MB-inflated
 //  MakerWorld file: ~600ms of a 2.0s parse), and it is embarrassingly parallel — 18 independent .model parts.
@@ -266,7 +267,7 @@ function readProject(files, dec) {
   }
   project.sla.supportPoints = parseSlaRecords(text('Metadata/Slic3r_PE_sla_support_points.txt'), 'support_points',
     version => version === 0 ? 3 : version === 1 ? 5 : 0, project.sla.issues, (values, version) => ({
-      position: values.slice(0, 3), radius: version === 0 ? 0.4 : values[3],
+      position: values.slice(0, 3), radius: version === 0 ? SLA_POINT_RADIUS : values[3],
       type: version === 0 || values[4] === 2 ? 'manual' : values[4] === 1 ? 'island' : 'slope',
     }))
   project.sla.drainHoles = parseSlaRecords(text('Metadata/Slic3r_PE_sla_drain_holes.txt'), 'drain_holes',
