@@ -3,6 +3,7 @@ import { parseGcode } from 'three-slicer-viewer/gcode'
 import { platePosition } from './core/plate_layout.js'
 import { asSl1File } from './core/sl1_read.js'
 import { log } from './core/log.js'
+import { DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
 
 // The two injection props, `gcode` and `sl1`: an artifact rendered on the selected plate WITHOUT running the
 // kernel. They are one contract with two file formats, so they live together — and one plate holds one artifact,
@@ -30,7 +31,7 @@ function useGcodeInjection(gcode, deps) {
       //  the global corner — refine with that plate's dims if hosts actually combine the two features).
       const origin = apiRef?.current?.platePos?.(idx) ?? platePosition(idx, plateCountRef.current, bw, bd)
       plateOffsetsRef.current[idx] = { offX: origin.x - bw / 2, offZ: origin.z + bd / 2 }
-      lineWidthRef.current = kp.line_width || 0.42
+      lineWidthRef.current = kp.line_width || DEFAULT_LINE_WIDTH
       plateResultsRef.current[idx] = { stats: parsed.stats, layers: parsed.layers, gcode: String(gcode) }
       refreshSlicedCount()
       setError(''); setSliceNotice('')
