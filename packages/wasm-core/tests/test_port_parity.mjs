@@ -10,7 +10,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 
 // The deliberate divergences: the arachne group compiles against stub PrintConfig/Print/
 // Preset headers while the treesupport group uses the real ones, and a handful of sources

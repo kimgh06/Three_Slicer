@@ -11,7 +11,7 @@
 //  Stage 33: after replacing the morphological opening with an area filter, the triggering threshold now **matches the real slope angle**
 //    (previously the opening erased thin bands, so a 16° cone only triggered at θ=60° and a 20° cone at θ=80° — a distorted threshold).
 //    Now the overhang condition θ > slope angle holds directly, so we sample on both sides of each slope angle.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 // Inverted cone: apex (z=0) -> a base of radius R (z=H). Side slope angle = atan(H/R) (90° = vertical).
 function coneTris(cx, cy, R, slopeDeg, seg = 64) {

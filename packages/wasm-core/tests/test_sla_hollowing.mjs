@@ -4,8 +4,8 @@
 //  hollowing_enable=true (deriveSlaParams passthrough) and the kernel must REFUSE with the typed code —
 //  a solid slice answered to a hollow request would be mislabeled hollowed.
 import assert from 'node:assert/strict'
-import createSlicer from '../engine/src/slicer_core.js'
-import { deriveSlaParams } from '../engine/src/settings.js'
+import createSlicer from '../../engine/src/slicer_core.js'
+import { deriveSlaParams } from '../../engine/src/settings.js'
 
 function boxSTL() {
   const vertices = [[-5,-5,0],[5,-5,0],[5,5,0],[-5,5,0],[-5,-5,5],[5,-5,5],[5,5,5],[-5,5,5]]

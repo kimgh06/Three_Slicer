@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const temporary = mkdtempSync(join(tmpdir(), 'sla-bridge-'))
 const source = join(temporary, 'test.cpp')
 const binary = join(temporary, 'test')

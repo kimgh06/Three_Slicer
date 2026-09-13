@@ -1,6 +1,6 @@
 // node self-test (track C stage 3): cube (binary + ASCII) + table (overhang) -> slice() -> invariant checks.
 //   Run: node reverse_engineering/wasm-core/test.mjs   (final judgement still comes from the browser / vite preview)
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -146,7 +146,7 @@ const typeTotal = (r, t) => r.layers.reduce((a, Ly) => a + countByType(Ly.paths)
 const topLayerWithType = (r, t) => { let top = -1; r.layers.forEach((Ly, i) => { if (countByType(Ly.paths)[t] > 0) top = i }); return top }
 
 const Module = await createSlicer()
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const stlBin = makeBoxSTL(20, 20, 20)
 writeFileSync(join(here, 'cube20.stl'), stlBin)
 writeFileSync(join(here, 'cube20_ascii.stl'), makeAsciiBoxSTL(20, 20, 20))

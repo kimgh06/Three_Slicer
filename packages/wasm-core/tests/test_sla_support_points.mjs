@@ -5,9 +5,9 @@ import { strict as assert } from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const read = (relative) => readFileSync(join(here, relative), 'utf8')
 const expectSource = (relative, label) => {
   assert.ok(existsSync(join(here, relative)), `Missing ${label} source: ${relative}`)

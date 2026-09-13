@@ -1,7 +1,7 @@
 // slice_sla kernel invariants: contour geometry, generated supports (overhang + floating island), pad,
 //  determinism and the layer-sink streaming parity. Runs the committed WASM under plain node, like test.mjs.
 import { strict as assert } from 'node:assert'
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 let passed = 0
 const ok = (name) => { passed++; console.log('  ok', name) }

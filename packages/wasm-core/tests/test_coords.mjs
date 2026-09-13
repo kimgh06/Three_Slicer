@@ -1,5 +1,5 @@
 // Stage 28 verification (node): P1 seating · P2 coordinate contract (toolpath overlaps model) · over_bed · the P4 support ∩ solid = 0 invariant.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 import { readFileSync } from 'node:fs'
 const M = await createSlicer()
 let fail = 0; const ok = (c, m) => { console.log((c ? '  ok: ' : '  FAIL: ') + m); if (!c) fail++ }
@@ -20,7 +20,7 @@ function extrBBox(r) { let mn = [1e9, 1e9], mx = [-1e9, -1e9], mnz = 1e9; for (c
 // Is point (x,y) inside the layer's wall (type1) polygon — horizontal ray crossings (odd = inside). Wall segments are the polygon edges.
 function insideWalls(L, x, y) { let cnt = 0; for (let i = 0; i < L.paths.length; i += 8) { if (L.paths[i + 3] !== 1) continue; const x0 = L.paths[i], y0 = L.paths[i + 1], x1 = L.paths[i + 4], y1 = L.paths[i + 5]; if ((y0 > y) !== (y1 > y)) { const xc = x0 + (y - y0) / (y1 - y0) * (x1 - x0); if (xc > x) cnt++ } } return (cnt & 1) === 1 }
 
-const benchy = stlTris(readFileSync('testing_files/pseudo_benchy.stl'))
+const benchy = stlTris(readFileSync(new URL('../testing_files/pseudo_benchy.stl', import.meta.url)))
 
 // (1) P1 seating + P2 overlap — placed like the viewer (centered, seated); after slicing the toolpath XY ≈ the input XY and z is seated
 const placed = place(benchy)   // centered + seated

@@ -4,7 +4,7 @@
 //  negative-side ear got NO support (right-only). Fix: re-center to the BED CENTER (positive plate coords).
 // Invariant: for a symmetric fixture (central body + two identical ±X ears), the type5 (support) segment
 //  count on each side of the model center must be balanced — L/R ratio in [0.7, 1.3] and both sides > 0.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 function boxTris(ox,oy,oz,sx,sy,sz){
   const c=[[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v=>[v[0]+ox,v[1]+oy,v[2]+oz])

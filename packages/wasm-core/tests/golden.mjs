@@ -1,7 +1,7 @@
 // Stage-18 golden guard: slice cube + overhang table on DEFAULT paths and dump G-code.
 // Run before and after the FillBase un-trim + integration; byte-diff of the two dumps must be 0
 // (proves the kernel's default paths never call the restored factory cases).
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 import { writeFileSync } from 'node:fs'
 
 function boxTris(ox, oy, oz, sx, sy, sz) {

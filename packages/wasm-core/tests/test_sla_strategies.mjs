@@ -4,9 +4,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { deriveSlaParams } from '../engine/src/settings.js'
+import { deriveSlaParams } from '../../engine/src/settings.js'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const temporary = mkdtempSync(join(tmpdir(), 'sla-strategies-'))
 const source = join(temporary, 'test.cpp')
 const binary = join(temporary, 'test')

@@ -1,7 +1,7 @@
 // Stage-20 physical test: manual support painting (enforcer/blocker) on tree + grid.
 //  enforcer (manual mode, auto off): baseline 0 support -> paint enforcer on overhang -> support appears.
 //  blocker  (auto mode): full support -> paint blocker on part of overhang -> that region suppressed, rest kept.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 function boxTris(ox,oy,oz,sx,sy,sz){const c=[[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v=>[v[0]+ox,v[1]+oy,v[2]+oz]);const q=(a,b,cc,d)=>[[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]];return[...q(0,1,2,3),...q(4,5,6,7),...q(0,1,5,4),...q(1,2,6,5),...q(2,3,7,6),...q(3,0,4,7)]}
 function trisToSTL(tris){const buf=Buffer.alloc(84+tris.length*50);buf.writeUInt32LE(tris.length,80);let off=84;for(const t of tris){off+=12;for(const p of t){buf.writeFloatLE(p[0],off);buf.writeFloatLE(p[1],off+4);buf.writeFloatLE(p[2],off+8);off+=12}buf.writeUInt16LE(0,off);off+=2}return buf}
 // overhang table: leg (tris 0..11) + cap (12..23). Cap underside overhang = tris 12,13 (z=10). Kernel coords: XY-centered, z-min=0.

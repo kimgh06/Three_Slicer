@@ -3,7 +3,7 @@
 //  the two real fixes: A=floating overhang gets support, B=support_bottom_z_distance z-gap.
 //  time_engine:transcribed — the full GCodeProcessor OOBs on these non-manifold overlapping-box fixtures'
 //  g-code (separate fragility, documented in README §32); toolpath geometry (type5) is identical.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 function boxTris(ox,oy,oz,sx,sy,sz){const c=[[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v=>[v[0]+ox,v[1]+oy,v[2]+oz]);const q=(a,b,cc,d)=>[[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]];return [...q(0,1,2,3),...q(4,5,6,7),...q(0,1,5,4),...q(1,2,6,5),...q(2,3,7,6),...q(3,0,4,7)]}
 function trisToSTL(t){const b=Buffer.alloc(84+t.length*50);b.writeUInt32LE(t.length,80);let o=84;for(const x of t){o+=12;for(const p of x){b.writeFloatLE(p[0],o);b.writeFloatLE(p[1],o+4);b.writeFloatLE(p[2],o+8);o+=12}b.writeUInt16LE(0,o);o+=2}return b}
 const roof=(arm)=>{const t=[...boxTris(-12,-8,0,4,16,12),...boxTris(8,-8,0,4,16,12),...boxTris(-14,-10,12,28,20,3)];if(arm){t.push(...boxTris(-2,-2,15,3,4,3));t.push(...boxTris(-2,-2,18,16,4,3))}return trisToSTL(t)}

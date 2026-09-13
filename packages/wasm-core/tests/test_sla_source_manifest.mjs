@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const manifest = JSON.parse(readFileSync(join(here, 'slasupport_port/SOURCE_MANIFEST.json'), 'utf8'))
 const sha256 = path => createHash('sha256').update(readFileSync(path)).digest('hex')
 
@@ -43,7 +43,7 @@ for (const flag of manifest.build.forbiddenFlags) {
   assert.doesNotMatch(sourceMatch[0], new RegExp(flag.replace('-', '\\-')))
 }
 
-const output = execFileSync('bash', [join(here, 'probe_sla_source_group.sh')], {
+const output = execFileSync('bash', [join(here, 'tools', 'probe_sla_source_group.sh')], {
   cwd: here,
   encoding: 'utf8'
 }).trim()

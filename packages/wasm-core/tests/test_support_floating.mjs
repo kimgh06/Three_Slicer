@@ -7,7 +7,7 @@
 // Criterion: support stacks up from the bed. For a support cell on layer j (j>0), if the layer directly **below** (j-1) has
 //  neither support nor model (wall/solid/infill) at that cell, there is nothing holding it up = **floating**.
 //  j=0 sits on the bed and is excluded. Judged on a raster grid (0.5mm) — stable without reassembling polygons.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 // Stepped overhang: a shape whose cross-section jumps between layers, which easily induces floating support.
 //  Three tiers: a small lower column -> a large middle plate -> a small offset upper column.

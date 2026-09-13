@@ -3,7 +3,7 @@
 // What this has to prove is that the two are genuinely inverse: upstream's own 3mf reader is on the other side of
 // this string, so "our writer agrees with our reader" is not enough — the SPELLING has to be upstream's.
 // (get_triangle_as_string, slicer/src/libslic3r/Model.cpp:3542: four bits per digit, most significant nibble first.)
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 function boxTris(ox, oy, oz, sx, sy, sz) {
   const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v => [v[0]+ox, v[1]+oy, v[2]+oz])

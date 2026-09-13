@@ -3,7 +3,7 @@
 // rendered as hex (FacetsAnnotation::get_triangle_as_string, slicer/src/libslic3r/Model.cpp:3542). An unsplit
 // painted facet is one nibble `state << 2`, except states 3..16 which use the 0b1100 prefix plus a second nibble
 // holding state-3 — written most-significant nibble first, so Extruder3 reads "0C".
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 function boxTris(ox, oy, oz, sx, sy, sz) {
   const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v => [v[0]+ox, v[1]+oy, v[2]+oz])

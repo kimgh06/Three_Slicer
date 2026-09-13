@@ -3,8 +3,8 @@
 //  The SLA chain runs on ExecutionSeq, so the two variants must agree BYTE for byte, not just statistically:
 //  stats, every layer's path stream, and both meshes.
 import assert from 'node:assert/strict'
-import createSlicer from '../engine/src/slicer_core.js'
-import createSlicerMt from '../engine/src/slicer_core.mt.js'
+import createSlicer from '../../engine/src/slicer_core.js'
+import createSlicerMt from '../../engine/src/slicer_core.mt.js'
 
 function boxSTL() {
   const vertices = [[-5,-5,0],[5,-5,0],[5,5,0],[-5,5,0],[-5,-5,5],[5,-5,5],[5,5,5],[-5,5,5]]
