@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 let failures = 0
 const check = (label, condition, detail = '') => {
   if (condition) console.log(`  ok: ${label}`)
@@ -53,7 +53,7 @@ const stale = [...prose.matchAll(/`([a-z0-9_]+)`/g)].map(m => m[1]).filter(key =
 check('the prose names no parameter that a setting now reaches', stale.length === 0, [...new Set(stale)].join(' '))
 
 console.log('\n[kernel params: ignored-key reporting]')
-const { deriveKernelParams, ignoredKernelSettings, kernelSettingKeys, applyPreset } = await import('../engine/src/settings.js')
+const { deriveKernelParams, ignoredKernelSettings, kernelSettingKeys, applyPreset } = await import('../../engine/src/settings.js')
 const fromKeys = new Set(rows.filter(row => row[2] !== '—')
   .flatMap(row => [...row[2].matchAll(/`([a-z0-9_]+)`/g)].map(m => m[1])))
 check('kernelSettingKeys matches the table\'s distinct From-setting column',
