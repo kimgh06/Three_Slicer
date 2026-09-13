@@ -11,6 +11,7 @@
 // The REDUCED schema is enough here: this file reads .type, .default, enum_values and, for the SLA
 //  contract, defined_in/line — never a label or a tooltip. Aliased so the call sites read as before.
 import { leanSchema as schema } from './data.js'
+import { FFF_FALLBACKS, AUTO_LINE_WIDTH, SLA_FALLBACKS, MACHINE_LIMITS, BED_FALLBACK } from './kernel_defaults.js'
 
 export function schemaDefault(key) { return schema[key]?.default }
 export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }
@@ -68,25 +69,6 @@ const PASSTHROUGH_NUM_VECTOR = ['filament_map', 'filament_density', 'filament_co
 //  extra unretract, TPU on the first layer) and the settings id for the footer.
 const PASSTHROUGH_STR_VECTOR = ['filament_type', 'filament_settings_id']
 
-// Machine limits (the "Motion ability" printer page) -> kernel time-estimate parameters.
-//  Declarative on purpose: the kernel collapses X/Y into one axis, so the mapping cannot be a plain pass-through,
-//  but adding a limit stays a data row instead of code. The fallback is the kernel's own default, so an unedited
-//  profile produces exactly the previous estimate. Upstream leaves machine_max_*_x/y/z/e without a schema default
-//  (they only ever come from a printer preset), hence the explicit fallbacks here.
-const MACHINE_LIMITS = {
-  machine_max_speed_xy: ['machine_max_speed_x', 500],
-  machine_max_speed_z:  ['machine_max_speed_z', 12],
-  machine_max_speed_e:  ['machine_max_speed_e', 30],
-  machine_max_accel_xy: ['machine_max_acceleration_x', 5000],
-  machine_max_accel_z:  ['machine_max_acceleration_z', 500],
-  machine_max_accel_e:  ['machine_max_acceleration_e', 5000],
-  machine_jerk_xy:      ['machine_max_jerk_x', 9],
-  machine_jerk_z:       ['machine_max_jerk_z', 0.4],
-  machine_jerk_e:       ['machine_max_jerk_e', 2.5],
-  machine_accel_print:  ['default_acceleration', 5000],
-  machine_accel_travel: ['travel_acceleration', 5000],
-  machine_accel_retract: ['machine_max_acceleration_retracting', 5000],
-}
 // The schema keys the machine limits are read from — for UI that has to show "which printer characteristics are in play"
 // without hardcoding key strings of its own.
 export const machineLimitKeys = Object.values(MACHINE_LIMITS).map(([key]) => key)
@@ -216,24 +198,25 @@ export function serializeProjectSettings(settings) {
 export function deriveKernelParams(settings, opts) {
   const plate = opts?.plate ?? 0
   const S = k => settingScalar(settings, k)
-  const num = (k, d) => { const v = Number(S(k)); return Number.isFinite(v) ? v : d }
-  const bool = (k, d) => { const v = settingRaw(settings, k); return typeof v === 'boolean' ? v : (Array.isArray(v) ? !!v[0] : (v == null ? d : !!v)) }
+  const str = k => String(S(k) ?? FFF_FALLBACKS[k])
+  const num = (k, d = FFF_FALLBACKS[k]) => { const v = Number(S(k)); return Number.isFinite(v) ? v : d }
+  const bool = (k, d = FFF_FALLBACKS[k]) => { const v = settingRaw(settings, k); return typeof v === 'boolean' ? v : (Array.isArray(v) ? !!v[0] : (v == null ? d : !!v)) }
   // Filament retraction overrides: upstream lets a material override the machine's retraction (TPU wants a
   //  different pull-back than PLA on the same printer). These schema keys are nullable and carry no default of
   //  their own — "unset" means keep the machine value — so this reads the settings map directly rather than
   //  through settingScalar, whose schema fallback would not distinguish the two.
-  const override = (filamentKey, machineKey, fallback) => {
+  const override = (filamentKey, machineKey, fallback = FFF_FALLBACKS[machineKey]) => {
     const raw = settings?.[filamentKey]
     const value = Number(Array.isArray(raw) ? raw[0] : raw)
     return Number.isFinite(value) ? value : num(machineKey, fallback)
   }
 
-  let line_width = num('line_width', 0); if (!line_width) line_width = 0.42   // 0=auto -> default 0.42
+  let line_width = num('line_width'); if (!line_width) line_width = AUTO_LINE_WIDTH   // 0 = auto
 
-  let pat = String(S('sparse_infill_pattern') ?? 'rectilinear')
+  let pat = str('sparse_infill_pattern')
   if (!KERNEL_PATTERNS.includes(pat)) pat = 'rectilinear'                     // pattern unsupported by the kernel -> rectilinear
 
-  let seam = String(S('seam_position') ?? 'back')
+  let seam = str('seam_position')
   if (seam === 'aligned_back') seam = 'back'
   if (!KERNEL_SEAMS.includes(seam)) seam = 'back'
 
@@ -243,14 +226,14 @@ export function deriveKernelParams(settings, opts) {
   //  support_type participates too, as upstream's UI does: a tree(auto)/tree(manual) TYPE whose style is
   //  still 'default' is a tree request — before this, an imported Orca project saved with tree(auto) and
   //  the default style silently sliced grid. An explicit non-tree style keeps winning over the type.
-  const styleRaw = String(S('support_style') ?? 'default')
-  const typeRaw = String(S('support_type') ?? 'normal(auto)')
+  const styleRaw = str('support_style')
+  const typeRaw = str('support_type')
   const support_style =
     /tree|organic/i.test(styleRaw) || (/tree/i.test(typeRaw) && styleRaw === 'default') ? 'tree' : 'grid'
 
   // Bed: bounding box of the first rectangle in printable_area
   const pa = settingRaw(settings, 'printable_area')
-  let bed_width = 256, bed_depth = 256
+  let bed_width = BED_FALLBACK.width, bed_depth = BED_FALLBACK.depth
   if (Array.isArray(pa) && pa.length) {
     const xs = pa.map(p => p[0]), ys = pa.map(p => p[1])
     bed_width = Math.max(...xs) - Math.min(...xs); bed_depth = Math.max(...ys) - Math.min(...ys)
@@ -288,7 +271,7 @@ export function deriveKernelParams(settings, opts) {
   //  plate (the pre-array form, kept readable so old saved settings keep meaning what they meant).
   const towerSettings = {}
   {
-    const width = num('prime_tower_width', 0)
+    const width = num('prime_tower_width')
     if (width > 0) towerSettings.prime_tower_width = width
     // Read the map itself, NOT settingRaw: wipe_tower_x/y carry an upstream schema default of (15, 220), which is
     //  a coordinate off the front of a 200mm bed. Taking it as "the user chose a position" put the tower outside
@@ -309,9 +292,9 @@ export function deriveKernelParams(settings, opts) {
     //  untouched project keeps whatever the kernel decides.
     if ('enable_prime_tower' in (settings ?? {})) towerSettings.enable_prime_tower = !!settings.enable_prime_tower
     if ('flush_into_infill' in (settings ?? {})) towerSettings.flush_into_infill = !!settings.flush_into_infill
-    const multiplier = num('flush_multiplier', 0)
+    const multiplier = num('flush_multiplier')
     if (multiplier > 0) towerSettings.flush_multiplier = multiplier
-    const prime = num('prime_volume', 0)
+    const prime = num('prime_volume')
     if (prime > 0) towerSettings.prime_volume = prime
   }
 
@@ -342,19 +325,19 @@ export function deriveKernelParams(settings, opts) {
     //  thing jwidth_raw does for the widths that do get the percent-aware reader.
     if (present('support_line_width')) {
       const text = String(settingScalar(settings, 'support_line_width')).trim()
-      const width = text.endsWith('%') ? (parseFloat(text) / 100) * num('nozzle_diameter', 0.4) : Number(text)
+      const width = text.endsWith('%') ? (parseFloat(text) / 100) * num('nozzle_diameter') : Number(text)
       if (Number.isFinite(width) && width > 0) passthrough.support_line_width = width
     }
   }
 
   const perExtruder = {}
   for (const [param, key, scalar] of [
-    ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature', 200)],
-    ['extruder_filament_diameter', 'filament_diameter', num('filament_diameter', 1.75)],
-    ['extruder_flow_ratio', 'filament_flow_ratio', num('filament_flow_ratio', 1.0)],
-    ['extruder_retract_length', 'filament_retraction_length', override('filament_retraction_length', 'retraction_length', 0.8)],
-    ['extruder_retract_speed', 'filament_retraction_speed', override('filament_retraction_speed', 'retraction_speed', 30)],
-    ['extruder_z_hop', 'filament_z_hop', override('filament_z_hop', 'z_hop', 0.4)],
+    ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature')],
+    ['extruder_filament_diameter', 'filament_diameter', num('filament_diameter')],
+    ['extruder_flow_ratio', 'filament_flow_ratio', num('filament_flow_ratio')],
+    ['extruder_retract_length', 'filament_retraction_length', override('filament_retraction_length', 'retraction_length')],
+    ['extruder_retract_speed', 'filament_retraction_speed', override('filament_retraction_speed', 'retraction_speed')],
+    ['extruder_z_hop', 'filament_z_hop', override('filament_z_hop', 'z_hop')],
   ]) {
     const raw = settings?.[key]
     if (!Array.isArray(raw) || raw.length < 2) continue
@@ -369,92 +352,92 @@ export function deriveKernelParams(settings, opts) {
     ...widths,
     ...machine,
     ...passthrough,     // present only for keys the settings map actually holds (see PASSTHROUGH_* above)
-    layer_height: num('layer_height', 0.2),
-    first_layer_height: num('initial_layer_print_height', 0.2),
+    layer_height: num('layer_height'),
+    first_layer_height: num('initial_layer_print_height'),
     line_width,
-    wall_loops: num('wall_loops', 2),
-    infill_density: num('sparse_infill_density', 20) / 100,      // % → 0~1
+    wall_loops: num('wall_loops'),
+    infill_density: num('sparse_infill_density') / 100,      // % → 0~1
     sparse_infill_pattern: pat,
-    infill_angle: num('infill_direction', 45),
-    top_shell_layers: num('top_shell_layers', 4),
-    bottom_shell_layers: num('bottom_shell_layers', 3),
+    infill_angle: num('infill_direction'),
+    top_shell_layers: num('top_shell_layers'),
+    bottom_shell_layers: num('bottom_shell_layers'),
     seam_position: seam,
-    skirt_loops: num('skirt_loops', 1),
-    skirt_distance: num('skirt_distance', 2),
-    skirt_height: num('skirt_height', 1),                       // stage 33: the kernel used to hardcode the first layer
-    brim_width: num('brim_width', 0),
-    brim_object_gap: num('brim_object_gap', 0),                 // stage 33: the kernel used to hardcode w*0.5
+    skirt_loops: num('skirt_loops'),
+    skirt_distance: num('skirt_distance'),
+    skirt_height: num('skirt_height'),                       // stage 33: the kernel used to hardcode the first layer
+    brim_width: num('brim_width'),
+    brim_object_gap: num('brim_object_gap'),                 // stage 33: the kernel used to hardcode w*0.5
     ...perExtruder,
     // Prime tower. These were the one part of multi-material the settings map could not reach: the kernel read its
     //  own prime_tower_* parameters and nothing mapped the upstream keys onto them, so the tower's size and place
     //  were whatever the viewer decided. Only sent when the user actually set them — an unset width keeps the
     //  kernel's own default, and an unset position lets the viewer's auto-placement stand.
     ...towerSettings,
-    retract_length: override('filament_retraction_length', 'retraction_length', 0.8),   // vector[0]
-    retraction_minimum_travel: override('filament_retraction_minimum_travel', 'retraction_minimum_travel', 2),  // stage 33: used to be the kernel constant 2.0
-    gcode_resolution: num('resolution', 0.01),                  // stage 33: tree-support path simplification tolerance
-    retract_speed: override('filament_retraction_speed', 'retraction_speed', 30),
-    z_hop: override('filament_z_hop', 'z_hop', 0.4),
-    travel_speed: num('travel_speed', 120),
-    first_layer_speed: num('initial_layer_speed', 30),
-    print_speed: num('outer_wall_speed', 60),
-    nozzle_diameter: num('nozzle_diameter', 0.4),
-    filament_diameter: num('filament_diameter', 1.75),
-    flow_ratio: num('filament_flow_ratio', 1.0),
-    nozzle_temp: num('nozzle_temperature', 200),
-    bed_temp: num('hot_plate_temp', 45),                        // no bed_temperature key -> hot_plate_temp
+    retract_length: override('filament_retraction_length', 'retraction_length'),   // vector[0]
+    retraction_minimum_travel: override('filament_retraction_minimum_travel', 'retraction_minimum_travel'),  // stage 33: used to be the kernel constant 2.0
+    gcode_resolution: num('resolution'),                  // stage 33: tree-support path simplification tolerance
+    retract_speed: override('filament_retraction_speed', 'retraction_speed'),
+    z_hop: override('filament_z_hop', 'z_hop'),
+    travel_speed: num('travel_speed'),
+    first_layer_speed: num('initial_layer_speed'),
+    print_speed: num('outer_wall_speed'),
+    nozzle_diameter: num('nozzle_diameter'),
+    filament_diameter: num('filament_diameter'),
+    flow_ratio: num('filament_flow_ratio'),
+    nozzle_temp: num('nozzle_temperature'),
+    bed_temp: num('hot_plate_temp'),                        // no bed_temperature key -> hot_plate_temp
     bed_width, bed_depth,
-    bed_height: num('printable_height', 0),                    // 0 = profile states no ceiling -> kernel skips the check
+    bed_height: num('printable_height'),                    // 0 = profile states no ceiling -> kernel skips the check
     // Explicitly-set only: the schema default here is upstream's generic "G28 / G1 Z5" preamble, and falling back
     //  to it would rewrite the emitted G-code for every caller. The kernel keeps its own preamble when these are empty.
     machine_start_gcode: String(settings?.machine_start_gcode ?? ''),
     machine_end_gcode: String(settings?.machine_end_gcode ?? ''),
-    enable_support: bool('enable_support', false),
-    support_threshold_angle: num('support_threshold_angle', 30),
-    support_top_z_distance: num('support_top_z_distance', 0.2),
-    support_bottom_z_distance: num('support_bottom_z_distance', 0.2),   // stage 32: support bottom z-gap (default 0.2 = equivalent to current behavior)
-    support_xy_distance: num('support_object_xy_distance', 0.35),
-    support_interface_top_layers: num('support_interface_top_layers', 2),
+    enable_support: bool('enable_support'),
+    support_threshold_angle: num('support_threshold_angle'),
+    support_top_z_distance: num('support_top_z_distance'),
+    support_bottom_z_distance: num('support_bottom_z_distance'),   // stage 32: support bottom z-gap (default 0.2 = equivalent to current behavior)
+    support_xy_distance: num('support_object_xy_distance'),
+    support_interface_top_layers: num('support_interface_top_layers'),
     // Stage 33: support keys added when the kernel hardcoding was removed (upstream schema key names kept)
-    support_angle: num('support_angle', 0),
-    support_base_pattern: String(S('support_base_pattern') ?? 'default'),
-    support_interface_pattern: String(S('support_interface_pattern') ?? 'auto'),
-    support_interface_spacing: num('support_interface_spacing', 0.5),
-    support_base_pattern_spacing: num('support_base_pattern_spacing', 2.5),
-    support_remove_small_overhang: bool('support_remove_small_overhang', true),
-    bridge_no_support: bool('bridge_no_support', false),
-    support_expansion: num('support_expansion', 0),
+    support_angle: num('support_angle'),
+    support_base_pattern: str('support_base_pattern'),
+    support_interface_pattern: str('support_interface_pattern'),
+    support_interface_spacing: num('support_interface_spacing'),
+    support_base_pattern_spacing: num('support_base_pattern_spacing'),
+    support_remove_small_overhang: bool('support_remove_small_overhang'),
+    bridge_no_support: bool('bridge_no_support'),
+    support_expansion: num('support_expansion'),
     support_threshold_overlap: (() => { const v = settingRaw(settings, 'support_threshold_overlap')
       if (typeof v === 'string' && v.trim().endsWith('%')) return parseFloat(v) / 100
       const n = Number(v); return Number.isFinite(n) ? n : 0.5 })(),   // "50%" -> 0.5 (ratio of extrusion width)
-    support_on_build_plate_only: bool('support_on_build_plate_only', false),
-    support_interface_bottom_layers: num('support_interface_bottom_layers', 0),
+    support_on_build_plate_only: bool('support_on_build_plate_only'),
+    support_interface_bottom_layers: num('support_interface_bottom_layers'),
     ...supportTools,                                            // present only when a support extruder is mapped (see above)
-    raft_layers: num('raft_layers', 0),
-    raft_expansion: num('raft_expansion', 1.5),                 // stage 33: the kernel used to hardcode +3.0
-    raft_contact_distance: num('raft_contact_distance', 0.1),   // stage 33: previously ignored by the kernel
-    fan_speed: num('fan_max_speed', 100),                       // no fan_speed key -> fan_max_speed
-    close_fan_the_first_x_layers: num('close_fan_the_first_x_layers', 1),
-    full_fan_speed_layer: num('full_fan_speed_layer', 0),
-    slow_down_layer_time: num('slow_down_layer_time', 5),
-    enable_arc_fitting: bool('enable_arc_fitting', false),
-    spiral_mode: bool('spiral_mode', false),
+    raft_layers: num('raft_layers'),
+    raft_expansion: num('raft_expansion'),                 // stage 33: the kernel used to hardcode +3.0
+    raft_contact_distance: num('raft_contact_distance'),   // stage 33: previously ignored by the kernel
+    fan_speed: num('fan_max_speed'),                       // no fan_speed key -> fan_max_speed
+    close_fan_the_first_x_layers: num('close_fan_the_first_x_layers'),
+    full_fan_speed_layer: num('full_fan_speed_layer'),
+    slow_down_layer_time: num('slow_down_layer_time'),
+    enable_arc_fitting: bool('enable_arc_fitting'),
+    spiral_mode: bool('spiral_mode'),
     // New in stage 5 (derived from the matching schema keys)
-    seam_slope_type: String(S('seam_slope_type') ?? 'none'),      // none|external|all -> scarf seam
-    enable_pressure_advance: bool('enable_pressure_advance', false),
-    pressure_advance: num('pressure_advance', 0.02),
+    seam_slope_type: str('seam_slope_type'),      // none|external|all -> scarf seam
+    enable_pressure_advance: bool('enable_pressure_advance'),
+    pressure_advance: num('pressure_advance'),
     support_style,                                                 // grid|tree_lite (mapped above)
-    bridge_speed: num('bridge_speed', 25),
+    bridge_speed: num('bridge_speed'),
     // New in stage 6 (derived from the matching schema keys). The MM parameters (extruder_count/mm_group_split) are
     //  injected at onSlice time from the viewer's per-object extruder assignment (not included here).
-    ironing_type: String(S('ironing_type') ?? 'no ironing'),       // no ironing|top|topmost|solid (the top family = on)
-    ironing_spacing: num('ironing_spacing', 0.1),
-    ironing_flow: num('ironing_flow', 10),
-    ironing_speed: num('ironing_speed', 20),
-    reduce_crossing_wall: bool('reduce_crossing_wall', false),
-    max_volumetric_extrusion_rate_slope: num('max_volumetric_extrusion_rate_slope', 0),
+    ironing_type: str('ironing_type'),       // no ironing|top|topmost|solid (the top family = on)
+    ironing_spacing: num('ironing_spacing'),
+    ironing_flow: num('ironing_flow'),
+    ironing_speed: num('ironing_speed'),
+    reduce_crossing_wall: bool('reduce_crossing_wall'),
+    max_volumetric_extrusion_rate_slope: num('max_volumetric_extrusion_rate_slope'),
     // Stage 7: wall generator classic|arachne (arachne = the real ported OrcaSlicer WallToolPaths, variable width)
-    wall_generator: (String(S('wall_generator') ?? 'classic') === 'arachne') ? 'arachne' : 'classic',
+    wall_generator: (str('wall_generator') === 'arachne') ? 'arachne' : 'classic',
     // support_density has no matching schema key, so the kernel default (0.15) is used; scarf_length likewise uses the kernel default (10mm)
   }
 }
@@ -504,13 +487,13 @@ export const slaSettingKeys = Object.freeze(Object.keys(SLA_SETTING_CONTRACT))
 //  are read from the map directly, so they follow the same omission-friendly rule: absent means the default.
 export function deriveSlaParams(settings) {
   const S = k => settingScalar(settings, k)
-  const num = (k, d) => { const v = Number(S(k)); return Number.isFinite(v) && v > 0 ? v : d }
+  const num = (k, d = SLA_FALLBACKS[k]) => { const v = Number(S(k)); return Number.isFinite(v) && v > 0 ? v : d }
 
   // Read from the MAP, not through the schema fallback: the key is shared with FFF and its schema default is that
   //  technology's opinion (0.2mm) — four resin layers thick. Absent means the resin default here.
   const rawLayerHeight = settings?.layer_height
   const mapLayerHeight = Number(Array.isArray(rawLayerHeight) ? rawLayerHeight[0] : rawLayerHeight)
-  const layer_height = Number.isFinite(mapLayerHeight) && mapLayerHeight > 0 ? mapLayerHeight : 0.05
+  const layer_height = Number.isFinite(mapLayerHeight) && mapLayerHeight > 0 ? mapLayerHeight : SLA_FALLBACKS.layer_height
   // Zero is a legal fade count (no fade band), so this one cannot go through the positives-only reader.
   const fadedRaw = Number(S('faded_layers'))
   const requestedSupportTree = String(S('support_tree_type') ?? 'default').toLowerCase()
@@ -520,15 +503,15 @@ export function deriveSlaParams(settings) {
   return {
     layer_height,
     initial_layer_height: num('initial_layer_height', layer_height),
-    exposure_time: num('exposure_time', 7),
-    initial_exposure_time: num('initial_exposure_time', 35),
+    exposure_time: num('exposure_time'),
+    initial_exposure_time: num('initial_exposure_time'),
     faded_layers: Number.isFinite(fadedRaw) && fadedRaw >= 0 ? fadedRaw : 10,
     // The physical display and its pixel grid — what turns millimetres into raster pixels at export time.
     //  Fallbacks are the SL1's own panel, the reference machine of the format this exports to.
-    display_width: num('display_width', 120.96),
-    display_height: num('display_height', 68.04),
-    display_pixels_x: num('display_pixels_x', 2560),
-    display_pixels_y: num('display_pixels_y', 1440),
+    display_width: num('display_width'),
+    display_height: num('display_height'),
+    display_pixels_x: num('display_pixels_x'),
+    display_pixels_y: num('display_pixels_y'),
     // Panel mounting: the whole SL1 family is portrait with X mirrored (projection through the vat floor);
     //  the raster writer swaps the image axes for portrait exactly like upstream SL1.cpp create_raster.
     display_orientation: String(S('display_orientation') ?? 'portrait') === 'landscape' ? 'landscape' : 'portrait',
@@ -545,8 +528,8 @@ export function deriveSlaParams(settings) {
     sla_material_settings_id: String(S('sla_material_settings_id') ?? ''),
     // The kernel's over-bed check and centring read bed dimensions; for a resin printer the printable area IS
     //  the display, so the display doubles as the bed the shared parser sees.
-    bed_width: num('display_width', 120.96),
-    bed_depth: num('display_height', 68.04),
+    bed_width: num('display_width'),
+    bed_depth: num('display_height'),
     // Support generation (kernel slice_sla): the grid-pillar generator's shape parameters, all schema keys the
     //  SLA extraction pass brought in — schema defaults rule, an edit wins.
     supports_enable: !!settingRaw(settings, 'supports_enable'),
@@ -555,20 +538,20 @@ export function deriveSlaParams(settings) {
     //  the OpenVDB chain hollowing needs is not ported, and a solid print labeled hollowed is the worst outcome.
     hollowing_enable: !!settingRaw(settings, 'hollowing_enable'),
     support_buildplate_only: !!settingRaw(settings, 'support_buildplate_only'),
-    support_pillar_diameter: num('support_pillar_diameter', 1.0),
-    support_head_front_diameter: num('support_head_front_diameter', 0.4),
-    support_head_width: num('support_head_width', 1.0),
-    support_head_penetration: num('support_head_penetration', 0.2),
-    support_points_density_relative: num('support_points_density_relative', 100),
-    support_critical_angle: num('support_critical_angle', 45),
+    support_pillar_diameter: num('support_pillar_diameter'),
+    support_head_front_diameter: num('support_head_front_diameter'),
+    support_head_width: num('support_head_width'),
+    support_head_penetration: num('support_head_penetration'),
+    support_points_density_relative: num('support_points_density_relative'),
+    support_critical_angle: num('support_critical_angle'),
     support_tree_type,
     // The tree shape (upstream SupportTreeConfig): bridge reach, bracing distance, the base foot cone, the
     //  pillar connection style, and how far the object is lifted onto its supports. Elevation may legally be
     //  ZERO (print directly on the plate), so it cannot go through the positives-only reader.
-    support_max_bridge_length: num('support_max_bridge_length', 15),
-    support_max_pillar_link_distance: num('support_max_pillar_link_distance', 10),
-    support_base_diameter: num('support_base_diameter', 4),
-    support_base_height: num('support_base_height', 1),
+    support_max_bridge_length: num('support_max_bridge_length'),
+    support_max_pillar_link_distance: num('support_max_pillar_link_distance'),
+    support_base_diameter: num('support_base_diameter'),
+    support_base_height: num('support_base_height'),
     // The rest of upstream make_support_cfg (SLAPrint.cpp:50) — small-pillar percent arrives as "50%" so the
     //  percent sign is stripped here; widening factor and base safety distance are legally ZERO (zero safety
     //  falls back to the kernel's own safety_distance), so neither can go through the positives-only reader.
@@ -578,28 +561,28 @@ export function deriveSlaParams(settings) {
       (() => { const v = Number(S('support_pillar_widening_factor')); return Number.isFinite(v) && v >= 0 ? v : 0 })(),
     support_base_safety_distance:
       (() => { const v = Number(S('support_base_safety_distance')); return Number.isFinite(v) && v >= 0 ? v : 1 })(),
-    support_max_bridges_on_pillar: num('support_max_bridges_on_pillar', 3),
-    support_max_weight_on_model: num('support_max_weight_on_model', 10),
+    support_max_bridges_on_pillar: num('support_max_bridges_on_pillar'),
+    support_max_weight_on_model: num('support_max_weight_on_model'),
     // The generator's input slices are gap-closed with this radius, exactly like upstream slice_mesh_ex.
-    slice_closing_radius: num('slice_closing_radius', 0.049),
+    slice_closing_radius: num('slice_closing_radius'),
     support_object_elevation: (() => { const v = Number(S('support_object_elevation')); return Number.isFinite(v) && v >= 0 ? v : 5 })(),
     support_pillar_connection_mode: String(S('support_pillar_connection_mode') ?? 'dynamic'),
     // The pad (upstream make_pad_cfg): wall height is legally ZERO (flat pad, no cavity), so it cannot go
     //  through the positives-only reader.
-    pad_brim_size: num('pad_brim_size', 1.6),
-    pad_wall_thickness: num('pad_wall_thickness', 2),
+    pad_brim_size: num('pad_brim_size'),
+    pad_wall_thickness: num('pad_wall_thickness'),
     pad_wall_height:
       (() => { const v = Number(S('pad_wall_height')); return Number.isFinite(v) && v >= 0 ? v : 0 })(),
-    pad_wall_slope: num('pad_wall_slope', 90),
-    pad_max_merge_distance: num('pad_max_merge_distance', 50),
+    pad_wall_slope: num('pad_wall_slope'),
+    pad_max_merge_distance: num('pad_max_merge_distance'),
     pad_around_object: !!settingRaw(settings, 'pad_around_object'),
     // Embed mode (upstream PadConfig::EmbedObject): the ring's gap and the connector sticks that keep the
     //  object attached to the pad. Read even when embed is off — the kernel ignores them then.
     pad_around_object_everywhere: !!settingRaw(settings, 'pad_around_object_everywhere'),
-    pad_object_gap: num('pad_object_gap', 1),
-    pad_object_connector_width: num('pad_object_connector_width', 0.5),
-    pad_object_connector_stride: num('pad_object_connector_stride', 10),
-    pad_object_connector_penetration: num('pad_object_connector_penetration', 0.3),
+    pad_object_gap: num('pad_object_gap'),
+    pad_object_connector_width: num('pad_object_connector_width'),
+    pad_object_connector_stride: num('pad_object_connector_stride'),
+    pad_object_connector_penetration: num('pad_object_connector_penetration'),
   }
 }
 
