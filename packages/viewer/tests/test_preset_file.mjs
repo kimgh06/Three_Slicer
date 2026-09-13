@@ -8,15 +8,15 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { writePresetFile, readPresetFile, presetOptionKeys,
-         printerSettings, printerKeys } from '../engine/src/settings.js'
+         printerSettings, printerKeys } from '../../engine/src/settings.js'
 // The bundle codec moved with the viewer into the permissive package; this test stays here because it also
 //  exercises the vendor catalog (printerSettings/printerKeys), which is AGPL data.
-import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../../packages-mit/src/core/preset_bundle.js'
-import { schema } from '../engine/src/data.js'
+import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../../../packages-mit/src/core/preset_bundle.js'
+import { schema } from '../../engine/src/data.js'
 
 const schemaHasNoDefault = (key) => schema[key]?.default === undefined
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 let failures = 0
 const check = (label, condition, detail = '') => {
   if (condition) console.log(`  ok: ${label}`)

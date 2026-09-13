@@ -23,7 +23,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 // The viewer's source lives in the permissive package now; what is left beside this test is the AGPL residue
 //  (the slicing hook, the kernel worker factory, the bundled catalog and three re-export shims).
 const src = join(here, '..', '..', 'packages-mit', 'src')
@@ -142,7 +142,7 @@ console.log('\n[license: the permissive package carries no AGPL]')
 if (!existsSync(PERMISSIVE)) {
   check('packages-mit exists', false, 'the permissive package is missing')
 } else {
-  const own = spawnSync(process.execPath, [join(PERMISSIVE, 'test_license_boundary.mjs')], { encoding: 'utf8' })
+  const own = spawnSync(process.execPath, [join(PERMISSIVE, 'tests', 'test_license_boundary.mjs')], { encoding: 'utf8' })
   process.stdout.write(own.stdout.replace(/^/gm, '    '))
   check('the permissive package passes its own boundary test', own.status === 0, own.stderr.trim().split('\n').pop())
   const manifest = JSON.parse(readFileSync(join(PERMISSIVE, 'package.json'), 'utf8'))
