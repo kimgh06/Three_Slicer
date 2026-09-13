@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { uiTreeKeys } from 'three-slicer-viewer/data'
 import { paintedFacetCount } from './MaterialPaintPanel.jsx'
-import { scopedSettings } from '../core/plate_settings.js'
+import { cardScope } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
 import { resolveCatalog } from '../core/catalog.js'
+import { MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 
 // What a material owns: every option upstream puts on the filament tab, not just the ten the kernel reads.
 //  Saving only the kernel keys would silently drop the rest of the user's edits from the panel below, and the
@@ -46,8 +47,8 @@ export default function FilamentCard({
   // Plate scope (the shared Global|Plate switch): the whole card — presets, per-extruder columns, the panel
   //  slot — binds to the selected plate's effective map, and edits diff back into ITS override. The extruder
   //  projection below composes on top unchanged: it projects whatever pair it is handed.
-  const plateScope = settingsScope === 'plate' && plateCount > 1 && !!setPlateSettings
-  const scoped = scopedSettings(globalSettings, setGlobalSettings, plateSettings, setPlateSettings, selectedPlate, plateScope)
+  const scoped = cardScope({ settings: globalSettings, setSettings: setGlobalSettings, plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope })
+  const plateScope = scoped.plateScope
   const settings = scoped.settings, setSettings = scoped.setSettings
   // A material ASSIGNMENT is a whole set (assign() rebuilds every column), so in plate scope it is written whole —
   //  a key the plate's material shares with the global one must not stay off the override and follow the next
@@ -263,9 +264,9 @@ export default function FilamentCard({
             testid="filament-scope-toggle" plateTestid="filament-scope-plate" />
         )}
         <span className="sc-head-btns">
-          {/* 16 is the painting selector's own ceiling (upstream's EnforcerBlockerType stops at Extruder16), so it is
+          {/* MAX_PAINT_EXTRUDERS is the painting selector's own ceiling (upstream's EnforcerBlockerType stops at Extruder16), so it is
               the honest limit here too — the kernel takes per-extruder vectors of any length. */}
-          <button onClick={onAdd} disabled={count >= 16} title="Add a filament (extruder) — up to 16, assignable per object or by painting" data-testid="filament-add">+</button>
+          <button onClick={onAdd} disabled={count >= MAX_PAINT_EXTRUDERS} title={`Add a filament (extruder) — up to ${MAX_PAINT_EXTRUDERS}, assignable per object or by painting`} data-testid="filament-add">+</button>
           <button onClick={removeExtruder} disabled={count <= 1} title="Remove the selected filament — objects using it move to T1, later tools shift down" data-testid="filament-del">−</button>
         </span>
       </div>
