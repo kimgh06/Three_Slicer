@@ -164,8 +164,13 @@ The root `package.json` is the npm workspaces root (`packages-mit`, `packages`, 
 - One facet holds one integer (see the EnforcerBlockerType note above), but a 3mf keeps material and support paint
   in two independent annotations that can both mark the same facet. On import **material paint wins** and the
   support paint is reported as dropped — half-applying it would be worse than not applying it.
-- The toolpath stream's role field (`paths[k+3]`, stride 8) encodes `role + tool * 16`. Roles only reach 11, so the tool rides in the spare high bits rather than a 9th float — the segment stream is the largest array the viewer holds and a 9th float costs +12.5% of it for one small integer. **Anything reading that field must mask** (`& 15` for the role, `>>> 4` for the tool); pre-encoding output is entirely below 16 and decodes to its own role with tool 0.
-- `web/extract_all.py` derives the kernel key list by regex-scanning `packages/engine/src/settings.js` for single-quoted lowercase strings and keeping the ones that are schema keys — **it does not strip comments**. Measured: appending only the comment `// note: the 'interface_shells' option is not wired up yet` takes the list from 92 keys to 93 and adds that column to every extracted preset. Never write a schema key name in quotes in a comment in that file.
+- The toolpath stream's role field (`paths[k+3]`, stride 8) encodes `role + tool * 16`. Roles only reach 11, so the tool rides in the spare high bits rather than a 9th float — the segment stream is the largest array the viewer holds and a 9th float costs +12.5% of it for one small integer. **Anything reading that field must mask** (`& 15` for the role, `>>> 4` for the tool); pre-encoding output is entirely below 16 and decodes to its own role with tool 0. The viewer's readers and writers take the layout from `packages-mit/src/core/toolpath_encoding.js` (`STRIDE`, `ROLE`, `encodeRole`/`roleOf`/`toolOf`); the engine's standalone SLA worker keeps named copies.
+- `web/extract_all.py` takes the kernel key list (which preset columns to keep) from the GENERATED
+  `packages-mit/src/settings/kernel_setting_keys.js`, the list `gen_kernel_params.mjs` probes out of
+  `deriveKernelParams`. It used to regex-scan `packages/engine/src/settings.js` for quoted schema keys, which had two
+  failure modes: a comment quoting a key added a column, and when the mapping moved into `packages-mit` the scan fell
+  to 3 keys without an error (the committed presets predate the move, so it only showed on the next extraction).
+  A missing or empty list now stops the extraction. Regenerate the list first when the mapping changes.
 - **The transform gizmo is deliberately not the stock one.** Three edits to `TransformControls`, each measured, each
   easy to mistake for superstition and delete: (1) `showY` is false in **translate** mode only — a part prints off
   the bed, so up/down is not a move (it also takes the XY/YZ plane handles, leaving X/Z/XZ). Set per mode, and
@@ -263,7 +268,7 @@ The root `package.json` is the npm workspaces root (`packages-mit`, `packages`, 
   toolpaths every FFF plate keeps after slice-all. Before this, two resin plates showed only the focused one and
   the other read as a missing result. `core/sla_preview.js` is the one place the payload (lift, offsets, meshes)
   is derived, so the two previews cannot disagree on where a support tree stands.
-- UI components (viewer, components) are Shadow DOM isolated — each package's `styles.css` is inlined into the bundle via `?inline` and injected into the shadow root, so class names cannot collide with the host app's CSS.
+- UI components (viewer, components) are Shadow DOM isolated — each package's `styles.css` is inlined into the bundle via `?inline` and injected into the shadow root, so class names cannot collide with the host app's CSS. Their colours are `var(--_…)` references to `UI_TOKENS` (`packages-mit/src/core/theme.js`), prepended to each root as `THEME_CSS`; each also reads a public `--vp-…` override, the one styling hook that crosses the boundary. `test_viewer_docs.mjs` fails on a literal colour in either stylesheet.
 - **SLA is a second technology, not an FFF variant.** `printer_technology` routes it: `deriveSlaParams` ->
   `slice_sla`, with a JS contour fallback when the wasm is absent. The support chain under
   `packages/wasm-core/slasupport_port/` is PrusaSlicer 2.9.6 verbatim — its own guide is
@@ -310,14 +315,14 @@ The root `package.json` is the npm workspaces root (`packages-mit`, `packages`, 
   same input -> same bytes (pinned in `test_sl1_gpu.mjs`), but cross-vendor f32 rasterization may
   move boundary pixels within the tolerance that test asserts — a byte-diff between two machines'
   archives is expected, not a bug. GPU checks skip (not fail) without a device; run them under
-  node via `SL1_GPU_WEBGPU_PATH=<dawn index.js> node packages-mit/test_sl1_gpu.mjs`.
+  node via `SL1_GPU_WEBGPU_PATH=<dawn index.js> node packages-mit/tests/test_sl1_gpu.mjs`.
 - **The SL1 export is PORTRAIT by default**, like every Prusa SL1-family profile: the mask canvas is
   `pixels_y` wide by `pixels_x` tall, columns run along the display's y axis and rows along the X-mirrored
   x axis (`slaRasterTransform`, validated against masks a real 2.9.6 archive holds). `config.ini` is
   upstream `fill_iniconf`'s field set in `std::map` (alphabetical) order with 6-decimal floats.
   `test_sla_mt.mjs` pins the mt (pthread) kernel byte-identical to the st one over the same SLA slice.
 - Licensed AGPL-3.0-or-later (`LICENSE.txt`) — except `packages-mit/`, which is MIT and must never import the
-  AGPL package (`packages/viewer/test_license_boundary.mjs` enforces it). Which code may carry which licence, and
+  AGPL package (`packages/viewer/tests/test_license_boundary.mjs` enforces it). Which code may carry which licence, and
   why, is `packages/PROVENANCE.md`.
 
 ## Commands
@@ -365,10 +370,10 @@ cd web/viewer && npm run dev
 
 # Everything `npm test` runs, in two halves:
 npm run test:kernel    # wasm-core invariants (120+), the kernel-param table, the worker-protocol wrapper
-npm run test:core      # every packages-mit/test_*.mjs — the viewer's layer guard, wiring and doc gates, the pure modules, the toolpath contract, the version lockstep
+npm run test:core      # every packages-mit/tests/test_*.mjs — the viewer's layer guard, wiring and doc gates, the pure modules, the toolpath contract, the version lockstep
 npm run test:viewer    # what stayed with the kernel: the G-code round trip through the kernel, the license boundary, the preset-file test that reads the vendor catalog
 
-# The viewer half, individually (each is `node packages-mit/test_<name>.mjs`):
+# The viewer half, individually (each is `node packages-mit/tests/test_<name>.mjs`):
 #   layers          the src/ layer boundary is real, not decorative (see Structure below)
 #   viewer_docs     README shortcuts + features + panels match the code
 #   preset_file     OrcaSlicer preset .json / .orca_printer codecs (fixture is committed)
@@ -385,34 +390,33 @@ node packages/types/gen_kernel_params.mjs
 
 # The brush's kernel side: the swept (capsule) stroke, the section plane, the overhang limit, the fill preview.
 # Runs inside test:kernel — it guards entry points the viewer feature-detects, so a silent regression is invisible.
-node packages/wasm-core/test_paint_brush.mjs
+node packages/wasm-core/tests/test_paint_brush.mjs
 
 # 3mf project import — the painting codec/rebasing (kernel) and the parser/settings coercion (JS)
-node packages/wasm-core/test_paint_import.mjs
-node packages-mit/test_3mf_project.mjs
+node packages/wasm-core/tests/test_paint_import.mjs
+node packages-mit/tests/test_3mf_project.mjs
 
 # 3mf project export — the reverse codec (kernel) and the writer, read back through the importer (JS)
-node packages/wasm-core/test_paint_export.mjs
-node packages-mit/test_3mf_export.mjs
+node packages/wasm-core/tests/test_paint_export.mjs
+node packages-mit/tests/test_3mf_export.mjs
 
 # Uniform-scale drag ratio, the scale clamp, and layout-independent shortcut matching
-node packages-mit/test_scale_box.mjs
+node packages-mit/tests/test_scale_box.mjs
 
 # Undo/redo stack semantics (branch discard, coalescing, limit) + the Ctrl+Z/Y binding
-node packages-mit/test_history.mjs
+node packages-mit/tests/test_history.mjs
 
 # Per-plate settings: the override merge, the blocked-key gate, isolation, and the two-scope staleness
-node packages-mit/test_plate_settings.mjs
-node packages-mit/test_stale_slice.mjs
+node packages-mit/tests/test_plate_settings.mjs
+node packages-mit/tests/test_stale_slice.mjs
 
 # SLA: the kernel invariants + pad + mt parity + the hollowing gate run inside test:kernel; the rest standalone
-node packages/wasm-core/test_sla_kernel.mjs        # slice_sla end to end: contours, supports, lift frame
-node packages/wasm-core/test_sla_support_points.mjs # the ported SupportPointGenerator against its recorded run
-node packages/wasm-core/test_sla_support_slicer.mjs # the winding-true fallback slicer's loop contract
-node packages/wasm-core/test_sla_source_manifest.mjs # slasupport_port files match their upstream hashes
-node packages/engine/test_sla_request.mjs          # the typed SLA job protocol (capability codes)
-node packages-mit/test_sl1.mjs                  # SL1 raster transform (portrait), config.ini, archive
-node packages-mit/test_sla_3mf.mjs              # SLA 3mf records (points/drain holes) round-trip
+node packages/wasm-core/tests/test_sla_kernel.mjs        # slice_sla end to end: contours, supports, lift frame
+node packages/wasm-core/tests/test_sla_support_points.mjs # the ported SupportPointGenerator against its recorded run
+node packages/wasm-core/tests/test_sla_source_manifest.mjs # slasupport_port files match their upstream hashes
+node packages/engine/tests/test_sla_request.mjs          # the typed SLA job protocol (capability codes)
+node packages-mit/tests/test_sl1.mjs                  # SL1 raster transform (portrait), config.ini, archive
+node packages-mit/tests/test_sla_3mf.mjs              # SLA 3mf records (points/drain holes) round-trip
 
 # Rebuild the kernel (needs emscripten + brew boost/eigen + brew cgal for the SLA group)
 bash packages/wasm-core/build.sh
