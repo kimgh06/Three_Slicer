@@ -4,15 +4,16 @@
 // The isolation check compares derived kernel params (not G-code) across three conditions in one process:
 // plateSettings absent, empty, and holding another plate's override. Identical params into a deterministic
 // kernel is identical output, and comparing here keeps the invariant runnable without the WASM build.
-//   run: node packages/viewer/test_plate_settings.mjs
+//   run: node packages-mit/tests/test_plate_settings.mjs
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { cardScope } from '../src/core/plate_settings.js'
 import { effectiveSettings, truncatePlateSettings, overriddenPlateKeys, writePlateOverride, revertPlateKey,
   plateTechnology, plateBedBounds, plateDimsList, uniformPlateDims, plateContext,
   assertUniformTechnology, MixedTechExportError, assertHomogeneousBeds, MixedBedExportError,
-  PLATE_SETTING_BLOCKED_KEYS, dropStaleTechOverrides } from './src/core/plate_settings.js'
-import { deriveKernelParams } from './src/settings/index.js'
-import { applyPrinterPick, applyProcessPreset } from './src/core/printer_pick.js'
+  PLATE_SETTING_BLOCKED_KEYS, dropStaleTechOverrides } from '../src/core/plate_settings.js'
+import { deriveKernelParams } from '../src/settings/index.js'
+import { applyPrinterPick, applyProcessPreset } from '../src/core/printer_pick.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
@@ -255,13 +256,26 @@ console.log('\n[doc gate: the blocked-key list in AGENTS.md is the exported one]
 // documented contract cannot drift from the enforced one — same direction as test_kernel_params.mjs for PARAMS.md.
 // AGENTS.md is the monorepo's; a standalone checkout of this package has none, and the gate is about the
 //  monorepo's prose staying honest, so it is skipped rather than failed there.
-const agentsMdUrl = new URL('../AGENTS.md', import.meta.url)
+const agentsMdUrl = new URL('../../AGENTS.md', import.meta.url)
 if (existsSync(agentsMdUrl)) {
   const agentsMd = readFileSync(agentsMdUrl, 'utf8')
   for (const key of PLATE_SETTING_BLOCKED_KEYS)
     check(`AGENTS.md names blocked plate key ${key}`, agentsMd.includes(key))
   check('AGENTS.md mentions the per-plate settings contract', agentsMd.includes('plateSettings'))
 } else console.log('  skip: standalone checkout — AGENTS.md gate runs in the monorepo')
+
+// ---- cardScope: the one definition of "this card is editing the selected plate" ----
+console.log('\n[cardScope]')
+{
+  const global = { layer_height: 0.2 }, plates = { 1: { layer_height: 0.3 } }
+  const props = { settings: global, setSettings: () => {}, plateSettings: plates, setPlateSettings: () => {}, plateCount: 2, selectedPlate: 1, settingsScope: 'plate' }
+  check('plate scope binds the card to the plate\'s effective map', cardScope(props).plateScope && cardScope(props).settings.layer_height === 0.3)
+  check('global scope keeps the global pair', !cardScope({ ...props, settingsScope: 'global' }).plateScope && cardScope({ ...props, settingsScope: 'global' }).settings === global)
+  check('one plate has no plate scope', !cardScope({ ...props, plateCount: 1 }).plateScope)
+  check('no override setter, no plate scope', !cardScope({ ...props, setPlateSettings: undefined }).plateScope)
+  check('a card-specific condition can refuse it', !cardScope(props, false).plateScope)
+  check('missing scope props default to global', !cardScope({ settings: global, setSettings: () => {} }).plateScope)
+}
 
 console.log(failures ? `\n${failures} CHECK(S) FAILED\n` : '\nALL PLATE-SETTINGS CHECKS PASSED\n')
 process.exit(failures ? 1 : 0)
