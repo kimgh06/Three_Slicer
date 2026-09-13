@@ -1,13 +1,7 @@
-import { MAX_PAINT_EXTRUDERS } from './support_paint.js'
+import { MAX_PAINT_EXTRUDERS, DEFAULT_FILAMENT_COLORS, UNKNOWN_COLOR } from '../core/viewer_defaults.js'
 
-// Default colour per extruder slot, up to the selector's own ceiling of 16 (support_paint.js). A literal table
-// rather than a generated hue ramp because <input type="color"> only accepts hex, so a generated colour would need
-// an hsl->hex conversion written for a value the user immediately overrides anyway. The first two entries are the
-// long-standing T1/T2 defaults — an existing project must not change colour because the list grew.
-export const DEFAULT_FILAMENT_COLORS = [
-  '#6aa0dc', '#e08a2b', '#e0473b', '#3bb0e0', '#7ad14a', '#b06ad1', '#d1c34a', '#4ad1a8',
-  '#d16a9a', '#6a7ad1', '#8fd16a', '#d18f6a', '#6ad1d1', '#c74ad1', '#a8a8a8', '#4a6ad1',
-]
+// The default palette lives in core/viewer_defaults.js; re-exported here for existing importers.
+export { DEFAULT_FILAMENT_COLORS }
 
 // The filament list: its colours, and adding or removing a slot.
 //
@@ -15,7 +9,7 @@ export const DEFAULT_FILAMENT_COLORS = [
 // viewer DRAWS with — the object bodies, the paint chips, the paint overlay, the toolpath Filament view — and is
 // component state so those re-render. `filament_colour` is what the SETTINGS MAP carries: it is the key upstream
 // stores the palette under, so it is what `<SettingsPanel/>` edits, what a "Save as 3mf" writes out, and what a
-// project import reads back (`applyProjectFilaments`, actions/model_load.js). Only the import direction existed:
+// project import reads back (`replaceAll`, called from actions/model_load.js). Only the import direction existed:
 // picking a colour moved the state and left the settings map holding whatever the project had, so the swatch and
 // the saved file disagreed from the first click — and a project saved after recolouring came back in the old
 // colours. Every mutation below therefore mirrors the new list into the settings map.
@@ -38,7 +32,7 @@ export function makeFilamentColors(deps) {
 
   function addFilament() {
     setExtruderColors(colors => (colors.length >= MAX_PAINT_EXTRUDERS
-      ? colors : [...colors, DEFAULT_FILAMENT_COLORS[colors.length] || '#888888']))
+      ? colors : [...colors, DEFAULT_FILAMENT_COLORS[colors.length] || UNKNOWN_COLOR]))
     mirrorToSettings()
   }
 
@@ -63,5 +57,17 @@ export function makeFilamentColors(deps) {
     selectFilament?.(Math.min(removed, extruderColorsRef.current.length - 1))
   }
 
-  return { setExtColor, addFilament, removeFilament }
+  // A project import replaces the whole list. The project's own `filament_colour` has already landed in the settings
+  //  map by then, but the list drawn here can differ from it — a blank entry is drawn grey and anything past the
+  //  selector's 16 slots is dropped — so it is mirrored back like every other change, or a save writes the raw list.
+  function replaceAll(colors) {
+    const next = colors.slice(0, MAX_PAINT_EXTRUDERS)
+    if (!next.length) return
+    setExtruderColors(next)
+    mirrorToSettings()
+    apiRef.current?.recolorObjects()
+    applyViewColors()
+  }
+
+  return { setExtColor, addFilament, removeFilament, replaceAll }
 }
