@@ -1,6 +1,7 @@
 import { bedGridLines } from '../core/bed_grid.js'
 import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'
 import { plateNumberLabel } from './plate_labels.js'
+import { THEME } from '../core/theme.js'
 
 // When the plate layout changes (a bed override, a bed edit, a plate added), objects keep their PLATE, not
 // their world spot: membership is nearest-centre, and the centres just moved — without this, widening plate 1
@@ -78,12 +79,12 @@ export function rebuildPlates(THREE, t, { n, bw, bd, sel, platePos, dims }) {
     const { x: px, z: pz } = platePos(i)
     const pw = dims?.[i]?.w ?? bw, pd = dims?.[i]?.d ?? bd
     const { thin, bold } = gridFor(pw, pd)
-    const gt = new THREE.LineSegments(lineGeo(thin), new THREE.LineBasicMaterial({ color: 0x232a31 }))
-    const gb = new THREE.LineSegments(lineGeo(bold), new THREE.LineBasicMaterial({ color: 0x39434d }))
+    const gt = new THREE.LineSegments(lineGeo(thin), new THREE.LineBasicMaterial({ color: THEME.gridMinor }))
+    const gb = new THREE.LineSegments(lineGeo(bold), new THREE.LineBasicMaterial({ color: THEME.gridMajor }))
     gt.position.set(px, 0, pz); gb.position.set(px, 0, pz); t.scene.add(gt); t.scene.add(gb)
     const sel_ = i === sel
     const border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(pw, pd)),
-      new THREE.LineBasicMaterial({ color: sel_ ? 0x00ae42 : 0x4a5560, linewidth: sel_ ? 2 : 1 }))
+      new THREE.LineBasicMaterial({ color: sel_ ? THEME.accent : THEME.plateBorder, linewidth: sel_ ? 2 : 1 }))
     border.rotation.x = -Math.PI / 2; border.position.set(px, 0, pz); t.scene.add(border)
     const label = plateNumberLabel(THREE, i, sel_, px, pz, pw, pd); t.scene.add(label)
     t.plateBeds.push({ gridThin: gt, gridBold: gb, border, label })
