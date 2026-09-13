@@ -1,12 +1,15 @@
 // The plate grid — the one rule the scene, the 3mf writer and the G-code injection all have to agree on.
-//   Run: node packages/viewer/test_plate_layout.mjs
+//   Run: node packages-mit/tests/test_plate_layout.mjs
 // Characterization: every expectation below is the value the closure in use_three_scene.js produced before the
 //  grid moved into this module, so a change to either function has to be a deliberate one.
 import assert from 'node:assert'
 import {
   PLATE_GAP, MAX_PLATES, plateStep, plateCols, platePosition, plateIndexAtXZ, plateLayoutHetero, UPSTREAM_PLATE_GAP_RATIO,
   PLACE_GAP, nextPlacement,
-} from './src/core/plate_layout.js'
+} from '../src/core/plate_layout.js'
+import { DEFAULT_BED, DEFAULT_LINE_WIDTH, DEFAULT_LAYER_HEIGHT, DEFAULT_FILAMENT_DIAMETER } from '../src/core/viewer_defaults.js'
+import { BED_FALLBACK, AUTO_LINE_WIDTH, FFF_FALLBACKS } from '../src/settings/kernel_defaults.js'
+import { leanSchema } from '../src/settings/data.js'
 
 // ---- the constants other modules encode into files ----
 assert.equal(PLATE_GAP, 40)
@@ -116,5 +119,18 @@ for (const count of [1, 2, 3, 4, 5, 6, 9]) {
     }
   }
 }
+
+// ---- the viewer's fallbacks equal the kernel derivation's ----
+// core/viewer_defaults.js keeps its own copies so the react-free toolpath/gcode entries do not load the schema;
+//  these pin the copies to the originals, and the bed to the schema's own printable_area default.
+assert.deepStrictEqual({ ...DEFAULT_BED }, { ...BED_FALLBACK })
+{
+  const points = leanSchema.printable_area.default
+  const span = axis => Math.max(...points.map(point => point[axis])) - Math.min(...points.map(point => point[axis]))
+  assert.deepStrictEqual({ width: span(0), depth: span(1) }, { ...BED_FALLBACK })
+}
+assert.equal(DEFAULT_LINE_WIDTH, AUTO_LINE_WIDTH)
+assert.equal(DEFAULT_LAYER_HEIGHT, FFF_FALLBACKS.layer_height)
+assert.equal(DEFAULT_FILAMENT_DIAMETER, FFF_FALLBACKS.filament_diameter)
 
 console.log('plate_layout: ok')
