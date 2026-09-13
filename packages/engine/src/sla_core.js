@@ -10,7 +10,13 @@
 // Determinism: iteration order is the STL's own triangle order, stitching maps insert in encounter order, and
 //  vertices on a slicing plane are pushed up by a fixed epsilon — same input bytes, same output bytes.
 
-const ROLE_CONTOUR = 1          // rendered as 'wall' by the preview's feature colouring
+// The toolpath stream and binary STL layouts. This worker is standalone (no imports), so it keeps its own copy of
+//  numbers the viewer holds in core/toolpath_encoding.js and core/stl_format.js; TOOLPATH_SPEC.md is the contract.
+const STRIDE = 8                // floats per segment: [x0,y0,z0,enc, x1,y1,z1,enc]
+const ROLE_CONTOUR = 1          // ROLE.WALL — rendered as 'wall' by the preview's feature colouring
+const STL_HEADER_BYTES = 80
+const STL_DATA_OFFSET = 84      // header + the uint32 triangle count
+const STL_TRIANGLE_BYTES = 50
 const CONTOUR_WIDTH = 0.2       // display width of a contour segment (SLA has no bead width)
 const PLANE_EPS = 1e-9          // a vertex exactly on a plane counts as above it — deterministic tie-break
 const KEY_SCALE = 1e4           // endpoint welding: 0.1 micrometre grid
@@ -18,13 +24,13 @@ const KEY_SCALE = 1e4           // endpoint welding: 0.1 micrometre grid
 /** Binary STL -> Float32Array of 9 floats per triangle (vertices only; normals are recomputed). */
 export function parseBinarySTL(bytes) {
   if (!(bytes instanceof Uint8Array)) bytes = new Uint8Array(bytes)
-  if (bytes.byteLength < 84) return { error: 'not a binary STL (shorter than its own header)' }
+  if (bytes.byteLength < STL_DATA_OFFSET) return { error: 'not a binary STL (shorter than its own header)' }
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const count = dv.getUint32(80, true)
-  if (84 + 50 * count !== bytes.byteLength) return { error: 'not a binary STL (triangle count does not match the byte length)' }
+  const count = dv.getUint32(STL_HEADER_BYTES, true)
+  if (STL_DATA_OFFSET + STL_TRIANGLE_BYTES * count !== bytes.byteLength) return { error: 'not a binary STL (triangle count does not match the byte length)' }
   const tris = new Float32Array(count * 9)
   for (let i = 0; i < count; i++) {
-    const base = 84 + 50 * i + 12          // skip the stored normal — recomputed from the winding below
+    const base = STL_DATA_OFFSET + STL_TRIANGLE_BYTES * i + 12   // skip the stored normal — recomputed from the winding below
     for (let f = 0; f < 9; f++) tris[i * 9 + f] = dv.getFloat32(base + 4 * f, true)
   }
   return { tris, count }
@@ -149,15 +155,15 @@ export function sliceSla(stlBytes, params = {}, hooks = {}) {
     for (const pts of loops) { area += loopArea(pts); segCount += pts.length / 2 }
     area = Math.max(0, area)
     volume += area * thickness
-    const paths = new Float32Array(segCount * 8)
+    const paths = new Float32Array(segCount * STRIDE)
     const widths = new Float32Array(segCount)
     let w = 0
     for (const pts of loops) {
       const n = pts.length / 2
       for (let p = 0; p < n; p++) {
         const q = (p + 1) % n
-        paths[w * 8] = pts[p * 2]; paths[w * 8 + 1] = pts[p * 2 + 1]; paths[w * 8 + 2] = top; paths[w * 8 + 3] = ROLE_CONTOUR
-        paths[w * 8 + 4] = pts[q * 2]; paths[w * 8 + 5] = pts[q * 2 + 1]; paths[w * 8 + 6] = top; paths[w * 8 + 7] = ROLE_CONTOUR
+        paths[w * STRIDE] = pts[p * 2]; paths[w * STRIDE + 1] = pts[p * 2 + 1]; paths[w * STRIDE + 2] = top; paths[w * STRIDE + 3] = ROLE_CONTOUR
+        paths[w * STRIDE + 4] = pts[q * 2]; paths[w * STRIDE + 5] = pts[q * 2 + 1]; paths[w * STRIDE + 6] = top; paths[w * STRIDE + 7] = ROLE_CONTOUR
         widths[w] = CONTOUR_WIDTH
         w++
       }
