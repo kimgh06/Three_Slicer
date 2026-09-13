@@ -485,14 +485,16 @@ def _coerce(value, ctype):
     return value                      # strings / enums pass through unchanged
 
 def _kernel_keys(schema):
-    """The option keys the kernel actually consumes, read out of the settings mapping itself so the two never
-    drift apart: any schema key quoted in engine/src/settings.js is a key deriveKernelParams can read."""
-    path = os.path.join(REPO, 'packages', 'engine', 'src', 'settings.js')
-    try:
-        with open(path, encoding='utf-8') as fh: src = fh.read()
-    except OSError:
-        return []
-    return sorted({k for k in re.findall(r"'([a-z0-9_]+)'", src) if k in schema})
+    """The option keys the kernel actually consumes: the list gen_kernel_params.mjs PROBES out of
+    deriveKernelParams, one schema key at a time. It used to be a regex over engine/src/settings.js, which
+    silently shrank to 3 keys when the mapping moved into packages-mit — and a comment quoting a key widened it.
+    Missing or empty is an error, never an empty preset set: both callers write whatever this returns."""
+    path = os.path.join(REPO, 'packages-mit', 'src', 'settings', 'kernel_setting_keys.js')
+    with open(path, encoding='utf-8') as fh:
+        keys = sorted({k for k in re.findall(r'"([a-z0-9_]+)"', fh.read()) if k in schema})
+    if not keys:
+        raise SystemExit(f'{path} lists no schema keys; run node packages/types/gen_kernel_params.mjs first')
+    return keys
 
 def extract_processes(schema):
     """Print (process) presets — where the print-side accelerations and speeds live. Joined to printers by the
