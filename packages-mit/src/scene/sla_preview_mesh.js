@@ -4,6 +4,7 @@
 import * as THREE from 'three'
 import { indexedGeometry } from './sla_raster.js'
 import { stlToSoup } from '../core/model_geometry.js'
+import { THEME } from '../core/theme.js'
 
 export const disposeSceneGroup = (g) => { g.parent?.remove(g); g.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose() } }) }
 
@@ -24,11 +25,11 @@ export function buildSlaGroup(payload, clipPlanes) {
   //  scene/sla_raster.js); a sliced result stays a flat-shaded STL soup.
   const modelGeo = modelIndexed ? indexedGeometry(modelIndexed) : (modelSTL ? soup(stlToSoup(modelSTL)) : null)
   if (modelGeo) {
-    const mesh = new THREE.Mesh(modelGeo, Object.assign(material(modelIndexed?.colors ? 0xffffff : 0xd7862a), { vertexColors: !!modelIndexed?.colors }))
+    const mesh = new THREE.Mesh(modelGeo, Object.assign(material(modelIndexed?.colors ? 0xffffff : THEME.slaModel), { vertexColors: !!modelIndexed?.colors }))
     mesh.position.z = lift            // group is z-up: +z is world up
     group.add(mesh)
   }
-  if (supportMesh && supportMesh.length) group.add(new THREE.Mesh(soup(supportMesh), material(0x9b78d8)))
-  if (padMesh && padMesh.length) group.add(new THREE.Mesh(soup(padMesh), material(0xb0a06a)))
+  if (supportMesh && supportMesh.length) group.add(new THREE.Mesh(soup(supportMesh), material(THEME.slaSupport)))
+  if (padMesh && padMesh.length) group.add(new THREE.Mesh(soup(padMesh), material(THEME.slaPad)))
   return group
 }
