@@ -1,7 +1,7 @@
 // Stage 26 verification fixtures: a 20mm cube written as OBJ/PLY/3MF/AMF (the minimal valid files three's loaders accept).
 //  STL reuses the existing cube20.stl. The 3MF zip is assembled with fflate from the three bundle.
 import { writeFileSync, mkdirSync } from 'node:fs'
-import { zipSync, strToU8 } from '../viewer/node_modules/three/examples/jsm/libs/fflate.module.js'
+import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
 
 const S = 20
 // z-up cube: 8 vertices (0..S) + 12 triangles (outward). Same topology as boxTris.
