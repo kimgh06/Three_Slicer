@@ -10,6 +10,8 @@ import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
 import { createPaintInput } from './paint_input.js'
 import { createSectionPlane } from './section_plane.js'
+import { DEFAULT_BED, DEFAULT_FILAMENT_COLORS } from '../core/viewer_defaults.js'
+import { THEME } from '../core/theme.js'
 
 // Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26). Only the model->three local transform remains here.
 // model -> three-local (R=RotX(-90°)), centered in XZ, minY=0
@@ -39,8 +41,8 @@ export function useThreeScene(deps) {
   const mountRef = useRef(null)
   const three = useRef({})
   const paintDrawingRef = useRef(false)
-  const plateBWRef = useRef(200)        // plate (bed) width/depth — used for PX_i and membership calculations
-  const plateBDRef = useRef(200)
+  const plateBWRef = useRef(DEFAULT_BED.width)        // plate (bed) width/depth — used for PX_i and membership calculations
+  const plateBDRef = useRef(DEFAULT_BED.depth)
   const plateHeteroRef = useRef(null)   // { dims, layout } only when plates carry DIFFERENT beds; null keeps the closed form
 
   // The grid itself is plate_layout.js (pure, tested). These two only bind it to the refs that hold the live plate
@@ -66,7 +68,7 @@ export function useThreeScene(deps) {
     let w = mount.clientWidth || 800, h = mount.clientHeight || 480
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setSize(w, h); renderer.setClearColor(0x161a1e, 1)
+    renderer.setSize(w, h); renderer.setClearColor(THEME.sceneBackground, 1)
     renderer.domElement.setAttribute('data-webgl', renderer.getContext() ? 'ok' : 'fail')
     mount.appendChild(renderer.domElement)
 
@@ -76,8 +78,8 @@ export function useThreeScene(deps) {
     //  (within the 0.2mm layer height). logarithmicDepthBuffer was rejected: gl_FragDepth disables early-Z -> 3x fps drop at 489k overdraw.
     const camera = new THREE.PerspectiveCamera(50, w / h, 1, 3000)
     camera.position.set(210, 180, 260)
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2f36, 1.0))
-    const dir = new THREE.DirectionalLight(0xffffff, 1.1); dir.position.set(120, 220, 160); scene.add(dir)
+    scene.add(new THREE.HemisphereLight(THEME.lightSky, THEME.lightGround, 1.0))
+    const dir = new THREE.DirectionalLight(THEME.lightSky, 1.1); dir.position.set(120, 220, 160); scene.add(dir)
 
     // Stage 29-2: bed (plate) rendering is managed by apiRef.setPlates (the bed useEffect initializes it). The initial single grid was removed.
 
@@ -308,7 +310,7 @@ export function useThreeScene(deps) {
     //  registered). It shows selection through its own opacity instead.
     const paint = () => { for (const m of activeMeshes()) {
       const isSelected = selection.has(m)
-      if (m.material.emissive) m.material.emissive.setHex(isSelected ? 0x00ae42 : m === hovered ? 0x1f5c34 : 0x000000)
+      if (m.material.emissive) m.material.emissive.set(isSelected ? THEME.accent : m === hovered ? THEME.accentHover : 0x000000)
       else if (m.userData?.isPrimeTower) m.material.opacity = isSelected ? 0.6 : m === hovered ? 0.5 : 0.35
     } }
     // With several objects selected the name of one of them says less than the count does.
@@ -512,7 +514,7 @@ export function useThreeScene(deps) {
       const geo = new THREE.BufferGeometry()
       geo.setAttribute('position', new THREE.Float32BufferAttribute(localPos, 3)); geo.computeVertexNormals()
       geo.computeBoundingBox()
-      const col0 = extruderColorsRef.current[0] || '#6aa0dc'   // apply the T1 filament color
+      const col0 = extruderColorsRef.current[0] || DEFAULT_FILAMENT_COLORS[0]   // apply the T1 filament color
       const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(col0), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide }))
       if (rot) mesh.rotation.copy(rot)
       if (scale) mesh.scale.copy(scale)
@@ -571,7 +573,7 @@ export function useThreeScene(deps) {
         const geo = buildOverhangGeometry(o.mesh, overhangDeg)
         if (!geo) continue
         const overlay = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-          color: 0xff4433, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false,
+          color: THEME.overhang, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false,
           polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
         }))
         overlay.userData.overhang = true
@@ -816,7 +818,7 @@ export function useThreeScene(deps) {
             const geo = new THREE.BoxGeometry(1, 1, 1)
             // Translucent and unlit so it reads as a placeholder rather than a part to be printed, and so the model
             //  behind it stays visible when the two overlap — which is exactly the case worth seeing.
-            const mat = new THREE.MeshBasicMaterial({ color: 0x4fd1c5, transparent: true, opacity: 0.35, depthWrite: false })
+            const mat = new THREE.MeshBasicMaterial({ color: THEME.primeTower, transparent: true, opacity: 0.35, depthWrite: false })
             m = new THREE.Mesh(geo, mat)
             m.userData = { name: 'Prime tower', isPrimeTower: true }
             t.scene.add(m)
