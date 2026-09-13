@@ -10,6 +10,8 @@
 //  acquires via scene/gpu_device.js, node via Dawn. AA: aa>1 renders 4x MSAA (WebGPU's guaranteed
 //  set is {1,4}) — per-sample stencil coverage resolves to the gray level.
 
+import { STL_HEADER_BYTES, STL_DATA_OFFSET, STL_TRIANGLE_BYTES, stlByteLength } from './stl_format.js'
+
 const BUF_VERTEX = 0x20, BUF_COPY_DST = 0x8, BUF_COPY_SRC = 0x4, BUF_MAP_READ = 0x1, BUF_UNIFORM = 0x40
 const TEX_RENDER = 0x10, TEX_COPY_SRC = 0x1
 
@@ -39,13 +41,13 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) wz: f32 };
 /** Binary STL bytes -> Float32Array of xyz triples (normals skipped). null when not binary STL. */
 const stlVerts = (bytes) => {
   if (!(bytes instanceof Uint8Array)) bytes = new Uint8Array(bytes)
-  if (bytes.byteLength < 84) return null
+  if (bytes.byteLength < STL_DATA_OFFSET) return null
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const n = dv.getUint32(80, true)
-  if (84 + 50 * n !== bytes.byteLength) return null
+  const n = dv.getUint32(STL_HEADER_BYTES, true)
+  if (stlByteLength(n) !== bytes.byteLength) return null
   const out = new Float32Array(n * 9)
   for (let i = 0; i < n; i++) {
-    const base = 84 + 50 * i + 12
+    const base = STL_DATA_OFFSET + STL_TRIANGLE_BYTES * i + 12   // past the stored normal
     for (let f = 0; f < 9; f++) out[i * 9 + f] = dv.getFloat32(base + 4 * f, true)
   }
   return out
