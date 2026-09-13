@@ -1,11 +1,12 @@
 // The pure side of painting: the per-extruder facet counts, the overlay/cursor colour mapping, and the brush's
 // keyboard layer.
-//   Run: node packages/viewer/test_paint.mjs
+//   Run: node packages-mit/tests/test_paint.mjs
 import assert from 'node:assert'
-import { materialPaintCounts } from './src/core/paint_counts.js'
-import { paintStateColor, SUPPORT_OVERLAY_COLOR, UNPAINTED_COLOR } from './src/core/paint_colors.js'
-import { makeKeyHandler } from './src/core/shortcut_keymap.js'
-import { kernelClipPlane, clipConstantForRatio } from './src/core/paint_clip.js'
+import { materialPaintCounts } from '../src/core/paint_counts.js'
+import { paintStateColor, SUPPORT_OVERLAY_COLOR, UNPAINTED_COLOR } from '../src/core/paint_colors.js'
+import { makeKeyHandler } from '../src/core/shortcut_keymap.js'
+import { kernelClipPlane, clipConstantForRatio } from '../src/core/paint_clip.js'
+import { makeFilamentColors } from '../src/actions/filament_colors.js'
 
 // ── counts ────────────────────────────────────────────────────────────────────
 // The worker's per-state map is the only place a tool above T2 is ever counted: measured, a T3 stroke replies
@@ -109,4 +110,30 @@ assert.deepStrictEqual(press({ key: 'ㅅ', code: 'KeyS' }), ['cursor:sphere'])
 // Ctrl combinations belong to the app, not to the brush — Ctrl+V must stay paste, not the vertical lock.
 assert.deepStrictEqual(press({ key: 'v', code: 'KeyV', ctrlKey: true }), [])
 
-console.log('paint counts + colours + section plane + brush keymap: ok')
+// ── filament palette: both halves move together ───────────────────────────────
+// `extruderColors` is what the viewer draws, `filament_colour` what a save writes. A project import used to set
+//  only the first, so a blank entry drew grey but saved blank, and a list past 16 slots saved whole.
+{
+  const colorsRef = { current: ['#111111'] }
+  let settings = { filament_colour: ['#111111'] }
+  let recolored = 0, viewColored = 0
+  const palette = makeFilamentColors({
+    extruderColorsRef: colorsRef,
+    setExtruderColors: next => { colorsRef.current = typeof next === 'function' ? next(colorsRef.current) : next },
+    setSettings: update => { settings = update(settings) },
+    apiRef: { current: { recolorObjects: () => { recolored++ } } },
+    objectsRef: { current: [] },
+    refreshObjects: () => {}, applyViewColors: () => { viewColored++ }, selectFilament: () => {},
+  })
+  const imported = Array.from({ length: 18 }, (_, i) => `#0000${String(i).padStart(2, '0')}`)
+  palette.replaceAll(imported)
+  assert.strictEqual(colorsRef.current.length, 16)
+  assert.deepStrictEqual(settings.filament_colour, colorsRef.current)
+  assert.strictEqual(recolored, 1); assert.strictEqual(viewColored, 1)
+  // An empty list is a project that named no filaments: it keeps the current palette rather than clearing it.
+  palette.replaceAll([])
+  assert.strictEqual(colorsRef.current.length, 16)
+  assert.strictEqual(recolored, 1)
+}
+
+console.log('paint counts + colours + section plane + brush keymap + filament palette: ok')
