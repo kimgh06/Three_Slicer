@@ -4,12 +4,12 @@
 // Both are documentation nobody re-reads after writing it, sitting next to code that is edited whenever an action
 // gains an entry point — so the two drift silently, and the reader finds out by pressing a key that does nothing
 // or setting a flag that turns nothing off.
-//   run: node packages/viewer/test_viewer_docs.mjs
+//   run: node packages-mit/tests/test_viewer_docs.mjs
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 let failures = 0
 // src/ is laid out in layers (core/ scene/ actions/ ui/). Look a file up by NAME so that moving one between
 //  layers does not silently turn this gate into a crash — the gate is about content, not about paths.
@@ -126,7 +126,7 @@ check('and it is the only place that creates one', anchorSites.join(' ') === 'ex
 // The interception itself runs here rather than being read: a save that silently reaches neither the host nor the
 //  download folder is the one failure mode worth a real call. Node has no URL.createObjectURL, which is exactly
 //  what makes this work — a handled export must return before touching it, so an unhandled one would throw.
-const { download } = await import('./src/actions/export_actions.js')
+const { download } = await import('../src/actions/export_actions.js')
 {
   const seen = []
   download(new Uint8Array([1, 2, 3]), 'part.3mf', 'model/3mf', (file, name) => { seen.push([file, name]); return true })
@@ -137,6 +137,26 @@ const { download } = await import('./src/actions/export_actions.js')
   try { await download(new Uint8Array([1]), 'x.stl', 'model/stl', () => false) } catch (error) { threw = error }
   check('a declined export falls through to the download path', threw !== null,
     'expected the DOM path to be attempted (no URL.createObjectURL in Node)')
+}
+
+// ---- theming: the palette is the one place colours live, and VIEWER.md lists all of it ----
+console.log('\n[theming]')
+{
+  const { UI_TOKENS } = await import('../src/core/theme.js')
+  const kebab = key => key.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase())
+  for (const [key, value] of Object.entries(UI_TOKENS)) {
+    check(`VIEWER.md documents --vp-${kebab(key)} with its default`, readme.includes(`| \`--vp-${kebab(key)}\` | \`${value}\` |`))
+  }
+  // A literal colour in either stylesheet is a colour a host cannot theme. The status line's black text-shadow is
+  //  the one exception: a legibility shadow, not part of the palette.
+  for (const sheet of ['styles.css', 'src/components/styles.css']) {
+    const code = readFileSync(join(here, sheet), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const literals = (code.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).filter(hex => hex.toLowerCase() !== '#000')
+    check(`${sheet} carries no literal colour`, literals.length === 0, literals.join(' '))
+    const unknown = [...code.matchAll(/var\(--_([a-z-]+)\)/g)].map(match => match[1])
+      .filter(name => !Object.keys(UI_TOKENS).some(key => kebab(key) === name))
+    check(`${sheet} uses only palette tokens`, unknown.length === 0, [...new Set(unknown)].join(' '))
+  }
 }
 
 console.log(failures ? `\n${failures} CHECK(S) FAILED\n` : '\nALL VIEWER-DOC CHECKS PASSED\n')
