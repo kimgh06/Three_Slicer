@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { paintStateColor } from '../core/paint_colors.js'
+import { MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 
 // Stage 20: manual support painting (enforcer/blocker), extended to material painting — brushing a region so it
 //  prints with another extruder. Both brushes drive the same selector, which is why they are one mode variable.
@@ -11,7 +12,7 @@ import { paintStateColor } from '../core/paint_colors.js'
 export const PAINT_STATE_NONE = 0
 export const PAINT_STATE_ENFORCER = 1   // also "extruder 1"
 export const PAINT_STATE_BLOCKER = 2    // also "extruder 2"
-export const MAX_PAINT_EXTRUDERS = 16   // the upstream enum stops at Extruder16
+export { MAX_PAINT_EXTRUDERS }   // defined in core/viewer_defaults.js; re-exported for existing importers
 
 // Paint mode -> the integer the selector stores on every brushed facet. `materialExtruderIndex` is 0-based (T1 = 0);
 //  null/absent means the eraser is selected, which writes NONE — the same value that clears a support mark.
