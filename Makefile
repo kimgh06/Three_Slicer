@@ -24,7 +24,7 @@ bump:  ## set three-slicer, three-slicer-viewer, the pin and the demo app's pins
 	  edit("web/viewer/package.json", p => { p.dependencies["three-slicer"] = "$(V)"; p.dependencies["three-slicer-viewer"] = "$(V)" }); \
 	  console.log("bumped both packages and the pin to $(V)")'
 	@npm i --package-lock-only --no-audit --no-fund >/dev/null
-	@node packages-mit/test_version_lockstep.mjs >/dev/null && echo "lockstep ok"
+	@node packages-mit/tests/test_version_lockstep.mjs >/dev/null && echo "lockstep ok"
 
 preflight:  ## everything that must hold before a publish; DRY=1 skips the git-state checks
 	@grep -q "^## $(VERSION)" packages/CHANGELOG.md || { echo "packages/CHANGELOG.md has no '## $(VERSION)' entry"; exit 1; }

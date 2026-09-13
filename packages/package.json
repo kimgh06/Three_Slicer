@@ -90,23 +90,20 @@
   },
   "files": [
     "engine",
-    "!engine/**/.omc",
     "types",
-    "!**/test_*.mjs",
+    "!**/tests/**",
     "!types/gen_*.mjs",
     "components/dist",
     "viewer/dist",
-    "viewer/styles.css",
-    "components/styles.css",
     "data",
     "data/ui-tree-keys.json",
     "data/config-schema-lean.json",
     "!data/config-schema-builddump.json",
-    "!data/**/.omc",
     "README.md",
     "CHANGELOG.md",
     "THIRD-PARTY-NOTICES.md",
-    "LICENSE.txt"
+    "LICENSE.txt",
+    "!**/.omc"
   ],
   "repository": {
     "type": "git",
