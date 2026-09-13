@@ -1,8 +1,8 @@
 // SLA contour slicer invariants (sla_core.js) + the SLA settings derivation (settings.js).
 //  Runs under plain node — the whole point of the pure-JS SLA path is that nothing here needs a browser or WASM.
 import { strict as assert } from 'node:assert'
-import { sliceSla, parseBinarySTL } from './src/sla_core.js'
-import { deriveSlaParams, printerTechnology, schemaDefault } from './src/settings.js'
+import { sliceSla, parseBinarySTL } from '../src/sla_core.js'
+import { deriveSlaParams, printerTechnology, schemaDefault } from '../src/settings.js'
 
 let passed = 0
 const ok = (name) => { passed++; console.log('  ok', name) }
@@ -175,7 +175,7 @@ const netArea = (layer) => layer.area
 // [printers] the resin machines ship in the catalog, marked by vendor, and their profile carries the technology —
 //  so picking one flips the routing by itself
 {
-  const { printerSettings, printerTechByVendor } = await import('./src/settings.js')
+  const { printerSettings, printerTechByVendor } = await import('../src/settings.js')
   assert.equal(printerTechByVendor.PrusaResearchSLA, 'SLA')
   assert.equal(printerTechByVendor.AnycubicSLA, 'SLA')
   const sl1 = printerSettings('Original Prusa SL1')
@@ -190,7 +190,7 @@ const netArea = (layer) => layer.area
 // [materials] the resin catalog ships, the SL1 pick carries its default material's exposure (upstream layering:
 //  exposure lives in the sla_material preset, supports in sla_print — the two never touch each other's keys)
 {
-  const { printerSettings, resinCatalog, resinSettingsFor } = await import('./src/settings.js')
+  const { printerSettings, resinCatalog, resinSettingsFor } = await import('../src/settings.js')
   assert.ok(resinCatalog.length > 400, `catalog ${resinCatalog.length}`)
   const sl1 = printerSettings('Original Prusa SL1')
   assert.equal(sl1.exposure_time, 6)                       // Prusament Tough Orange, not the code default 10

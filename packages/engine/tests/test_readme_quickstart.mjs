@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const readme = readFileSync(join(here, '..', 'README.md'), 'utf8')
 
 const section = readme.slice(readme.indexOf('## Quick Start: Headless Slicing'))

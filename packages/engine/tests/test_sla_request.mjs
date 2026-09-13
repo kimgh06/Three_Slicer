@@ -5,7 +5,7 @@ import {
   SlaRequestError,
   parseSlaJob,
   slaFallbackParams,
-} from './src/sla_request.js'
+} from '../src/sla_request.js'
 
 let passed = 0
 const ok = (name) => { passed++; console.log('  ok', name) }

@@ -4,9 +4,9 @@
 // caller that is waiting for it, assembling a streamed slice, failing the right promise — and none of that needs
 // a kernel. The kernel side of the same protocol is already covered by wasm-core/test.mjs.
 //   run: node packages/engine/test_client.mjs
-import { createSlicerClient } from './src/client.js'
-import { sliceWarnings, withSliceWarnings } from './src/warnings.js'
-import { sliceThroughput, withSliceThroughput } from './src/throughput.js'
+import { createSlicerClient } from '../src/client.js'
+import { sliceWarnings, withSliceWarnings } from '../src/warnings.js'
+import { sliceThroughput, withSliceThroughput } from '../src/throughput.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
