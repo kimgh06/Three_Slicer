@@ -1,10 +1,10 @@
 // Box select — the screen projection that decides what a Shift+drag catches.
-//   Run: node packages/viewer/test_box_select.mjs
+//   Run: node packages-mit/tests/test_box_select.mjs
 // The maths moved out of use_three_scene.js verbatim; only the renderer half stayed behind. A real
 //  PerspectiveCamera runs fine under node (no WebGL involved), which is the reason this is testable at all.
 import assert from 'node:assert'
 import * as THREE from 'three'
-import { projectToScreenRect, rectsOverlap, dragToRect, meshesInRect } from './src/scene/box_select.js'
+import { projectToScreenRect, rectsOverlap, dragToRect, meshesInRect } from '../src/scene/box_select.js'
 
 // The canvas the scene actually uses, as a DOMRect-shaped plain object.
 const RECT = { left: 0, top: 0, width: 800, height: 480 }

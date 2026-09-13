@@ -2,11 +2,11 @@
 //   Run: node packages-mit/test_loaders.mjs
 import { readFileSync, existsSync } from 'node:fs'
 import assert from 'node:assert'
-import { parse3MF } from './src/core/parse_3mf.js'
+import { parse3MF } from '../src/core/parse_3mf.js'
 
 // Paths are resolved from this file, not the cwd, so the test runs the same from the repo root and from a
 //  standalone checkout of this package. The committed fixtures live beside it for the same reason.
-const here = new URL('.', import.meta.url)
+const here = new URL('..', import.meta.url)   // the package root, one above tests/
 const at = (path) => new URL(path, here)
 
 // `committed` marks a fixture that lives in this repo. The rest are in the untracked upstream checkout
@@ -46,7 +46,7 @@ assert.ok(ran >= required, `too few files verified (${ran} < ${required})`)
 console.log(`\n3MF parser passed on ${ran} files`)
 
 // ---- Remaining formats (STL/OBJ/PLY). AMF is only verified in the browser because three's AMFLoader uses DOMParser. ----
-const { loadModel } = await import('./src/scene/model_loaders.js')
+const { loadModel } = await import('../src/scene/model_loaders.js')
 for (const [file, minTris] of [['cube.obj', 12], ['cube.ply', 12], ['pseudo_benchy.stl', 12]]) {
   const p = `testing_files/${file}`
   const b = readFileSync(at(p))

@@ -1,5 +1,5 @@
 // The src/ layer boundary, as a check rather than a convention.
-//   Run: node packages/viewer/test_layers.mjs
+//   Run: node packages-mit/tests/test_layers.mjs
 //
 // src/ is laid out by ONE question — "can this run under node?" — because that is the only line that was already
 // real in this package: every test here covers something on the pure side of it, and nothing covers the other.
@@ -18,7 +18,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const src = join(here, 'src')
 const sourcesIn = (dir) => readdirSync(join(src, dir))
   .filter(name => name.endsWith('.js') || name.endsWith('.jsx'))

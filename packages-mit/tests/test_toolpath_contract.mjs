@@ -1,5 +1,5 @@
 // The toolpath contract, pinned against the CURRENT implementation.
-//   Run: node packages/viewer/test_toolpath_contract.mjs
+//   Run: node packages-mit/tests/test_toolpath_contract.mjs
 //
 // Why this exists: the toolpath renderer is four files (packages/PROVENANCE.md §2) that have to be rewritten
 // before the viewer can carry a permissive license, and until now exactly ONE test touched any of it —
@@ -15,10 +15,10 @@
 // It also PRINTS a snapshot of the values it saw, so a rewrite can be diffed against a recorded run rather
 // than against a reading of the old code.
 import assert from 'node:assert'
-import { buildSegmentData, roleRatios } from './src/core/toolpath_segments.js'
-import { computeColors, VIEW_TYPES } from './src/core/toolpath_views.js'
+import { buildSegmentData, roleRatios } from '../src/core/toolpath_segments.js'
+import { computeColors, VIEW_TYPES } from '../src/core/toolpath_views.js'
 import { TYPE_COLOR, TYPE_LABEL, TOOL_COLOR, DEFAULT_RANGES_COLORS, packColor, hexToRgb, rangeColorAt }
-  from './src/core/toolpath_palette.js'
+  from '../src/core/toolpath_palette.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {

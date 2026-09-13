@@ -3,7 +3,7 @@
 // move must reproduce the sequence the paths array was built in, and the nozzle point must be each move's own
 // endpoint. A bug here does not throw; it shows every extrusion first and the travels afterwards.
 import assert from 'node:assert'
-import { buildSegmentData, moveCursor, layerMoveCount, topMoveLayer } from './src/core/toolpath_segments.js'
+import { buildSegmentData, moveCursor, layerMoveCount, topMoveLayer } from '../src/core/toolpath_segments.js'
 
 let checks = 0
 const ok = (what) => { checks++; console.log('  ok', what) }

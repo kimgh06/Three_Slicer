@@ -1,10 +1,10 @@
 // buildMergedSTL / exportObjects — the single owner of the kernel's facet numbering (AGENTS.md).
-//   Run: node packages/viewer/test_merge_stl.mjs
+//   Run: node packages-mit/tests/test_merge_stl.mjs
 // The body moved out of use_three_scene.js verbatim; these assertions are what stops it drifting from here on.
 import assert from 'node:assert'
 import * as THREE from 'three'
-import { buildMergedSTL, exportObjects, sortByExtruder, plateOfObject } from './src/core/model_geometry.js'
-import { platePosition } from './src/core/plate_layout.js'
+import { buildMergedSTL, exportObjects, sortByExtruder, plateOfObject } from '../src/core/model_geometry.js'
+import { platePosition } from '../src/core/plate_layout.js'
 
 const GRID = { plateCount: 4, bedWidth: 200, bedDepth: 200 }
 

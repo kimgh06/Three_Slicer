@@ -2,12 +2,12 @@
 // is what went in. A writer can only be wrong in ways its own reader hides, so every assertion here goes through
 // parse3MFProject / normalizeProjectSettings / platePlacements — the code that reads a MakerWorld file — rather
 // than re-parsing the XML the writer just produced.
-import { write3MFProject, writeSTL } from './src/core/write_3mf.js'
-import { rebasePaintOntoSubset } from './src/actions/export_actions.js'
-import { parse3MFProject } from './src/core/parse_3mf.js'
-import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from './src/settings/index.js'
-import { platePlacements } from './src/actions/model_load.js'
-import { plateStep, plateCols } from './src/core/plate_layout.js'
+import { write3MFProject, writeSTL } from '../src/core/write_3mf.js'
+import { rebasePaintOntoSubset } from '../src/actions/export_actions.js'
+import { parse3MFProject } from '../src/core/parse_3mf.js'
+import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from '../src/settings/index.js'
+import { platePlacements } from '../src/actions/model_load.js'
+import { plateStep, plateCols } from '../src/core/plate_layout.js'
 
 let failures = 0
 const check = (name, cond, detail = '') => {

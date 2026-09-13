@@ -1,7 +1,7 @@
 // Surface-nets reconstruction invariants (core/sla_reconstruct.js): outward winding (positive signed volume),
 //  dimensional fidelity within a voxel, holes preserved, and the RGBA slice reader's row flip.
 import { strict as assert } from 'node:assert'
-import { surfaceNets, makeStreamingNets, smoothMesh, fillSliceFromRGBA } from './src/core/sla_reconstruct.js'
+import { surfaceNets, makeStreamingNets, smoothMesh, fillSliceFromRGBA } from '../src/core/sla_reconstruct.js'
 
 let passed = 0
 const ok = (name) => { passed++; console.log('  ok', name) }

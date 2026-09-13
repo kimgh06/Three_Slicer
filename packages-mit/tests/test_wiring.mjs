@@ -1,5 +1,5 @@
 // Every name a factory destructures is actually handed to it.
-//   Run: node packages/viewer/test_wiring.mjs
+//   Run: node packages-mit/tests/test_wiring.mjs
 //
 // Viewport.jsx passes the shared refs and setters as one `wiring` object spread into each factory, instead of
 // listing 43 of them again at every call site. That trade has exactly one failure mode: add a dep to a factory's
@@ -12,7 +12,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const src = join(here, 'src')
 const viewport = readFileSync(join(src, 'Viewport.jsx'), 'utf8')
 

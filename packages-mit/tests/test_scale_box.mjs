@@ -1,10 +1,10 @@
 // The two pieces of logic that are not obvious by reading: the uniform-scale drag ratio, and matching a letter
 // shortcut on the physical key so a Korean (or any non-Latin) layout still triggers it.
-//   node packages/viewer/test_scale_box.mjs
+//   node packages-mit/tests/test_scale_box.mjs
 import assert from 'node:assert'
 import * as THREE from 'three'
-import { dragRatio, clampMeshScale } from './src/scene/scale_box.js'
-import { makeKeyHandler } from './src/core/shortcut_keymap.js'
+import { dragRatio, clampMeshScale } from '../src/scene/scale_box.js'
+import { makeKeyHandler } from '../src/core/shortcut_keymap.js'
 
 const centre = { x: 100, y: 100 }
 const at = (x, y) => ({ x, y })

@@ -2,8 +2,8 @@
 //  reconstruction from the segment stream, the deterministic config.ini, and the archive layout — all under
 //  plain node, with the canvas injected as a recorder stub (the PNG encode is the one browser-only piece).
 import { strict as assert } from 'node:assert'
-import { slaRasterTransform, drawLayer, sl1ConfigIni, sl1LayerName, makeSL1, sl1RolesSidecar } from './src/core/sl1_write.js'
-import { parseSl1, parseSl1Ini, parseRolesSidecar, sl1DisplayAffine, sl1SettingsFrom, pngSize } from './src/core/sl1_read.js'
+import { slaRasterTransform, drawLayer, sl1ConfigIni, sl1LayerName, makeSL1, sl1RolesSidecar } from '../src/core/sl1_write.js'
+import { parseSl1, parseSl1Ini, parseRolesSidecar, sl1DisplayAffine, sl1SettingsFrom, pngSize } from '../src/core/sl1_read.js'
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
 
 let passed = 0

@@ -4,8 +4,8 @@
 // G-code export — describes the settings it was sliced with, and none of it says so. Change a setting and the
 // preview keeps rendering, the estimate keeps reading plausibly, and Export keeps handing out G-code the current
 // settings would not produce.
-//   run: node packages/viewer/test_stale_slice.mjs
-import { sameSettings, survivesSettingsChange, changedPlates, stalePlateKeys } from './src/core/slice_staleness.js'
+//   run: node packages-mit/tests/test_stale_slice.mjs
+import { sameSettings, survivesSettingsChange, changedPlates, stalePlateKeys } from '../src/core/slice_staleness.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {

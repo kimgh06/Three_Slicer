@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { strToU8, unzipSync, zipSync } from 'three/examples/jsm/libs/fflate.module.js'
-import { parse3MFProject } from './src/core/parse_3mf.js'
-import { write3MFProject } from './src/core/write_3mf.js'
+import { parse3MFProject } from '../src/core/parse_3mf.js'
+import { write3MFProject } from '../src/core/write_3mf.js'
 
 const model = `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">

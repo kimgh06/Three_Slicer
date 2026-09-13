@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const permissive = JSON.parse(readFileSync(join(here, 'package.json'), 'utf8'))
 const agplPath = join(here, '..', 'packages', 'package.json')
 // The pair is checked where the pair exists. A standalone checkout (the MIT mirror) has no AGPL half to

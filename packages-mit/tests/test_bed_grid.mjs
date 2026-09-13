@@ -1,7 +1,7 @@
 // The bed grid's arithmetic — upstream Bed_2D's cell ladder and the corner-origin layout.
-//   Run: node packages/viewer/test_bed_grid.mjs
+//   Run: node packages-mit/tests/test_bed_grid.mjs
 import assert from 'node:assert'
-import { gridCellSize, bedGridLines } from './src/core/bed_grid.js'
+import { gridCellSize, bedGridLines } from '../src/core/bed_grid.js'
 
 // ---- the spacing ladder, keyed on the SHORTER edge ----
 assert.equal(gridCellSize(200, 200), 10)

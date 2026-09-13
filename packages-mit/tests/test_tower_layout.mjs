@@ -1,8 +1,8 @@
 // Prime tower placement — the stand-in must land where the slicer will actually put the tower.
-//   Run: node packages/viewer/test_tower_layout.mjs
+//   Run: node packages-mit/tests/test_tower_layout.mjs
 import assert from 'node:assert'
-import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats } from './src/core/tower_layout.js'
-import { platePosition } from './src/core/plate_layout.js'
+import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats } from '../src/core/tower_layout.js'
+import { platePosition } from '../src/core/plate_layout.js'
 
 const BED = { bedWidth: 200, bedDepth: 200 }
 const SIZE = 15                                   // the fallback ring's footprint
