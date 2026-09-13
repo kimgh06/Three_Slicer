@@ -3,7 +3,7 @@
 //  legacy BATCH path (result.gcode). This is the "absolute output-identity requirement" for the OOM streaming round.
 //  Runs the same three default-path cases as golden.mjs; for each, slices twice (batch, stream) and
 //  asserts the concatenated stream chunks == batch bytes. Also asserts stats parity (segments/filament).
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 function boxTris(ox, oy, oz, sx, sy, sz) {
   const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]]

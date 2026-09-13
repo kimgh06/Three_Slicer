@@ -1,6 +1,6 @@
 // 22-fix reproduction: replicate buildLayerRibbon vertex math in node and scan
 // generated geometry for NaN / huge coordinates (the "giant diagonal polygon" bug).
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 function boxTris(ox,oy,oz,sx,sy,sz){const c=[[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v=>[v[0]+ox,v[1]+oy,v[2]+oz]);const q=(a,b,cc,d)=>[[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]];return[...q(0,1,2,3),...q(4,5,6,7),...q(0,1,5,4),...q(1,2,6,5),...q(2,3,7,6),...q(3,0,4,7)]}
 // thin cross (arms ~0.9mm wide → gapfill/thinwall)
 function crossTris(){const a=[]; const arm=0.9,L=16,H=6; a.push(...boxTris(-L/2,-arm/2,0,L,arm,H)); a.push(...boxTris(-arm/2,-L/2,0,arm,L,H)); return a}

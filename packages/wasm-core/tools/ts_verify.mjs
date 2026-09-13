@@ -2,7 +2,7 @@
 // Checks: (1) support_style=tree slices an overhang model with type5 support segments > 0 + the
 // "organic tree" g-code marker, (2) per-layer type5 distribution DIFFERS from tree_lite (organic
 // branch signature), (3) determinism (two identical runs).
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 // --- self-contained binary-STL box generator (avoids importing test.mjs, which runs+exits) ---
 function boxTris(ox, oy, oz, sx, sy, sz) {

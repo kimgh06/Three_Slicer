@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")/.." && pwd)   # the package root, one above tools/
 MANIFEST="$HERE/slasupport_port/SOURCE_MANIFEST.json"
 BUILD="$HERE/build.sh"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/sla-source-probe.XXXXXX")

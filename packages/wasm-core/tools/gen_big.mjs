@@ -1,6 +1,6 @@
 // For stage-22 verification: generates a large (>150k segment) STL and measures the segment count.
 // A high-density model that reproduces desktop-preview (libvgcode) class volumetric render load.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 import { writeFileSync } from 'node:fs'
 
 function boxTris(ox,oy,oz,sx,sy,sz){

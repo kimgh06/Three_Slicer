@@ -3,7 +3,7 @@
 //  emit + heap release; worker-side transfer simulated by dropping each chunk). Reports peak WASM heap via
 //  Module.heap_size() (emscripten_get_heap_size; ALLOW_MEMORY_GROWTH grows monotonically → == peak).
 //  Fresh Module per run. Progress → stderr (keeps the session watchdog fed). Hard self-timeout.
-import createSlicer from '../engine/src/slicer_core.js'
+import createSlicer from '../../engine/src/slicer_core.js'
 
 const HARD_TIMEOUT_MS = 180000
 const killer = setTimeout(() => { console.error('bench: HARD TIMEOUT'); process.exit(2) }, HARD_TIMEOUT_MS)

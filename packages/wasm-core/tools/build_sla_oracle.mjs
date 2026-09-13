@@ -36,7 +36,7 @@ const sourceFiles = ['version.inc', 'src/libslic3r/SLAPrintSteps.cpp', 'src/libs
 mkdirSync(out, { recursive: true })
 const manifest = {
   schema: 'three-slicer.sla-native-oracle-manifest.v1',
-  fixtureDirectory: join(dirname(fileURLToPath(import.meta.url)), 'fixtures/sla'),
+  fixtureDirectory: join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures/sla'),
   prusa: { source: basename(source), version, revision, sourceFiles },
   adapter: {
     required: true,
