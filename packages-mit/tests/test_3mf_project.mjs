@@ -3,10 +3,12 @@
 // The fixture is built here rather than committed because the painting encoding is the point of the test — a
 // checked-in binary would prove the parser agrees with itself, not that it agrees with upstream's format.
 import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
-import { parse3MFProject } from './src/core/parse_3mf.js'
-import { normalizeProjectSettings, deriveKernelParams } from './src/settings/index.js'
-import { leanSchema as schema } from './src/settings/data.js'
-import { platePlacements } from './src/actions/model_load.js'
+import { parse3MFProject } from '../src/core/parse_3mf.js'
+import { normalizeProjectSettings, deriveKernelParams } from '../src/settings/index.js'
+import { leanSchema as schema } from '../src/settings/data.js'
+import { platePlacements, makeModelLoad } from '../src/actions/model_load.js'
+import { write3MFProject } from '../src/core/write_3mf.js'
+import { plateStep, plateCols } from '../src/core/plate_layout.js'
 
 let failures = 0
 const check = (name, cond, detail = '') => {
@@ -240,6 +242,42 @@ check('unparsable project_settings yields null settings', broken.project.setting
   check('a hole is auto for that plate, not a neighbour\'s entry',
     deriveKernelParams({ wipe_tower_x: [15, null, 245], wipe_tower_y: [220, null, 222] }, { plate: 1 }).prime_tower_x === undefined)
   eq('a legacy scalar applies to every plate', deriveKernelParams({ wipe_tower_x: 40, wipe_tower_y: 50 }, { plate: 2 }).prime_tower_x, 40)
+}
+
+// ---- loading a multi-plate project end to end, through the model loader the viewer uses ----
+// This path had no test and broke silently: applyProject called dropPlateResult, a local of loadFiles, so every
+//  project that placed objects on another plate failed with "dropPlateResult is not defined" and piled every object
+//  onto the selected plate. The scene is faked; the loader, the parser and the placement run for real.
+{
+  const BED = 256, PLATES = 2
+  const tetra = (atX, atY) => {
+    const v = [[0, 0, 0], [20, 0, 0], [0, 20, 0], [0, 0, 20]].map(([x, y, z]) => [x + atX, y + atY, z])
+    return Float32Array.from([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]].flatMap(f => f.flatMap(i => v[i])))
+  }
+  const objects = [0, 1].map(plate => {
+    const x = (plate % plateCols(PLATES)) * plateStep(BED), y = -(Math.floor(plate / plateCols(PLATES)) * plateStep(BED))
+    return { id: plate + 1, name: `plate${plate}`, extruder: 1, plate, plateOriginX: x, plateOriginY: y, tris: tetra(x - 10, y - 10), faceCount: 4, paint: null }
+  })
+  const bytes = await write3MFProject(objects, { printable_area: [[0, 0], [BED, 0], [BED, BED], [0, BED]] }, { bedWidth: BED, bedDepth: BED, plateCount: PLATES })
+
+  const errors = [], placed = [], plateCalls = []
+  let nextId = 1
+  const api = {
+    addObject: (name) => ({ id: nextId++, name }), placeObjectOnPlate: (id, index) => placed.push([id, index]),
+    setPlates: (count, width, depth) => { plateCalls.push([count, width, depth]); return false },
+    showObjects: () => {}, setObjectExtruder: () => {},
+  }
+  const refs = name => ({ current: name === 'plateResultsRef' || name === 'plateOffsetsRef' ? { 1: 'stale' } : name === 'bedRef' ? { bedW: 200, bedD: 200 } : name === 'plateCountRef' ? 1 : name === 'selectedPlateRef' ? 0 : null })
+  const deps = new Proxy({ apiRef: { current: api }, objectsRef: { current: [] }, setError: message => { if (message) errors.push(message) } }, {
+    get: (target, key) => key in target ? target[key] : String(key).endsWith('Ref') ? (target[key] = refs(key)) : () => {},
+    has: () => true,
+  })
+  const loader = makeModelLoad(deps)
+  await loader.loadFiles([new File([bytes], 'two_plates.3mf')])
+  eq('a two-plate project loads without an error', errors, [])
+  eq('the grid grows to the project\'s plates, on the project\'s bed', plateCalls[0], [PLATES, BED, BED])
+  check('each object lands on the plate the file names', placed.some(([, index]) => index === 1), JSON.stringify(placed))
+  check('the plate an object lands on drops its stale slice', !(1 in deps.plateResultsRef.current), JSON.stringify(deps.plateResultsRef.current))
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\n3MF project import passed')
