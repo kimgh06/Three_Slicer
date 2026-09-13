@@ -1,5 +1,6 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
+import { REPO, REPO_URL } from './repo.js'
 
 // The live embed below mounts the real <Viewport/>, so the same guard Prepare.jsx uses applies here:
 // Googlebot's renderer has no WebGL, and mounting there would blank the one page that carries the
@@ -22,13 +23,13 @@ const OPTION_COUNT = 976
 
 // npm and GitHub live in the CTA row — this row holds only destinations the buttons do not.
 const LINKS = [
-  ['Community', 'https://github.com/kimgh06/Web_Three_Slicer/discussions', 'questions · ideas · show and tell'],
-  ['Issues', 'https://github.com/kimgh06/Web_Three_Slicer/issues', 'bug reports'],
-  ['Integration specs', 'https://github.com/kimgh06/Web_Three_Slicer/tree/main/examples', 'the demo specs and sources'],
+  ['Community', `${REPO_URL}/discussions`, 'questions · ideas · show and tell'],
+  ['Issues', `${REPO_URL}/issues`, 'bug reports'],
+  ['Integration specs', `${REPO_URL}/tree/main/examples`, 'the demo specs and sources'],
 ]
 
 // Every figure is measured from the shipped artifacts (schema key count from gen_settings_types,
-// catalog sizes from data/, invariant count from wasm-core/test.mjs) — update alongside them.
+// catalog sizes from data/, invariant count from wasm-core/tests/test.mjs) — update alongside them.
 const STATS = [
   [OPTION_COUNT, 'OrcaSlicer options'],
   ['1,041', 'printer profiles'],
@@ -226,9 +227,9 @@ export default function Landing() {
           <a className="lp-btn" href="/docs/orcaslicer-webassembly-port">How it was built</a>
           <a className="lp-btn" href="/about">About</a>
           <a className="lp-btn" href="https://www.npmjs.com/package/three-slicer" target="_blank" rel="noreferrer">npm package</a>
-          <a className="lp-btn" href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">
+          <a className="lp-btn" href={REPO_URL} target="_blank" rel="noreferrer">
             GitHub
-            <img className="lp-badge" src="https://img.shields.io/github/stars/kimgh06/Web_Three_Slicer?style=social" alt="GitHub stars" width="80" height="20" />
+            <img className="lp-badge" src={`https://img.shields.io/github/stars/${REPO}?style=social`} alt="GitHub stars" width="80" height="20" />
           </a>
         </div>
         <nav className="lp-links" aria-label="Project links">
@@ -337,8 +338,8 @@ export default function Landing() {
 
       <footer className="lp-foot">
         <span>Source</span>
-        <a href="https://github.com/kimgh06/Web_Three_Slicer" target="_blank" rel="noreferrer">kimgh06/Web_Three_Slicer</a>
-        <a href="https://github.com/kimgh06/Web_Three_Slicer/discussions" target="_blank" rel="noreferrer">Community</a>
+        <a href={REPO_URL} target="_blank" rel="noreferrer">{REPO}</a>
+        <a href={`${REPO_URL}/discussions`} target="_blank" rel="noreferrer">Community</a>
         <a href="/docs/orcaslicer-webassembly-port">Engineering notes</a>
         <a href="/about">About</a>
       </footer>
