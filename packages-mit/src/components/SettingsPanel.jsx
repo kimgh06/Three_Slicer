@@ -20,6 +20,8 @@ const CUSTOM_WIDGETS = {
 }
 import { settingRaw, printerTechnology } from 'three-slicer-viewer/settings'
 import { disabledKeys, makeCfg } from 'three-slicer-viewer/toggle'
+import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
+import { THEME_CSS } from '../core/theme.js'
 
 const MODES = ['all', 'simple', 'advanced', 'expert', 'develop']
 const builderLabel = b => b.replace('::build', '').replace('Tab', '').replace('_sla', ' (SLA)')
@@ -77,7 +79,7 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled, customWi
     case 'checkbox':
       return <input type="checkbox" checked={Array.isArray(raw) ? !!raw[0] : !!raw} onChange={e => set(e.target.checked)} disabled={disabled} />
     case 'color':
-      return <input type="color" value={typeof scalar === 'string' && scalar.startsWith('#') ? scalar : '#00ae42'} onChange={e => set(e.target.value)} disabled={disabled} />
+      return <input type="color" value={typeof scalar === 'string' && scalar.startsWith('#') ? scalar : UNKNOWN_COLOR} onChange={e => set(e.target.value)} disabled={disabled} />
     case 'textarea':
       return <textarea rows={2} value={Array.isArray(raw) ? raw.join('\n') : (raw ?? '')} onChange={e => set(e.target.value)} disabled={disabled} />
     case 'points':
@@ -150,7 +152,7 @@ export default function SettingsPanel({ schema = leanSchema, uiTree = DEFAULT_TR
   const row = (k, i) => <EditableOptionRow schema={schema} key={k + i} optKey={k} settings={settings} setSettings={setSettings} disabled={disabled} onOptionOpen={onOptionOpen} customWidgets={customWidgets}
     overridden={overriddenKeys?.includes(k)} onRevertKey={onRevertKey} />
   return (
-    <ShadowHost css={shadowCss} className={embedded ? 'sp-embedded' : undefined}>
+    <ShadowHost css={THEME_CSS + shadowCss} className={embedded ? 'sp-embedded' : undefined}>
     <div className="settings-panel">
       {!only && <div className="sp-top">
         <input className="sp-search" placeholder={`Search options (${Object.keys(schema).length})…`} value={query} onChange={e => setQuery(e.target.value)} data-testid="opt-search" />
