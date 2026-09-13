@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { THEME } from '../core/theme.js'
 
 // Box select (upstream's rectangle selection, GLCanvas3D.cpp:4404) — the rubber band and what it catches.
 // Shift + left-drag, exactly as upstream binds it — Alt is NOT a de-select there either (`//BBS: don't use alt
@@ -62,7 +63,7 @@ export function meshesInRect(meshes, drag, camera, rect) {
 export function createBoxSelect({ camera, domElement, mount }) {
   const band = document.createElement('div')
   band.dataset.testid = 'box-select-band'
-  band.style.cssText = 'position:absolute;border:1px solid #00ae42;background:rgba(0,174,66,0.12);'
+  band.style.cssText = `position:absolute;border:1px solid ${THEME.accent};background:color-mix(in srgb, ${THEME.accent} 12%, transparent);`
     + 'pointer-events:none;display:none;z-index:5'
   mount.appendChild(band)
   let drag = null

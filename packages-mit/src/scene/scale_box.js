@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { THEME } from '../core/theme.js'
 
 // The selection's bounding box, and uniform (all three axes at once) scaling by dragging one of its corners.
 // Two jobs in one object because they share the same geometry: the box is drawn whenever something is selected —
@@ -12,7 +13,7 @@ import * as THREE from 'three'
 
 const CORNERS = [[0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1]]
 const HANDLE_PX = 12          // handles keep a constant SCREEN size, so a 5mm part and a 300mm part grab alike
-const COLOR = 0x00ae42        // the selection green used by the emissive tint
+const COLOR = THEME.accent   // the selection green used by the emissive tint
 
 // How much bigger the object gets: the pointer's distance from the box centre now, over its distance at the grab.
 //  Measured in SCREEN space rather than on a drag plane because a plane seen nearly edge-on makes the ray

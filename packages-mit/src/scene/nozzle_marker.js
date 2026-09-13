@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { THEME } from '../core/theme.js'
 
 // The nozzle marker — upstream's SequentialView::Marker (GCodeViewer.hpp), reduced to what this viewer needs.
 // Two cones of the same shape and colour: the CURRENT position solid, the layer's END position as a ghost. Same
@@ -15,7 +16,7 @@ import * as THREE from 'three'
 
 const BASE_HEIGHT = 1                  // unit cone; the per-frame scale is what sets the real size
 const SCREEN_FRACTION = 0.055          // of the viewport height
-const COLOR = 0xff7a1a
+const COLOR = THEME.nozzle
 
 function makeCone(opacity) {
   // Apex at the origin pointing DOWN the group's local -z (the group is z-up), body extending +z above it.
