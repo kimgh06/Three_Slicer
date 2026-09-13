@@ -70,7 +70,7 @@ handle.setColors(computeColors(data, 'speed', ctx).color) // recolour without a 
 ## Licensing
 
 MIT. It depends on nothing AGPL, which a check in this repository enforces rather than documents
-(`packages/viewer/test_license_boundary.mjs`).
+(`packages/viewer/tests/test_license_boundary.mjs`).
 
 The implementation was written from [`TOOLPATH_SPEC.md`](./TOOLPATH_SPEC.md), a functional contract, rather
 than derived from any upstream slicer. The reasoning and evidence are in
