@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero } from './plate_layout.js'
+import { STL_HEADER_BYTES, STL_DATA_OFFSET, STL_TRIANGLE_BYTES, stlByteLength } from './stl_format.js'
 
 // The object list -> model-space geometry. Both consumers of that conversion live here because they share three
 //  things that must not drift apart: the extruder sort (which decides the merged facet numbering), the
@@ -78,9 +79,9 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
   // Toolpath display offset: put the plate back where it lives. Plate 0 is the origin, so a single-plate
   //  project slices in world coordinates and needs no offset at all.
   const offX3 = origin.x, offZ3 = origin.z
-  const buf = new ArrayBuffer(84 + triCount * 50), dvw = new DataView(buf)
-  dvw.setUint32(80, triCount, true)
-  let off = 84, vi = 0
+  const buf = new ArrayBuffer(stlByteLength(triCount)), dvw = new DataView(buf)
+  dvw.setUint32(STL_HEADER_BYTES, triCount, true)
+  let off = STL_DATA_OFFSET, vi = 0
   for (let t = 0; t < triCount; t++) {
     off += 12
     for (let k = 0; k < 3; k++) { dvw.setFloat32(off, out[vi++], true); dvw.setFloat32(off + 4, out[vi++], true); dvw.setFloat32(off + 8, out[vi++], true); off += 12 }
@@ -138,13 +139,13 @@ export function exportObjects(objects, { plateCount, bedWidth, bedDepth }) {
 //  mesh, so the two cannot disagree. Returns null on anything that is not a well-formed binary STL.
 export function stlToSoup(buf) {
   const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
-  if (!bytes || bytes.byteLength < 84) return null
+  if (!bytes || bytes.byteLength < STL_DATA_OFFSET) return null
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const count = dv.getUint32(80, true)
-  if (84 + 50 * count !== bytes.byteLength) return null
+  const count = dv.getUint32(STL_HEADER_BYTES, true)
+  if (stlByteLength(count) !== bytes.byteLength) return null
   const pos = new Float32Array(count * 9)
   for (let i = 0; i < count; i++) {
-    const base = 84 + 50 * i + 12
+    const base = STL_DATA_OFFSET + STL_TRIANGLE_BYTES * i + 12   // past the stored normal
     for (let f = 0; f < 9; f++) pos[i * 9 + f] = dv.getFloat32(base + 4 * f, true)
   }
   return pos
