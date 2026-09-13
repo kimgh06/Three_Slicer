@@ -10,6 +10,8 @@
 import { zipSync, zip, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
 import { serializeProjectSettings } from 'three-slicer-viewer/settings'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
+import { DEFAULT_BED, SLA_POINT_RADIUS } from './viewer_defaults.js'
+import { STL_HEADER_BYTES, STL_DATA_OFFSET, stlByteLength } from './stl_format.js'
 
 // Deflate is the single largest cost of writing a project, and on the main thread every millisecond of it is a
 //  frozen tab. fflate's async entry point moves it to a Web Worker pool — the mirror of what parse_3mf.js does for
@@ -199,7 +201,7 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
  */
 export async function write3MFProject(objects, settings, opts = {}) {
   const {
-    paintExport = null, paintKind = 'color', bedWidth = 200, bedDepth = 200, plateCount = 1,
+    paintExport = null, paintKind = 'color', bedWidth = DEFAULT_BED.width, bedDepth = DEFAULT_BED.depth, plateCount = 1,
     application = 'ThreeSlicer',
   } = opts
   if (!objects?.length) throw new Error('nothing to export')
@@ -320,7 +322,7 @@ export async function write3MFProject(objects, settings, opts = {}) {
     const points = object.sla?.supportPoints || []
     if (points.length) supportLines.push(`object_id=${at + 1}|${points.map(point => {
       const type = point.type === 'manual' ? 2 : point.type === 'island' ? 1 : 3
-      return [...point.position, point.radius ?? 0.4, type].map(num).join(' ')
+      return [...point.position, point.radius ?? SLA_POINT_RADIUS, type].map(num).join(' ')
     }).join(' ')}`)
     const holes = object.sla?.drainHoles || []
     if (holes.length) drainLines.push(`object_id=${at + 1}|${holes.map(hole => {
@@ -350,11 +352,11 @@ export async function write3MFProject(objects, settings, opts = {}) {
  *  A degenerate triangle has no direction to point in, so its normal stays zero rather than becoming NaN. */
 export function writeSTL(tris, header = 'ThreeSlicer export') {
   const faceCount = tris.length / 9
-  const buffer = new ArrayBuffer(84 + faceCount * 50)
+  const buffer = new ArrayBuffer(stlByteLength(faceCount))
   const view = new DataView(buffer)
-  new Uint8Array(buffer, 0, 80).set(strToU8(header.slice(0, 79)))
-  view.setUint32(80, faceCount, true)
-  let at = 84, read = 0
+  new Uint8Array(buffer, 0, STL_HEADER_BYTES).set(strToU8(header.slice(0, STL_HEADER_BYTES - 1)))
+  view.setUint32(STL_HEADER_BYTES, faceCount, true)
+  let at = STL_DATA_OFFSET, read = 0
   for (let f = 0; f < faceCount; f++) {
     const ax = tris[read + 3] - tris[read], ay = tris[read + 4] - tris[read + 1], az = tris[read + 5] - tris[read + 2]
     const bx = tris[read + 6] - tris[read + 3], by = tris[read + 7] - tris[read + 4], bz = tris[read + 8] - tris[read + 5]
