@@ -1,5 +1,5 @@
 // The two packages ship as a locked pair, as a check rather than a convention.
-//   Run: node packages-mit/test_version_lockstep.mjs
+//   Run: node packages-mit/tests/test_version_lockstep.mjs
 //
 // three-slicer re-exports three-slicer-viewer (viewer/toolpath, viewer/gcode). If the dependency were a
 // RANGE, `three-slicer@0.3.0` would happily resolve a later `0.3.7` of this package, and the first place that

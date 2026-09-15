@@ -1,5 +1,5 @@
 // The license boundary, from the permissive side: this package carries no AGPL.
-//   Run: node packages-mit/test_license_boundary.mjs
+//   Run: node packages-mit/tests/test_license_boundary.mjs
 //
 // The split only means something if this holds. A single import of `three-slicer` from here would make the
 // tarball a combined work, and the MIT grant on it would be one nobody had the right to give. It lives in

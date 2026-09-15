@@ -1,6 +1,6 @@
 // The brush's kernel side, beyond "a facet got marked": the swept stroke, the section plane, the overhang limit
 // and the fill preview. All four are upstream behaviour the bridge previously did not expose.
-//   Run: node packages/wasm-core/test_paint_brush.mjs
+//   Run: node packages/wasm-core/tests/test_paint_brush.mjs
 import createSlicer from '../../engine/src/slicer_core.js'
 
 // A tall thin plate, finely triangulated along x so a stroke has facets to land on between two samples. 1x1mm

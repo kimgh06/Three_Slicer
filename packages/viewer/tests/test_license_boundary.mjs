@@ -135,7 +135,7 @@ for (const path of MIT_CLEAN) {
 }
 
 console.log('\n[license: the permissive package carries no AGPL]')
-// The permissive side proves its own boundary — packages-mit/test_license_boundary.mjs scans its sources, types,
+// The permissive side proves its own boundary — packages-mit/tests/test_license_boundary.mjs scans its sources, types,
 //  data, styles and dist for any AGPL specifier — so the mirror repo carries the proof with it. Here it is run,
 //  and what only the monorepo can see is added: the pair is published together (packages/RELICENSE.md section
 //  3), and a mismatch would publish a combination nobody built.
