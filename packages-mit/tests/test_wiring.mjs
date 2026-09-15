@@ -90,5 +90,13 @@ const allFactorySource = [...sources.values()].join('\n')
 const unused = [...wiring].filter(name => !new RegExp(`\\b${name}\\b`).test(allFactorySource))
 check('every name in `wiring` is read by at least one factory', unused.length === 0, unused.join(' '))
 
+// Both shadow roots must be handed the palette. Without it the stylesheets still render — every var() carries the
+//  same default — so a dropped THEME_CSS breaks only the host's --vp-* overrides, silently. This is the guard.
+for (const [label, path] of [['Viewport', join(src, 'Viewport.jsx')], ['SettingsPanel', join(src, 'components', 'SettingsPanel.jsx')]]) {
+  const text = readFileSync(path, 'utf8')
+  check(`${label} prepends THEME_CSS to the stylesheet it injects`, /css=\{THEME_CSS \+ \w+\}/.test(text))
+  check(`${label} imports THEME_CSS`, /import \{[^}]*\bTHEME_CSS\b[^}]*\} from '[^']*theme\.js'/.test(text))
+}
+
 console.log(failures ? `\n${failures} CHECK(S) FAILED` : '\nALL WIRING CHECKS PASSED')
 assert.equal(failures, 0)
