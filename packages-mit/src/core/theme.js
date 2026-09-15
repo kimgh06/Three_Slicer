@@ -67,6 +67,7 @@ export const UI_TOKENS = Object.freeze({
   lightTextFaint: '#8a9099',
   // status
   info: '#2b6cff',
+  infoInk: '#2563eb',           // the info blue as a filled badge under white text (4.5:1)
   infoSoft: '#e6efff',
   techBadge: '#6d7ce0',         // the resin marker on an object-list plate header
   danger: '#e23b3b',
@@ -77,6 +78,7 @@ export const UI_TOKENS = Object.freeze({
   warn: '#f0a542',
   warnInk: '#a86a12',
   warnSoft: '#fdf4e3',
+  warnSoftHover: '#f3e2cb',
   warnBorder: '#d8b48a',
   warnOnDark: '#f0c060',
   warnDeep: '#3a2a10',
@@ -84,5 +86,20 @@ export const UI_TOKENS = Object.freeze({
 })
 
 const kebab = key => key.replace(/[A-Z]/g, letter => '-' + letter.toLowerCase())
+
+// The tokens a rule needs as translucent fill. CSS cannot take the alpha off a hex, and color-mix() would raise the
+//  browser floor above the one VIEWER.md promises (Chrome 89+/Safari 15+), so each of these also gets an `-rgb` twin
+//  for `rgba(var(--_x-rgb), .93)`. A host overriding one of these must set both halves (VIEWER.md says so).
+const WITH_ALPHA = ['accent', 'darkBase', 'darkSurface', 'warnDeep']
+
+const rgbOf = hex => [1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16)).join(', ')
+
+/** `#rrggbb` -> `rgba(r, g, b, a)`, for the scene's DOM overlays (the box-select band). */
+export const withAlpha = (hex, alpha) => `rgba(${rgbOf(hex)}, ${alpha})`
+
 // Prepended to each shadow root's stylesheet (ShadowHost).
-export const THEME_CSS = `:host{${Object.entries(UI_TOKENS).map(([key, value]) => `--_${kebab(key)}:var(--vp-${kebab(key)},${value});`).join('')}}\n`
+export const THEME_CSS = `:host{${Object.entries(UI_TOKENS).map(([key, value]) => {
+  const name = kebab(key)
+  const own = `--_${name}:var(--vp-${name},${value});`
+  return WITH_ALPHA.includes(key) ? own + `--_${name}-rgb:var(--vp-${name}-rgb,${rgbOf(value)});` : own
+}).join('')}}\n`

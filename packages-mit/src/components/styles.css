@@ -17,7 +17,7 @@
 .pts { font-size: 11px; color: var(--_light-text-muted); }
 
 .badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; color: var(--_on-accent); text-align: center; }
-.mode-simple { background: var(--_accent); } .mode-advanced { background: var(--_info); }
+.mode-simple { background: var(--_accent-ink); } .mode-advanced { background: var(--_info-ink); }
 .mode-expert { background: var(--_warn); } .mode-develop { background: var(--_danger); }
 .mode-none, .mode-undefined { background: var(--_light-text-faint); }
 .muted { color: var(--_light-text-faint); font-weight: 400; font-size: 12px; }
@@ -36,7 +36,7 @@
 .widget-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .reset-btn { flex: 0 0 auto; border: 1px solid var(--_warn-border); background: var(--_warn-soft); color: var(--_warn-ink);
   border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1; padding: 1px 5px; }
-.reset-btn:hover { background: color-mix(in srgb, var(--_warn-soft), var(--_warn-ink) 10%); }
+.reset-btn:hover { background: var(--_warn-soft-hover); }
 
 /* ---- Panel shell ---- */
 .settings-panel { flex: 0 0 400px; width: 400px; border-left: 1px solid var(--_light-divider);
