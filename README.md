@@ -10,9 +10,9 @@ Resin printing is a second technology in the same kernel, routed by `printer_tec
 
 - Demo: [slicer.kimgh06.com](https://slicer.kimgh06.com/)
 - npm packages: [three-slicer](https://www.npmjs.com/package/three-slicer) (AGPL, slicing) · [three-slicer-viewer](https://www.npmjs.com/package/three-slicer-viewer) (MIT, viewer)
-- Source: [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer) · viewer mirror [kimgh06/three-slicer-viewer](https://github.com/kimgh06/three-slicer-viewer)
+- Source: [kimgh06/Three_Slicer](https://github.com/kimgh06/Three_Slicer) · viewer mirror [kimgh06/three-slicer-viewer](https://github.com/kimgh06/three-slicer-viewer)
 - Integration example specs: [examples/DEMOS.md](examples/DEMOS.md)
-- Community: [questions, ideas, or a print you sliced with it](https://github.com/kimgh06/Web_Three_Slicer/discussions) — bug reports go to [Issues](https://github.com/kimgh06/Web_Three_Slicer/issues)
+- Community: [questions, ideas, or a print you sliced with it](https://github.com/kimgh06/Three_Slicer/discussions) — bug reports go to [Issues](https://github.com/kimgh06/Three_Slicer/issues)
 
 ## Packages (npm workspace)
 

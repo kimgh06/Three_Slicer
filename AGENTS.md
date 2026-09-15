@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Web_Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. The root holds three folders:
+Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. The root holds three folders:
 
 - **`slicers/`** — the upstream reference checkouts, untracked: OrcaSlicer at `slicers/slicer` (the extraction/porting source — its own guide is `slicers/slicer/AGENTS.md`) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 - **`packages/`** — the published npm package `three-slicer` (AGPL) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
