@@ -446,6 +446,9 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
   Both preset artifacts carry only the keys some preset actually sets, so their key sets stay disjoint and
   applying one never clears another's values.
   New artifacts must also be added to `packages/package.json` `files`, or they are missing from the tarball.
+  **A `!` entry in `files` only subtracts from the entries BEFORE it** — `!**/tests/**` and `!**/.omc` sit after the
+  folders they prune for that reason, and a folder added below them is not covered. Measured: with `!engine/**/.omc`
+  listed before `data`, `three-slicer@0.3.0` still shipped `types/.omc/`. `pack_check.sh` fails on any dot-path now.
   Prefer consuming `three-slicer/data` (named exports, import attribute included) — the raw `three-slicer/data/*.json` is available too.
   **When importing a new JSON file, always add it to `engine/src/data.js`**: Vite/esbuild strip
   `with { type: 'json' }` from bundle output, so with more than one import site the consumer's bundler warns about mismatched attributes.
