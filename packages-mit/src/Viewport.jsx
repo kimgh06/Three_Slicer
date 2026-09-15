@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw } from 'three-slicer-viewer/settings'
+import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import ShadowHost from './shadow_host.jsx'
 import { useSliceRequest, useAutoSlice } from './use_slice_request.js'
 import { useStaleSlice } from './use_stale_slice.js'

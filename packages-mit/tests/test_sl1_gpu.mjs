@@ -12,7 +12,7 @@
 import { strict as assert } from 'node:assert'
 import { inflateSync } from 'node:zlib'
 import { encodeGray8 } from '../src/core/png_gray.js'
-import { rasterizeMask, loopsOfPaths } from '../src/core/raster_mask.js'
+import { rasterizeMask } from '../src/core/raster_mask.js'
 import { makeSl1GpuRaster } from '../src/core/sl1_raster_gpu.js'
 import { makeSl1ParityGpu } from '../src/core/sl1_parity_gpu.js'
 import { slaRasterTransform, makeSL1 } from '../src/core/sl1_write.js'

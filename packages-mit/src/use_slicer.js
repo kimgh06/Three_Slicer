@@ -2,7 +2,7 @@ import { log } from './core/log.js'
 import { effectiveSettings, plateTechnology } from './core/plate_settings.js'
 import { statsFromKernel } from './core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw } from 'three-slicer-viewer/settings'
+import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { DEFAULT_BED } from './core/viewer_defaults.js'
 
 
