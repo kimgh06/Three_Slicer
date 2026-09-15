@@ -154,7 +154,7 @@ console.log('\n[theming]')
     const literals = (code.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).filter(hex => hex.toLowerCase() !== '#000')
     check(`${sheet} carries no literal colour`, literals.length === 0, literals.join(' '))
     const unknown = [...code.matchAll(/var\(--_([a-z-]+)\)/g)].map(match => match[1])
-      .filter(name => !Object.keys(UI_TOKENS).some(key => kebab(key) === name))
+      .filter(name => !Object.keys(UI_TOKENS).some(key => kebab(key) === name || `${kebab(key)}-rgb` === name))
     check(`${sheet} uses only palette tokens`, unknown.length === 0, [...new Set(unknown)].join(' '))
   }
 }

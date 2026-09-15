@@ -405,7 +405,9 @@ leaves open:
 .my-slicer-page { --vp-accent: #0a84ff; --vp-light-bg: #f4f4f6; }
 ```
 
-An unset property falls back to the default below. The 3D scene (the selection tint, plate borders, grid, SLA preview
+An unset property falls back to the default below. Four of them are also used as translucent fill, and CSS cannot
+take the alpha off a hex — those carry an `-rgb` twin (`--vp-accent-rgb: 0, 174, 66`) that a host overriding the
+colour must set as well. The 3D scene (the selection tint, plate borders, grid, SLA preview
 colours) is drawn by three.js from `THEME` in the same file and does not read these properties.
 
 | Property | Default |
@@ -439,6 +441,7 @@ colours) is drawn by three.js from `THEME` in the same file and does not read th
 | `--vp-light-text-muted` | `#5a6069` |
 | `--vp-light-text-faint` | `#8a9099` |
 | `--vp-info` | `#2b6cff` |
+| `--vp-info-ink` | `#2563eb` |
 | `--vp-info-soft` | `#e6efff` |
 | `--vp-tech-badge` | `#6d7ce0` |
 | `--vp-danger` | `#e23b3b` |
@@ -449,6 +452,7 @@ colours) is drawn by three.js from `THEME` in the same file and does not read th
 | `--vp-warn` | `#f0a542` |
 | `--vp-warn-ink` | `#a86a12` |
 | `--vp-warn-soft` | `#fdf4e3` |
+| `--vp-warn-soft-hover` | `#f3e2cb` |
 | `--vp-warn-border` | `#d8b48a` |
 | `--vp-warn-on-dark` | `#f0c060` |
 | `--vp-warn-deep` | `#3a2a10` |
