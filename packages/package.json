@@ -107,7 +107,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kimgh06/Web_Three_Slicer.git",
+    "url": "git+https://github.com/kimgh06/Three_Slicer.git",
     "directory": "packages"
   },
   "homepage": "https://slicer.kimgh06.com",
