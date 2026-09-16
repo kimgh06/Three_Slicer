@@ -17,7 +17,7 @@ surface does not.
 ### 1.1 A host cannot trigger a slice — severity: high — FIXED 2026-08-28 (`sliceRequest` prop)
 
 The component's contract is "props are the whole interface, no imperative handle"
-(`../packages-mit/VIEWER.md`, *What the host cannot drive*), but slicing starts only from the built-in UI or
+(`../viewer-package/VIEWER.md`, *What the host cannot drive*), but slicing starts only from the built-in UI or
 from `defaultAutoSlice` at mount. Hide the built-in chrome (`panels`) and put your own Slice button
 next to the frame — the landing embed's exact shape — and the only mechanism left is remounting the
 component with a changed `key` and `defaultAutoSlice` set.
@@ -50,9 +50,9 @@ encode the contract in the name (`initialFiles`), and warn in dev when a mount-o
 
 The prime tower ghost draws whenever two extruders are loaded, even though the schema default for
 `enable_prime_tower` is `false` — the viewer honours only an explicit `false` in the map
-(`packages-mit/src/Viewport.jsx:306`, deliberate: "the map, not the schema — the schema default
+(`viewer-package/src/Viewport.jsx:306`, deliberate: "the map, not the schema — the schema default
 is off-bed"). The reason is sound; the surprise is that the exception is discoverable only in
-source. **Fix**: document the map-not-schema keys in packages-mit/VIEWER.md, or emit the resolved value
+source. **Fix**: document the map-not-schema keys in viewer-package/VIEWER.md, or emit the resolved value
 through `onEvent` so a host can see what the component actually decided.
 
 ## Layer 2 — the parameter surface (`deriveKernelParams`, `slice(stl, params)`)

@@ -73,7 +73,7 @@ split followed is `packages/RELICENSE.md`.
 - The two packages publish as a **locked pair**: same version, and `three-slicer` pins `three-slicer-viewer`
   exactly (`test_version_lockstep.mjs`). A release goes through the root `Makefile` (`make publish`), which
   publishes the viewer first — the pin means `three-slicer@0.3.0` cannot be installed before it exists.
-- `packages-mit/` is mirrored to `github.com/kimgh06/three-slicer-viewer` (a `git subtree split`); the monorepo
+- `viewer-package/` is mirrored to `github.com/kimgh06/three-slicer-viewer` (a `git subtree split`); the monorepo
   stays the source of truth.
 
 ### Fixed

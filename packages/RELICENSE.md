@@ -99,7 +99,7 @@ delegated.
 
 ### G002 — Split the permissive package (boundary B)
 
-New sibling workspace (`packages-mit/`, added to the root `workspaces` array) holding closure B: its own
+New sibling workspace (`viewer-package/`, added to the root `workspaces` array) holding closure B: its own
 `package.json` (`"license": "MIT"`, peer `three`), `LICENSE`, vite config, and types.
 
 `packages/` is itself a single package root with no sub-`package.json`, and the workspace glob is the bare
@@ -197,8 +197,8 @@ question below to be answered in parallel rather than blocking.
 
 ### G001 — the toolpath rewrite (shipped)
 
-All four derived files were replaced, written from [`../packages-mit/TOOLPATH_SPEC.md`](../packages-mit/TOOLPATH_SPEC.md).
-Characterization first (`packages-mit/tests/test_toolpath_contract.mjs`), because only `test_move_scrub.mjs` had
+All four derived files were replaced, written from [`../viewer-package/TOOLPATH_SPEC.md`](../viewer-package/TOOLPATH_SPEC.md).
+Characterization first (`viewer-package/tests/test_toolpath_contract.mjs`), because only `test_move_scrub.mjs` had
 covered any of this — geometry, colouring and the shaders had nothing. Two shipped defects surfaced and did
 not survive: `viewer-toolpath.d.ts` declared `fanByType` / `fanFirstLayers` that nothing read while the code
 required `fanNormal` / `toolColors`, so `computeColors(data, 'fan', ctx)` threw for any typed consumer; and
@@ -207,7 +207,7 @@ required `fanNormal` / `toolColors`, so `computeColors(data, 'fan', ctx)` threw 
 
 ### G002 — the permissive package (shipped, narrowed)
 
-`packages-mit/` is `three-slicer-viewer@0.2.5`, MIT, 7 files, `three` an optional peer, building to
+`viewer-package/` is `three-slicer-viewer@0.2.5`, MIT, 7 files, `three` an optional peer, building to
 19 KB. `three-slicer/viewer/toolpath` and `/viewer/gcode` re-export it, so the four demos and every other
 existing consumer are untouched.
 
