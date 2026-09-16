@@ -1,6 +1,6 @@
 // A loaded mesh reaches the kernel: file bytes -> loadModel -> modelPos -> binary STL -> slice -> G-code.
 //   Run: node packages/wasm-core/tests/test_load_slice.mjs
-// The viewer's own loader test (packages-mit/tests/test_loaders.mjs) stops at the parsed mesh, and the kernel tests
+// The viewer's own loader test (viewer-package/tests/test_loaders.mjs) stops at the parsed mesh, and the kernel tests
 //  all start from an STL this repo builds in code — so nothing else checks that what the loader hands over is
 //  something the kernel can actually slice, in the frame the loader promises (z up, millimetres). It is the half of
 //  the deleted wasm-core/test_loaders.mjs that was worth keeping; that one had imported the pre-split viewer path

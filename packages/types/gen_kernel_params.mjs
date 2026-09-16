@@ -141,7 +141,7 @@ const TYPE_LABEL = { 'vector<double>': '`number[]`', 'vector<string>': '`string[
 // actually read" at runtime without re-probing. Same generation, same --check staleness gate as the table.
 // Written into the permissive package: its only consumer (settings_core.js) lives there. A key list is a
 //  fact about what params.cpp reads, not expression, so the file may carry that package's licence.
-const KEYS_FILE = join(here, '..', '..', 'packages-mit', 'src', 'settings', 'kernel_setting_keys.js')
+const KEYS_FILE = join(here, '..', '..', 'viewer-package', 'src', 'settings', 'kernel_setting_keys.js')
 function buildKeysModule(sources) {
   const keys = [...new Set(Object.values(sources).flatMap(set => [...set]))].sort()
   return [

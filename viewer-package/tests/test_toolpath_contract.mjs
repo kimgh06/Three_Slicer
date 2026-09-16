@@ -1,5 +1,5 @@
 // The toolpath contract, pinned against the CURRENT implementation.
-//   Run: node packages-mit/tests/test_toolpath_contract.mjs
+//   Run: node viewer-package/tests/test_toolpath_contract.mjs
 //
 // Why this exists: the toolpath renderer is four files (packages/PROVENANCE.md §2) that have to be rewritten
 // before the viewer can carry a permissive license, and until now exactly ONE test touched any of it —

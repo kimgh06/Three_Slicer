@@ -1,5 +1,5 @@
 // Box select — the screen projection that decides what a Shift+drag catches.
-//   Run: node packages-mit/tests/test_box_select.mjs
+//   Run: node viewer-package/tests/test_box_select.mjs
 // The maths moved out of use_three_scene.js verbatim; only the renderer half stayed behind. A real
 //  PerspectiveCamera runs fine under node (no WebGL involved), which is the reason this is testable at all.
 import assert from 'node:assert'

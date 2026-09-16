@@ -487,9 +487,9 @@ def _coerce(value, ctype):
 def _kernel_keys(schema):
     """The option keys the kernel actually consumes: the list gen_kernel_params.mjs PROBES out of
     deriveKernelParams, one schema key at a time. It used to be a regex over engine/src/settings.js, which
-    silently shrank to 3 keys when the mapping moved into packages-mit — and a comment quoting a key widened it.
+    silently shrank to 3 keys when the mapping moved into viewer-package — and a comment quoting a key widened it.
     Missing or empty is an error, never an empty preset set: both callers write whatever this returns."""
-    path = os.path.join(REPO, 'packages-mit', 'src', 'settings', 'kernel_setting_keys.js')
+    path = os.path.join(REPO, 'viewer-package', 'src', 'settings', 'kernel_setting_keys.js')
     with open(path, encoding='utf-8') as fh:
         keys = sorted({k for k in re.findall(r'"([a-z0-9_]+)"', fh.read()) if k in schema})
     if not keys:
@@ -989,7 +989,7 @@ if __name__ == '__main__':
     json.dump(lean_ui, open(os.path.join(OUT, 'ui-tree-keys.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
     # The permissive package ships its own copies of the three prose-free artifacts.
     import shutil
-    MIT_DATA = os.path.join(REPO, 'packages-mit', 'data'); os.makedirs(MIT_DATA, exist_ok=True)
+    MIT_DATA = os.path.join(REPO, 'viewer-package', 'data'); os.makedirs(MIT_DATA, exist_ok=True)
     for name in ('config-schema-lean.json', 'ui-tree-keys.json', 'preset-keys.json'):
         if os.path.exists(os.path.join(OUT, name)): shutil.copy(os.path.join(OUT, name), os.path.join(MIT_DATA, name))
     npages = sum(len(v) for v in ui.values())

@@ -1,5 +1,5 @@
 // The src/ layer boundary, as a check rather than a convention.
-//   Run: node packages-mit/tests/test_layers.mjs
+//   Run: node viewer-package/tests/test_layers.mjs
 //
 // src/ is laid out by ONE question — "can this run under node?" — because that is the only line that was already
 // real in this package: every test here covers something on the pure side of it, and nothing covers the other.

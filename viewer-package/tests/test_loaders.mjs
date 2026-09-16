@@ -1,5 +1,5 @@
 // 3MF parser self-check — reads real 3mf files (core spec + production extension) and verifies triangles come out.
-//   Run: node packages-mit/tests/test_loaders.mjs
+//   Run: node viewer-package/tests/test_loaders.mjs
 import { readFileSync, existsSync } from 'node:fs'
 import assert from 'node:assert'
 import { parse3MF } from '../src/core/parse_3mf.js'

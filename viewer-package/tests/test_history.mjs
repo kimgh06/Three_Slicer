@@ -1,5 +1,5 @@
 // The undo/redo stack semantics — the part that is pure logic and therefore worth pinning:
-//   node packages-mit/tests/test_history.mjs
+//   node viewer-package/tests/test_history.mjs
 import assert from 'node:assert'
 import { createHistory } from '../src/core/history.js'
 import { undoRedoDirection } from '../src/use_viewport_history.js'

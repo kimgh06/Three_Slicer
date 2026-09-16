@@ -4,7 +4,7 @@
 <pre id="out">running…</pre>
 <script type="module">
 import createSlicer from 'three-slicer/wasm'
-import { makeSL1 } from '../../packages-mit/src/core/sl1_write.js'
+import { makeSL1 } from '../../viewer-package/src/core/sl1_write.js'
 import { zipSync } from 'three/examples/jsm/libs/fflate.module.js'
 
 const out = document.getElementById('out')
@@ -34,7 +34,7 @@ try {
   } : undefined
   // variant=verify: the pooled build against the sequential one, member by member.
   if (new URLSearchParams(location.search).get('variant') === 'verify') {
-    const { makeSl1EncodeWorker } = await import('../../packages-mit/src/make_worker.js')
+    const { makeSl1EncodeWorker } = await import('../../viewer-package/src/make_worker.js')
     const seq = await makeSL1({ layers: r.layers, params: {}, stats: r.stats, jobName: 'v', timestamp: 'T' })
     const par = await makeSL1({ layers: r.layers, params: {}, stats: r.stats, jobName: 'v', timestamp: 'T', makeWorker: makeSl1EncodeWorker })
     const { unzipSync } = await import('three/examples/jsm/libs/fflate.module.js')

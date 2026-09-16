@@ -1,6 +1,6 @@
 // The pure side of painting: the per-extruder facet counts, the overlay/cursor colour mapping, and the brush's
 // keyboard layer.
-//   Run: node packages-mit/tests/test_paint.mjs
+//   Run: node viewer-package/tests/test_paint.mjs
 import assert from 'node:assert'
 import { materialPaintCounts } from '../src/core/paint_counts.js'
 import { paintStateColor, SUPPORT_OVERLAY_COLOR, UNPAINTED_COLOR } from '../src/core/paint_colors.js'

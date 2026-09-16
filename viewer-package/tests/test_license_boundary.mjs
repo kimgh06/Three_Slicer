@@ -1,10 +1,10 @@
 // The license boundary, from the permissive side: this package carries no AGPL.
-//   Run: node packages-mit/tests/test_license_boundary.mjs
+//   Run: node viewer-package/tests/test_license_boundary.mjs
 //
 // The split only means something if this holds. A single import of `three-slicer` from here would make the
 // tarball a combined work, and the MIT grant on it would be one nobody had the right to give. It lives in
 // THIS package so a standalone checkout (the mirror repo) proves its own boundary; the monorepo's
-// packages-mit/tests/test_license_boundary.mjs runs it and adds what only the monorepo can check (the
+// viewer-package/tests/test_license_boundary.mjs runs it and adds what only the monorepo can check (the
 // provenance list, the version lockstep).
 import assert from 'node:assert'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
