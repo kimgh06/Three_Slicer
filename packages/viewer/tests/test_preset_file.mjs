@@ -11,7 +11,7 @@ import { writePresetFile, readPresetFile, presetOptionKeys,
          printerSettings, printerKeys } from '../../engine/src/settings.js'
 // The bundle codec moved with the viewer into the permissive package; this test stays here because it also
 //  exercises the vendor catalog (printerSettings/printerKeys), which is AGPL data.
-import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../../../packages-mit/src/core/preset_bundle.js'
+import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../../../viewer-package/src/core/preset_bundle.js'
 import { schema } from '../../engine/src/data.js'
 
 const schemaHasNoDefault = (key) => schema[key]?.default === undefined

@@ -1,5 +1,5 @@
 // Every name a factory destructures is actually handed to it.
-//   Run: node packages-mit/tests/test_wiring.mjs
+//   Run: node viewer-package/tests/test_wiring.mjs
 //
 // Viewport.jsx passes the shared refs and setters as one `wiring` object spread into each factory, instead of
 // listing 43 of them again at every call site. That trade has exactly one failure mode: add a dep to a factory's

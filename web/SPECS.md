@@ -455,7 +455,7 @@ The result of surveying the upstream UI file by file and line by line, plus the 
 Logo · File menu · dropdown menu · save · **undo/redo buttons** · window controls.
 -> Viewer: a file/save/undo/redo button bar. (The viewer's "header removal" only removed the builder listing — the desktop app does have a top bar.)
 -> **Viewer (stage 27)**: a ~44px top bar = the logo "OrcaSlicer RE" + Open · the centered Prepare|Preview tabs · undo/redo. The File menu and window controls are deferred.
--> **Undo/redo (live)**: the viewport's own state only — object transforms, add/remove, per-object extruder and visibility, with Ctrl+Z / Ctrl+Shift+Z bound to the component's root rather than window so a host app keeps its own. Print settings are the host's props and painting needs a kernel `prepare` per step, so neither is on the stack (`packages-mit/src/core/history.js`).
+-> **Undo/redo (live)**: the viewport's own state only — object transforms, add/remove, per-object extruder and visibility, with Ctrl+Z / Ctrl+Shift+Z bound to the component's root rather than window so a host app keeps its own. Print settings are the host's props and painting needs a kernel `prepare` per step, so neither is on the stack (`viewer-package/src/core/history.js`).
 
 ### S2. View switching — the 3 ECanvasType modes (GLCanvas3D.hpp:510)  ✅ implemented in stage 25 (Prepare|Preview)
 Prepare | Preview | Assemble, switched through assemble_view_toolbar (GLCanvas3D.cpp:1172). Assemble is lower priority.

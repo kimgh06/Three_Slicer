@@ -25,7 +25,7 @@ reading whole; everything else is lookup.
 | Your case | Path | Copy this | Then read |
 | --- | --- | --- | --- |
 | "Just the numbers" — quotes, farms, automation. No UI, no React | **Headless** | [Quick Start: Headless Slicing](#quick-start-headless-slicing) | [engine/README](engine/README.md) (134 lines), params via [PARAMS.md](engine/PARAMS.md) as lookup |
-| A slicer inside your existing page | **Embed** | [Quick Start: React Viewer](#quick-start-react-viewer) | [viewer/README](../packages-mit/VIEWER.md) (330 lines — the props contracts live there) |
+| A slicer inside your existing page | **Embed** | [Quick Start: React Viewer](#quick-start-react-viewer) | [viewer/README](../viewer-package/VIEWER.md) (330 lines — the props contracts live there) |
 | The full slicer UI — viewport + settings panel | **Full UI** | [Full React Example](#full-react-example) | viewer/README + [components/README](components/README.md) |
 
 Whichever path: read [Before You Ship](#before-you-ship) before deploying — those traps return plausible
@@ -172,7 +172,7 @@ export default function App() {
 `position: relative` and a real height. In a plain static `<div>` it escapes to the page instead. There is no width
 or height prop.
 
-The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. Its keyboard and mouse bindings, the undo boundary, and what a host cannot drive are documented in [../packages-mit/VIEWER.md](../packages-mit/VIEWER.md). It supports STL, OBJ, 3MF (including the production extension used by Orca/Bambu/Prusa), AMF, and PLY out of the box; other formats such as STEP can be added with `registerLoader()`. A `.3mf` written by a slicer is treated as a project, not just geometry: its plate layout, project settings, and support/material painting are restored on import (where a facet carries both paint kinds, material paint wins and the dropped support paint is reported). Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
+The viewer handles model loading, drag and drop, transform controls, multi-plate layout, worker slicing, GPU toolpath preview, and G-code export. Its keyboard and mouse bindings, the undo boundary, and what a host cannot drive are documented in [../viewer-package/VIEWER.md](../viewer-package/VIEWER.md). It supports STL, OBJ, 3MF (including the production extension used by Orca/Bambu/Prusa), AMF, and PLY out of the box; other formats such as STEP can be added with `registerLoader()`. A `.3mf` written by a slicer is treated as a project, not just geometry: its plate layout, project settings, and support/material painting are restored on import (where a facet carries both paint kinds, material paint wins and the dropped support paint is reported). Viewer and component styles are bundled into their Shadow DOM roots, so host app CSS does not need to import package CSS.
 
 ## Quick Start: Settings Panel
 
@@ -277,7 +277,7 @@ Some of the connections are not imports, and knowing which is which explains mos
 | --- | --- | --- |
 | `wasm-core` → `engine` | `build.sh` (emscripten) commits its output into `engine/src/` | not an import — the golden byte-identical gate and the invariant suite verify kernel changes against the engine's output |
 | `data` → `engine`/`components`/`viewer` | `/data` subpath imports | the source of truth is `extract_all.py` over the upstream checkout |
-| `types` → `engine` | the generator **executes** `deriveKernelParams` (probing) and writes `engine/PARAMS.md` + `../packages-mit/src/settings/kernel_setting_keys.js` back into the engine | `test_kernel_params.mjs` is the staleness gate |
+| `types` → `engine` | the generator **executes** `deriveKernelParams` (probing) and writes `engine/PARAMS.md` + `../viewer-package/src/settings/kernel_setting_keys.js` back into the engine | `test_kernel_params.mjs` is the staleness gate |
 | `types` → `data` | `gen_settings_types.mjs` generates `settings-keys.d.ts` (976 keys) from the schema | run automatically by the build |
 | `viewer` ↔ `components` | **no direct link** | the host shares one settings map with both as props, and mounts `<SettingsPanel embedded/>` into the viewer's panel slots |
 | inside `viewer` | `core` (pure, node-runnable) ← `scene` (three/DOM) ← `actions` ← `ui` | `test_layers.mjs` enforces the boundary |
@@ -392,7 +392,7 @@ options as arrays of strings — the same shape [3MF Projects](#3mf-projects) us
 through the same serializer.
 
 The viewer adds the zip forms and a UI: the printer card's **Load** and **Save** read and write these files, and a
-save routes through [`onExport`](../packages-mit/VIEWER.md#taking-the-saves) like every other download.
+save routes through [`onExport`](../viewer-package/VIEWER.md#taking-the-saves) like every other download.
 
 ## Settings UI: Enable/Disable Rules
 

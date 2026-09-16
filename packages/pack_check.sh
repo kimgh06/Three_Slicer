@@ -7,7 +7,7 @@
 # (runtime E2E slicing is separate — this is a build/resolution gate only, no browser needed)
 set -euo pipefail
 PKG="$(cd "$(dirname "$0")" && pwd)"
-MIT="$(cd "$PKG/../packages-mit" && pwd)"
+MIT="$(cd "$PKG/../viewer-package" && pwd)"
 TMP="$(mktemp -d /tmp/three-slicer-packcheck.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 echo "== pack -> $TMP"

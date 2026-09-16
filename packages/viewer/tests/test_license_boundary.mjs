@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path'
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 // The viewer's source lives in the permissive package now; what is left beside this test is the AGPL residue
 //  (the slicing hook, the kernel worker factory, the bundled catalog and three re-export shims).
-const src = join(here, '..', '..', 'packages-mit', 'src')
+const src = join(here, '..', '..', 'viewer-package', 'src')
 
 /** Derived from upstream — cannot carry a license other than AGPL-3.0-or-later without being replaced.
  *  Each entry names the upstream work, so the reason survives without opening PROVENANCE.md. */
@@ -40,12 +40,12 @@ const DERIVED = {
 }
 
 /** Files still inside the AGPL viewer that are verified clean and are candidates for a later move.
- *  The toolpath and G-code modules are no longer here — they SHIPPED, to packages-mit/. */
+ *  The toolpath and G-code modules are no longer here — they SHIPPED, to viewer-package/. */
 const MIT_CLEAN = ['core/gcode_parse.js', 'core/plate_layout.js', 'core/toolpath_segments.js']
 
 /** The permissive package. This is where the boundary actually is now: everything under it must be
  *  installable and usable with no AGPL anywhere in its dependency tree. */
-const PERMISSIVE = join(here, '..', '..', 'packages-mit')
+const PERMISSIVE = join(here, '..', '..', 'viewer-package')
 
 /** The machine-readable marker a derived file must carry. Prose is not a reliable signal in either
  *  direction — `toolpath_palette.js` never used the word "port" (its derivation is a copied colour table),
@@ -135,12 +135,12 @@ for (const path of MIT_CLEAN) {
 }
 
 console.log('\n[license: the permissive package carries no AGPL]')
-// The permissive side proves its own boundary — packages-mit/tests/test_license_boundary.mjs scans its sources, types,
+// The permissive side proves its own boundary — viewer-package/tests/test_license_boundary.mjs scans its sources, types,
 //  data, styles and dist for any AGPL specifier — so the mirror repo carries the proof with it. Here it is run,
 //  and what only the monorepo can see is added: the pair is published together (packages/RELICENSE.md section
 //  3), and a mismatch would publish a combination nobody built.
 if (!existsSync(PERMISSIVE)) {
-  check('packages-mit exists', false, 'the permissive package is missing')
+  check('viewer-package exists', false, 'the permissive package is missing')
 } else {
   const own = spawnSync(process.execPath, [join(PERMISSIVE, 'tests', 'test_license_boundary.mjs')], { encoding: 'utf8' })
   process.stdout.write(own.stdout.replace(/^/gm, '    '))

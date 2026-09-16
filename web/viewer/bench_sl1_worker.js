@@ -1,6 +1,6 @@
 // Bench worker: rasterize+encode a strided subset of layers. Same three calls makeSL1 makes per layer,
 //  just off the main thread, to find out whether convertToBlob is actually N-way parallel.
-import { slaRasterTransform, drawLayer } from '../../packages-mit/src/core/sl1_write.js'
+import { slaRasterTransform, drawLayer } from '../../viewer-package/src/core/sl1_write.js'
 
 self.onmessage = async ({ data: { indices, paths, params } }) => {
   const transform = slaRasterTransform(params)

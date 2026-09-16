@@ -9,7 +9,7 @@ exports; it does not slice. Slicing is plugged in through two props — `slicer`
 `catalog` (vendor presets) — which `three-slicer/viewer` supplies. Install `three-slicer` for that, and note that
 doing so puts your application under AGPL.
 
-Developed in the [`Three_Slicer`](https://github.com/kimgh06/Three_Slicer) monorepo (`packages-mit/`), where it
+Developed in the [`Three_Slicer`](https://github.com/kimgh06/Three_Slicer) monorepo (`viewer-package/`), where it
 is built and tested beside the kernel; this repository is that folder's history, pushed on every release. Issues and
 pull requests are welcome here — a change lands upstream and comes back with the next sync.
 

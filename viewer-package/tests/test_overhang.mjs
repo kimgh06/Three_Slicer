@@ -1,6 +1,6 @@
 // Overhang facet selection — the rule has to match the kernel's, and the visual check cannot tell a correct
 // threshold from a wrong one (a box looks the same at 30° and 85°, since a vertical wall never qualifies).
-//   Run: node packages-mit/tests/test_overhang.mjs
+//   Run: node viewer-package/tests/test_overhang.mjs
 import * as THREE from 'three'
 import { buildOverhangGeometry } from '../src/scene/overhang_view.js'
 

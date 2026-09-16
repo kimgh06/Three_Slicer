@@ -18,7 +18,7 @@ coloring preserved in one 3MF. three-slicer shows this as the general 3MF-projec
 ## Prerequisite work (required before implementation)
 
 1. `parse3MFProject` / `write3MFProject` are currently **not public exports** — they live only inside the
-viewer (`packages-mit/src/core/parse_3mf.js`, `packages-mit/src/core/write_3mf.js`). Per DEMOS.md's
+viewer (`viewer-package/src/core/parse_3mf.js`, `viewer-package/src/core/write_3mf.js`). Per DEMOS.md's
 public-export rule
 ("when a private API is needed, improve the package API first rather than working around it in a demo"),
 **adding a subpath export (e.g. `three-slicer/viewer/project`) + type definitions is this demo's first

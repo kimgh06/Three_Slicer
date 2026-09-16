@@ -4,7 +4,7 @@
 // Both are documentation nobody re-reads after writing it, sitting next to code that is edited whenever an action
 // gains an entry point — so the two drift silently, and the reader finds out by pressing a key that does nothing
 // or setting a flag that turns nothing off.
-//   run: node packages-mit/tests/test_viewer_docs.mjs
+//   run: node viewer-package/tests/test_viewer_docs.mjs
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

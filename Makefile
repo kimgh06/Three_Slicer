@@ -7,7 +7,7 @@
 #   make publish             preflight (clean tree on a pushed main, tests, tarball check) -> publish
 #                            viewer -> publish three-slicer -> sync the mirror -> tag vX.Y.Z and push it
 #   make publish DRY=1       the same with `npm publish --dry-run`, no git checks, no tag, no mirror push
-VERSION       := $(shell node -p "require('./packages-mit/package.json').version")
+VERSION       := $(shell node -p "require('./viewer-package/package.json').version")
 VIEWER_REMOTE ?= https://github.com/kimgh06/three-slicer-viewer.git
 DRY           ?= 0
 NPM_PUBLISH   := npm publish $(if $(filter 1,$(DRY)),--dry-run,)
@@ -19,12 +19,12 @@ bump:  ## set three-slicer, three-slicer-viewer, the pin and the demo app's pins
 	@node -e ' \
 	  const fs = require("fs"); \
 	  const edit = (path, fn) => { const pkg = JSON.parse(fs.readFileSync(path, "utf8")); fn(pkg); fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n") }; \
-	  edit("packages-mit/package.json", p => { p.version = "$(V)" }); \
+	  edit("viewer-package/package.json", p => { p.version = "$(V)" }); \
 	  edit("packages/package.json", p => { p.version = "$(V)"; p.dependencies["three-slicer-viewer"] = "$(V)" }); \
 	  edit("web/viewer/package.json", p => { p.dependencies["three-slicer"] = "$(V)"; p.dependencies["three-slicer-viewer"] = "$(V)" }); \
 	  console.log("bumped both packages and the pin to $(V)")'
 	@npm i --package-lock-only --no-audit --no-fund >/dev/null
-	@node packages-mit/tests/test_version_lockstep.mjs >/dev/null && echo "lockstep ok"
+	@node viewer-package/tests/test_version_lockstep.mjs >/dev/null && echo "lockstep ok"
 
 preflight:  ## everything that must hold before a publish; DRY=1 skips the git-state checks
 	@grep -q "^## $(VERSION)" packages/CHANGELOG.md || { echo "packages/CHANGELOG.md has no '## $(VERSION)' entry"; exit 1; }
@@ -40,7 +40,7 @@ endif
 	bash packages/pack_check.sh
 
 publish: preflight  ## release $(VERSION): viewer first, then three-slicer, then the mirror and the tag
-	cd packages-mit && $(NPM_PUBLISH)
+	cd viewer-package && $(NPM_PUBLISH)
 	cd packages && $(NPM_PUBLISH)
 ifeq ($(DRY),1)
 	@echo "[dry] skipped: mirror sync, tag v$(VERSION), push"

@@ -1,5 +1,5 @@
 // The plate grid — the one rule the scene, the 3mf writer and the G-code injection all have to agree on.
-//   Run: node packages-mit/tests/test_plate_layout.mjs
+//   Run: node viewer-package/tests/test_plate_layout.mjs
 // Characterization: every expectation below is the value the closure in use_three_scene.js produced before the
 //  grid moved into this module, so a change to either function has to be a deliberate one.
 import assert from 'node:assert'

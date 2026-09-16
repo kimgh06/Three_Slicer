@@ -52,9 +52,9 @@ kill:  ## kill the process holding PORT=n
 	@pids=$$(lsof -ti tcp:$(PORT) 2>/dev/null); \
 	if [ -n "$$pids" ]; then echo "port $(PORT) in use -> kill $$pids"; kill -9 $$pids; fi
 
-# The MIT package has a public mirror repo whose history is packages-mit/'s alone (git subtree). The monorepo
+# The MIT package has a public mirror repo whose history is viewer-package/'s alone (git subtree). The monorepo
 # stays the source of truth; this pushes the folder's commits there. Run it right after `npm publish` of
 # three-slicer-viewer so the mirror shows the code that was published. VIEWER_REMOTE is a git URL.
 VIEWER_REMOTE ?= https://github.com/kimgh06/three-slicer-viewer.git
-sync-viewer:  ## push packages-mit/ history to the mirror repo (VIEWER_REMOTE)
-	cd .. && git subtree push --prefix=packages-mit $(VIEWER_REMOTE) main
+sync-viewer:  ## push viewer-package/ history to the mirror repo (VIEWER_REMOTE)
+	cd .. && git subtree push --prefix=viewer-package $(VIEWER_REMOTE) main

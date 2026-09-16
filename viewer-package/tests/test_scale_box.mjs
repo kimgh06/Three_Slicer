@@ -1,6 +1,6 @@
 // The two pieces of logic that are not obvious by reading: the uniform-scale drag ratio, and matching a letter
 // shortcut on the physical key so a Korean (or any non-Latin) layout still triggers it.
-//   node packages-mit/tests/test_scale_box.mjs
+//   node viewer-package/tests/test_scale_box.mjs
 import assert from 'node:assert'
 import * as THREE from 'three'
 import { dragRatio, clampMeshScale } from '../src/scene/scale_box.js'

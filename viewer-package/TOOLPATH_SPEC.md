@@ -163,10 +163,10 @@ Constraints:
 
 ## 8. How to know it works
 
-1. `node packages-mit/tests/test_toolpath_contract.mjs` — the contract, plus a printed snapshot to diff against
+1. `node viewer-package/tests/test_toolpath_contract.mjs` — the contract, plus a printed snapshot to diff against
    the recorded run. Exact float equality is **not** expected; counts, strides, encodings, ranges and length
    accounting are.
-2. `node packages-mit/tests/test_move_scrub.mjs` — the scrub queries.
+2. `node viewer-package/tests/test_move_scrub.mjs` — the scrub queries.
 3. `npm run test:viewer` — everything, including the license boundary check.
 4. **Look at it.** Build the three demos that consume this API
    (`examples/{instant-quote,cad-embed,farm-dashboard}`) and open them. A static check cannot tell you a

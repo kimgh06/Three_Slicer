@@ -1,6 +1,6 @@
 // Plate-parallel slicing (src/core/slice_pool.js): the worker-count policy and the run bookkeeping.
 // The policy numbers are measured (see the module header); this pins that the code says what the measurement said.
-//   run: node packages-mit/tests/test_slice_pool.mjs
+//   run: node viewer-package/tests/test_slice_pool.mjs
 import { resolveWorkerCount, memoryWorkerCap, makePlateRun, patchPlate, runSummary, PLATE_STATES } from '../src/core/slice_pool.js'
 
 let failures = 0

@@ -1,6 +1,6 @@
 // bed_bounds self-check — the verdict must match the kernel's over_bed rule (pass1.cpp prepare_model):
 //  outside [-bed/2, bed/2] on either axis, or taller than printable_height when the profile states one.
-//   Run: node packages-mit/tests/test_bed_bounds.mjs
+//   Run: node viewer-package/tests/test_bed_bounds.mjs
 import assert from 'node:assert'
 import { bedOverflow, overflowText } from '../src/core/bed_bounds.js'
 

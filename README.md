@@ -54,7 +54,7 @@ Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)`, or `s.
 ## Repository layout
 
 - **`packages/`** — the npm package `three-slicer` (AGPL): kernel SDK, extracted data, WASM kernel sources, and the wrappers that plug the kernel into the viewer. Self-contained: builds, tests, and runs without `slicers/`.
-- **`packages-mit/`** — the npm package `three-slicer-viewer` (MIT): the viewer, the settings panel, G-code parsing and the toolpath renderer. Mirrored to its own repository on every release.
+- **`viewer-package/`** — the npm package `three-slicer-viewer` (MIT): the viewer, the settings panel, G-code parsing and the toolpath renderer. Mirrored to its own repository on every release.
 - **`web/`** — demo viewer app that consumes `three-slicer` through the workspace package name.
 - **`slicers/`** — untracked reference clones (each its own git remote): upstream OrcaSlicer at `slicers/slicer` (the extraction/porting source) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 
@@ -79,7 +79,7 @@ Development docs (demo app, stage-by-stage log, reverse-engineering guide, forma
 `three-slicer` is AGPL-3.0-or-later ([`LICENSE.txt`](LICENSE.txt)) — derived from OrcaSlicer. AGPL extends to network
 use: a web service embedding it must offer its source to its users.
 
-`three-slicer-viewer` ([`packages-mit/`](packages-mit/)) is MIT: the viewer, the settings form, G-code parsing and
+`three-slicer-viewer` ([`viewer-package/`](viewer-package/)) is MIT: the viewer, the settings form, G-code parsing and
 toolpath rendering contain no upstream code ([`packages/PROVENANCE.md`](packages/PROVENANCE.md)) and can go into
 closed-source products. Only slicing itself, and the vendor presets, are AGPL. Which files may carry which license,
 and why, is [`packages/PROVENANCE.md`](packages/PROVENANCE.md); a license-boundary test enforces the split.

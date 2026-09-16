@@ -1,5 +1,5 @@
 // buildMergedSTL / exportObjects — the single owner of the kernel's facet numbering (AGENTS.md).
-//   Run: node packages-mit/tests/test_merge_stl.mjs
+//   Run: node viewer-package/tests/test_merge_stl.mjs
 // The body moved out of use_three_scene.js verbatim; these assertions are what stops it drifting from here on.
 import assert from 'node:assert'
 import * as THREE from 'three'

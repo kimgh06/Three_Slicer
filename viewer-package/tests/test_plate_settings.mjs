@@ -4,7 +4,7 @@
 // The isolation check compares derived kernel params (not G-code) across three conditions in one process:
 // plateSettings absent, empty, and holding another plate's override. Identical params into a deterministic
 // kernel is identical output, and comparing here keeps the invariant runnable without the WASM build.
-//   run: node packages-mit/tests/test_plate_settings.mjs
+//   run: node viewer-package/tests/test_plate_settings.mjs
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { cardScope } from '../src/core/plate_settings.js'
