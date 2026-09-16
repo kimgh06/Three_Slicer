@@ -2,8 +2,9 @@ import { log } from '../core/log.js'
 import { objectRows } from '../core/object_rows.js'
 import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer-viewer/settings'
 import { loadModel, SUPPORTED_EXT, fileExt } from '../scene/model_loaders.js'
-import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from '../core/plate_layout.js'
+import { plateCols, UPSTREAM_PLATE_GAP_RATIO, MAX_PLATES } from '../core/plate_layout.js'
 import { PRESET_ACCEPT } from './preset_actions.js'
+import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
 
 // The preset picker's accept list, as bare extensions — loadFiles routes these to loadPresetFile, so dropping a
 //  preset (or passing one through the `files` prop) behaves like picking it from the printer card.
@@ -96,11 +97,33 @@ function droppedFeatures(project, loaded) {
 export function makeModelLoad(deps) {
   const {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectPlates, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
-    selectedPlateRef, disposePlateToolpath,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
+    selectedPlateRef, disposePlateToolpath, plateCountRef, setPlateCount, bedRef,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
   } = deps
+
+  // Grow the bed to the plate count an imported 3mf project needs, then let it place its objects. setPlates is
+  //  called directly as well as through setPlateCount because it writes plateCountRef and plateBWRef/plateBDRef
+  //  SYNCHRONOUSLY, and those are what the plate origins are computed from — going through React state alone would
+  //  place every object against the OLD grid and let Viewport's plate-layout effect re-lay the plates underneath them.
+  // The bed must come from the PROJECT, not from `kp`: kp is derived from the settings of the render this callback
+  //  was created in, and setSettings has not landed yet. Getting that wrong is not a rounding error — the default
+  //  bed is 200mm and a Bambu project is 256mm, so the grid step moved 240 -> 296 right after placement and every
+  //  plate past the first drifted by 56mm per column (plate 2 by 112mm), which is exactly what it looked like.
+  // A plate's cached slice, dropped when a load changes what sits on it. At factory scope because both the load and
+  //  the project placement call it — it used to be local to loadFiles, so applyProject's call threw a ReferenceError
+  //  and every multi-plate project import failed with "dropPlateResult is not defined".
+  const dropPlateResult = (plate) => { delete plateResultsRef.current[plate]; delete plateOffsetsRef.current[plate]; disposePlateToolpath?.(plate) }
+
+  const applyProjectPlates = (needed, bedWidth, bedDepth, place) => {
+    const n = Math.min(MAX_PLATES, Math.max(plateCountRef.current, needed))
+    const width = bedWidth > 0 ? bedWidth : bedRef.current.bedW
+    const depth = bedDepth > 0 ? bedDepth : bedRef.current.bedD
+    apiRef.current?.setPlates(n, width, depth, selectedPlateRef.current)
+    setPlateCount(n)
+    place(n)
+  }
 
   // Everything a 3mf's Metadata/*.config asks for, applied once the meshes are in the scene. `loaded` pairs each
   //  3mf object id with the viewer object it became, which is what the per-object and per-plate state is keyed by.
@@ -124,7 +147,7 @@ export function makeModelLoad(deps) {
       //  vector can carry blanks for a slot with no preset), so it is what the count comes from.
       const colors = imported.settings.filament_colour
       if (Array.isArray(colors) && colors.length) {
-        applyProjectFilaments?.(colors.map(c => (typeof c === 'string' && c.trim()) || '#888888'))
+        applyProjectFilaments?.(colors.map(c => (typeof c === 'string' && c.trim()) || UNKNOWN_COLOR))
         notices.push(`${colors.length} filaments`)
       }
     }
@@ -180,8 +203,7 @@ export function makeModelLoad(deps) {
     // Only the plate the meshes land on loses its result: another plate's slice still describes objects this load
     //  does not touch (the per-plate staleness rule, slice_staleness.js). It used to reset every plate, so adding a
     //  model to plate 2 silently threw plate 1's slice away. A project that places objects on other plates
-    //  invalidates those below, once it knows which.
-    const dropPlateResult = (plate) => { delete plateResultsRef.current[plate]; delete plateOffsetsRef.current[plate]; disposePlateToolpath?.(plate) }
+    //  invalidates those below, once it knows which (dropPlateResult, above).
     layersDataRef.current = null; segDataRef.current = null
     dropPlateResult(selectedPlateRef?.current ?? 0)
     clearToolpaths(); refreshSlicedCount()

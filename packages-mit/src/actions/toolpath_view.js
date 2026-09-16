@@ -1,10 +1,11 @@
 import { log } from '../core/log.js'
 import { slaPreviewPayload } from '../core/sla_preview.js'
 import * as THREE from 'three'
-import { settingRaw } from 'three-slicer-viewer/settings'
+import { settingRaw, schemaDefault } from 'three-slicer-viewer/settings'
 import { buildSegmentData, roleRatios } from 'three-slicer-viewer'
 import { makeToolpath } from 'three-slicer-viewer'
 import { computeColors } from 'three-slicer-viewer'
+import { ROLE } from '../core/toolpath_encoding.js'
 
 // Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -76,21 +77,31 @@ export function makeToolpathView(deps) {
   // Stage 25: context for view-type coloring — speed/fan/temperature are absent from the kernel toolpath and derived from settings (kernel unchanged).
   //  Type -> feature speed mapping (same as the desktop settings for outer wall, infill, …). Schema values are read directly via settingRaw.
   function viewCtx() {
-    const S = (k, def) => { const v = settingRaw(settings, k); const n = parseFloat(v); return Number.isFinite(n) ? n : def }
-    const ow = S('outer_wall_speed', 60)
+    // A value the map holds but cannot parse falls back to the schema default — what it would read unedited. These
+    //  used to carry literals of their own, several of which disagreed with the schema (support 35 vs 80, nozzle
+    //  210 vs 200), so a malformed value coloured the legend from a profile nobody had.
+    const S = k => {
+      for (const value of [settingRaw(settings, k), schemaDefault(k)]) {
+        const number = parseFloat(Array.isArray(value) ? value[0] : value)
+        if (Number.isFinite(number)) return number
+      }
+      return undefined
+    }
+    const ow = S('outer_wall_speed')
     return {
       // The filament palette, so the Filament view can paint each tool in its own colour rather than a stand-in.
       toolColors: extruderColorsRef?.current ?? [],
       speedByType: {
-        1: ow, 2: S('sparse_infill_speed', 40), 3: S('internal_solid_infill_speed', 45),
-        4: ow, 5: S('support_speed', 35), 6: S('support_speed', 35), 7: S('gap_infill_speed', 30),
-        8: ow, 9: S('bridge_speed', 25), 10: S('ironing_speed', 20), 11: ow,
+        [ROLE.WALL]: ow, [ROLE.SPARSE]: S('sparse_infill_speed'), [ROLE.SOLID]: S('internal_solid_infill_speed'),
+        [ROLE.SKIRT]: ow, [ROLE.SUPPORT]: S('support_speed'), [ROLE.RAFT]: S('support_speed'),
+        [ROLE.GAP]: S('gap_infill_speed'), [ROLE.THIN]: ow, [ROLE.BRIDGE]: S('bridge_speed'),
+        [ROLE.IRONING]: S('ironing_speed'), [ROLE.PRIME]: ow,
       },
-      firstLayerSpeed: S('initial_layer_speed', 30),
-      closeFanLayers: S('close_fan_the_first_x_layers', 1),
-      fanNormal: S('fan_max_speed', 100),
-      tempNormal: S('nozzle_temperature', 210),
-      tempFirst: S('nozzle_temperature_initial_layer', S('nozzle_temperature', 210)),
+      firstLayerSpeed: S('initial_layer_speed'),
+      closeFanLayers: S('close_fan_the_first_x_layers'),
+      fanNormal: S('fan_max_speed'),
+      tempNormal: S('nozzle_temperature'),
+      tempFirst: S('nozzle_temperature_initial_layer') ?? S('nozzle_temperature'),
     }
   }
   // Recomputes the color texture for the current view type — applied to every plate; legend/range follow the focused plate.

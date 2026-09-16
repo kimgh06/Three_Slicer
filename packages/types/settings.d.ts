@@ -172,6 +172,18 @@ export function printerDefaultPreset(profileName: string): string
 /** The schema keys the kernel's machine limits are read from — for UI that shows which ones are in play. */
 export const machineLimitKeys: string[]
 
+/** deriveKernelParams' fallbacks when neither the settings map nor the schema gives a usable value, keyed by schema
+ *  key. NOT the schema defaults — several differ on purpose. Frozen. */
+export const FFF_FALLBACKS: Readonly<Record<string, number | boolean | string>>
+/** deriveSlaParams' fallbacks (its reader treats non-positive values as absent). Frozen. */
+export const SLA_FALLBACKS: Readonly<Record<string, number>>
+/** What `line_width` 0 ("auto") resolves to. */
+export const AUTO_LINE_WIDTH: number
+/** The bed when `printable_area` is empty or malformed — the bbox of the schema's own default. */
+export const BED_FALLBACK: Readonly<{ width: number; depth: number }>
+/** Kernel machine-limit parameter -> [schema key, fallback]. Frozen. */
+export const MACHINE_LIMITS: Readonly<Record<string, readonly [string, number]>>
+
 // ---- Lazily loaded presets --------------------------------------------------
 // Both facades hide the column layout of the artifact they wrap; the promise is created once and reused.
 

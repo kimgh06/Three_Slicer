@@ -15,6 +15,9 @@
 // with +x/+y/+z the kernel's plate-local axes (z up). Everything outside the pushed slices counts as empty, so
 // the surface always closes — including against the plate at z=0.
 
+import { THEME, hexToLinear } from './theme.js'
+import { ROLE } from './toolpath_encoding.js'
+
 // Cell corners (x-fastest: index bit0=x, bit1=y, bit2=z) and the 12 cell edges, kept as FLAT arrays — this is
 //  the innermost data of a loop that runs per surface vertex, and array-of-pairs iteration allocated there.
 const CX = new Int8Array(8), CY = new Int8Array(8), CZ = new Int8Array(8)
@@ -54,9 +57,10 @@ const makeChunks = (Type) => {
  * bottom-up with pushSlice, then finish() -> { positions, indices, normals } — an indexed mesh with outward
  * winding and area-weighted smooth vertex normals, ready for a BufferGeometry with no further processing.
  */
-// Vertex colours by role, as LINEAR rgb (three.js treats colour attributes as linear; these are the sRGB hexes
-//  the solid SLA preview paints its meshes with, converted): model 0xd7862a, support 0x9b78d8, pad 0xb0a06a.
-const ROLE_COLORS = { 0: [0.680, 0.238, 0.023], 5: [0.328, 0.188, 0.687], 6: [0.434, 0.352, 0.144] }
+// Vertex colours by role, as LINEAR rgb (three.js treats colour attributes as linear): the same theme colours the
+//  solid SLA preview paints its meshes with. Rounded to 3 places, the precision they were first written at by hand.
+const linear3 = hex => hexToLinear(hex).map(value => Math.round(value * 1000) / 1000)
+const ROLE_COLORS = { 0: linear3(THEME.slaModel), [ROLE.SUPPORT]: linear3(THEME.slaSupport), [ROLE.RAFT]: linear3(THEME.slaPad) }   // 0: model
 
 export function makeStreamingNets(nx, ny, sx, sy, sz, ox, oy, oz) {
   const ringW = nx + 1, ringH = ny + 1

@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `three-slicer-viewer/settings` (and so `three-slicer/settings`) exports the kernel derivation's own fallbacks:
+  `FFF_FALLBACKS`, `SLA_FALLBACKS`, `AUTO_LINE_WIDTH`, `BED_FALLBACK`, `MACHINE_LIMITS`. Frozen; they are the values
+  `deriveKernelParams` / `deriveSlaParams` use when neither the settings map nor the schema gives one, and they are
+  deliberately not the schema defaults.
+- Theming: both shadow roots take their colours from 43 custom properties (`--vp-accent`, `--vp-dark-surface`,
+  `--vp-light-text`, …) a host can set on any ancestor. `VIEWER.md` ("Theming") lists them with their defaults.
+
+### Changed
+
+- `deriveKernelParams` with an empty or malformed `printable_area` now derives a 200 x 200 bed (the schema's own
+  default), not 256 x 256. Every viewer fallback already assumed 200; a well-formed value is unaffected.
+- `buildSegmentData(layers)` without a default line width falls back to 0.42 (the kernel's auto width), not 0.4.
+  Callers that pass one, as the viewer does, are unaffected.
+- One grey for "no colour to read": a blank filament slot, a stats swatch past the palette, an unparseable hex in
+  the toolpath palette and an unpainted facet (`UNPAINTED_COLOR`) are all `#888888` (were four different greys).
+- The toolpath legend (speed / fan / temperature views) falls back to the schema default for a value the settings
+  map holds but cannot parse, instead of literals that disagreed with it (support speed 35 vs 80, nozzle 210 vs 200).
+- The stylesheets carried 152 literal colours, many of them near-identical shades of one role; each group now uses
+  its most common member, so a few shades move slightly. Visible: the "advanced" badge is the info blue
+  (`#2b6cff`, was `#3673c3`), the "simple" badge the accent green, and the prime-tower card's number inputs are
+  light like every other sidebar input (they were styled for the dark viewport).
+- Vendor process presets now carry `support_type`, so applying one sets the support type it was authored with.
+
+### Fixed
+
+- Importing a project that places objects on more than one plate failed with "dropPlateResult is not defined"
+  and left every object on the selected plate (since 0.2.5). `test_3mf_project.mjs` now loads a two-plate project
+  through the model loader.
+- The Process card's Global|Plate toggle has the ↺ that drops the plate's whole override, like the other settings
+  cards; the viewer never passed it the handler.
+- Importing a project kept its filament colours in the viewer but not in the settings map, so a blank entry saved
+  back as blank and a list past 16 filaments saved whole.
+- `three-slicer@0.3.0` shipped a tool-state file under `types/.omc/`, and `three-slicer-viewer` would have shipped
+  one from `src/settings/.omc/`. Both `files` lists now end in `!**/.omc`, and `pack_check.sh` fails on any
+  dot-path in either tarball.
+
 ## 0.3.0 — 2026-09-08
 
 The viewer is its own package. Everything that displays — model loading, G-code parsing, the GPU toolpath

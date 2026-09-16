@@ -4,7 +4,7 @@ Browser/WASM 3D-printing slicer package derived from [OrcaSlicer](https://github
 
 The package is published as a single npm package, `three-slicer`, with subpath exports for the engine, viewer, components, worker, and extracted OrcaSlicer data.
 
-![A sliced Benchy in the viewer's Preview tab — organic tree supports, per-feature toolpath colors, dual layer-range slider, filament and print-time estimates](https://raw.githubusercontent.com/kimgh06/Web_Three_Slicer/main/web/viewer/public/usage.png)
+![A sliced Benchy in the viewer's Preview tab — organic tree supports, per-feature toolpath colors, dual layer-range slider, filament and print-time estimates](https://raw.githubusercontent.com/kimgh06/Three_Slicer/main/web/viewer/public/usage.png)
 
 ## Links
 
@@ -14,7 +14,7 @@ The package is published as a single npm package, `three-slicer`, with subpath e
   composition. Which code carries which licence, and why: [`PROVENANCE.md`](PROVENANCE.md).
 
 - Package: [npmjs.com/package/three-slicer](https://www.npmjs.com/package/three-slicer)
-- Source: [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer)
+- Source: [kimgh06/Three_Slicer](https://github.com/kimgh06/Three_Slicer)
 - Demo: [slicer.kimgh06.com](https://slicer.kimgh06.com/)
 
 ## Start Here
@@ -787,7 +787,7 @@ the layout by hand.
 
 ## Before You Ship
 
-The traps below were all hit while building the [integration demos](https://github.com/kimgh06/Web_Three_Slicer/tree/main/examples)
+The traps below were all hit while building the [integration demos](https://github.com/kimgh06/Three_Slicer/tree/main/examples)
 and the live landing embed — each one returns something plausible instead of an error, which is why they
 are listed **in the order they bite**, not by topic. The later a trap fires, the more it costs — and none of
 them fails a build or throws, so nothing surfaces them for you.
@@ -837,4 +837,4 @@ production while `npm run dev` passed. The no-argument form now emits a real wor
 
 ## License
 
-AGPL-3.0-or-later. This package is derived from OrcaSlicer. Source is available at [kimgh06/Web_Three_Slicer](https://github.com/kimgh06/Web_Three_Slicer). If you embed it in a web app, make sure your app complies with the AGPL network-use requirements, including offering source code to users where required.
+AGPL-3.0-or-later. This package is derived from OrcaSlicer. Source is available at [kimgh06/Three_Slicer](https://github.com/kimgh06/Three_Slicer). If you embed it in a web app, make sure your app complies with the AGPL network-use requirements, including offering source code to users where required.

@@ -90,27 +90,24 @@
   },
   "files": [
     "engine",
-    "!engine/**/.omc",
     "types",
-    "!**/test_*.mjs",
+    "!**/tests/**",
     "!types/gen_*.mjs",
     "components/dist",
     "viewer/dist",
-    "viewer/styles.css",
-    "components/styles.css",
     "data",
     "data/ui-tree-keys.json",
     "data/config-schema-lean.json",
     "!data/config-schema-builddump.json",
-    "!data/**/.omc",
     "README.md",
     "CHANGELOG.md",
     "THIRD-PARTY-NOTICES.md",
-    "LICENSE.txt"
+    "LICENSE.txt",
+    "!**/.omc"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kimgh06/Web_Three_Slicer.git",
+    "url": "git+https://github.com/kimgh06/Three_Slicer.git",
     "directory": "packages"
   },
   "homepage": "https://slicer.kimgh06.com",

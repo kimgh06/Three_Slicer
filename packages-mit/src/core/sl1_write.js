@@ -10,6 +10,7 @@ import { zipSync, strToU8, zlibSync } from 'three/examples/jsm/libs/fflate.modul
 import { log } from './log.js'
 import { rasterizeMask } from './raster_mask.js'
 import { encodeGray8 } from './png_gray.js'
+import { STRIDE, ROLE, roleOf } from './toolpath_encoding.js'
 
 /** mm -> px mapping of the resin display. Model coordinates are plate-local (origin at the plate centre); the
  *  display's origin is its own centre, so the transform is scale + half-display offset. `mirrorX` is the default
@@ -49,7 +50,7 @@ export function drawLayer(ctx, paths, transform) {
   ctx.beginPath()
   let lastX = NaN, lastY = NaN
   for (let s = 0; s < segCount; s++) {
-    const x0 = paths[s * 8], y0 = paths[s * 8 + 1], x1 = paths[s * 8 + 4], y1 = paths[s * 8 + 5]
+    const x0 = paths[s * STRIDE], y0 = paths[s * STRIDE + 1], x1 = paths[s * STRIDE + 4], y1 = paths[s * STRIDE + 5]
     if (x0 !== lastX || y0 !== lastY) { ctx.moveTo(...transform.map(x0, y0)); loops++ }
     ctx.lineTo(...transform.map(x1, y1))
     lastX = x1; lastY = y1
@@ -135,14 +136,14 @@ export function sl1SceneSidecar({ modelSTL, supportMesh, padMesh, lift = 0 }) {
 }
 
 /** Layers -> the sidecar bytes: 'TSR1', u32 layer count, then per layer u32 float count + the stride-8
- *  segments whose role (`paths[k+3] & 15`) is 5 or 6, in stream order (drawLayer's loop-continuity rule
+ *  segments whose role is SUPPORT or RAFT (the pad), in stream order (drawLayer's loop-continuity rule
  *  survives filtering because loops close on themselves). Little-endian throughout, deterministic. */
 export function sl1RolesSidecar(layers) {
   const kept = layers.map(({ paths }) => {
     const out = []
-    for (let k = 0; k + 7 < paths.length; k += 8) {
-      const role = paths[k + 3] & 15
-      if (role === 5 || role === 6) for (let f = 0; f < 8; f++) out.push(paths[k + f])
+    for (let k = 0; k + STRIDE - 1 < paths.length; k += STRIDE) {
+      const role = roleOf(paths[k + 3])
+      if (role === ROLE.SUPPORT || role === ROLE.RAFT) for (let f = 0; f < STRIDE; f++) out.push(paths[k + f])
     }
     return out
   })

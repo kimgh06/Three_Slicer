@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
+import { REPO } from './repo.js'
 
 // The demos are separate npm projects under examples/. `npm run demos` builds them into
 // public/demos/<name>/ and writes the manifest this page reads; without that step the page says so
@@ -9,7 +10,6 @@ import { Link, useSearchParams } from 'react-router'
 // its own kernel, its own settings. Same-origin, and this app serves COOP/COEP, so the frame inherits
 // cross-origin isolation and the demos get the multithreaded kernel.
 
-const REPO = 'kimgh06/Web_Three_Slicer'
 
 // Absolute, and built from the app's own base — a relative 'demos/…' resolves differently at /demos and
 // /demos/ (the trailing slash makes it /demos/demos/…), and this page is reachable both ways.

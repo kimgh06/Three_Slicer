@@ -10,10 +10,10 @@ intermediate data. The stock CLI's SL1 archive is insufficient because it cannot
 role-5/role-6 paths, or decoded raster masks.
 
 ```sh
-node packages/wasm-core/build_sla_oracle.mjs \
+node packages/wasm-core/tools/build_sla_oracle.mjs \
   --prusa-source slicers/PrusaSlicer --out /abs/sla_oracle
 PRUSA_SLICER_BIN=/abs/prusa-slicer PRUSA_NATIVE_ORACLE=/abs/sla_oracle \
-  node packages/wasm-core/generate_sla_oracle.mjs --fixtures packages/wasm-core/fixtures/sla
+  node packages/wasm-core/tools/generate_sla_oracle.mjs --fixtures packages/wasm-core/fixtures/sla
 ```
 
 The adapter is `/abs/sla_oracle/sla-oracle-adapter`. It receives `--prusa-bin`, `--fixture`, and `--out`,

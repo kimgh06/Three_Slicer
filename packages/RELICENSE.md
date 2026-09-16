@@ -198,7 +198,7 @@ question below to be answered in parallel rather than blocking.
 ### G001 — the toolpath rewrite (shipped)
 
 All four derived files were replaced, written from [`../packages-mit/TOOLPATH_SPEC.md`](../packages-mit/TOOLPATH_SPEC.md).
-Characterization first (`packages-mit/test_toolpath_contract.mjs`), because only `test_move_scrub.mjs` had
+Characterization first (`packages-mit/tests/test_toolpath_contract.mjs`), because only `test_move_scrub.mjs` had
 covered any of this — geometry, colouring and the shaders had nothing. Two shipped defects surfaced and did
 not survive: `viewer-toolpath.d.ts` declared `fanByType` / `fanFirstLayers` that nothing read while the code
 required `fanNormal` / `toolColors`, so `computeColors(data, 'fan', ctx)` threw for any typed consumer; and

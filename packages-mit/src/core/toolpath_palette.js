@@ -5,6 +5,8 @@
 // the structural roles (wall, solid) sit at the warm end, the filler roles cooler, and support/skirt stay
 // desaturated so they read as scaffolding rather than as part of the object.
 
+import { UNKNOWN_COLOR } from './viewer_defaults.js'
+
 /** Toolpath role -> [r,g,b] in 0..1. Role 0 is travel and is drawn as a line, not a bead. */
 export const TYPE_COLOR = {
   0: [0.35, 0.38, 0.44],   // travel
@@ -33,11 +35,11 @@ export const TOOL_COLOR = [
   [0.72, 0.42, 0.90], [0.20, 0.78, 0.80], [0.95, 0.50, 0.72], [0.60, 0.60, 0.64],
 ]
 
-/** '#rrggbb' (or 'rrggbb') -> [r,g,b] in 0..1. Anything unparseable comes back mid-grey rather than NaN:
+/** '#rrggbb' (or 'rrggbb') -> [r,g,b] in 0..1. Anything unparseable comes back as UNKNOWN_COLOR rather than NaN:
  *  a bad colour must not become a NaN that propagates into an attribute buffer. */
 export function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? '').trim())
-  if (!m) return [0.5, 0.5, 0.5]
+  if (!m) return hexToRgb(UNKNOWN_COLOR)
   const n = parseInt(m[1], 16)
   return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]
 }

@@ -1,4 +1,5 @@
 import React from 'react'
+import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
 
 const hms = (seconds) => {
   const s = Math.round(seconds)
@@ -44,7 +45,7 @@ export default function StatsCard({ stats, overBed, overBedText, overBedModel = 
       {showBreakdown && perTool.map((millimetres, index) => (
         Number.isFinite(millimetres) && millimetres > 0 ? (
           <div className="stat-tool" key={index} data-testid={`filament-tool-${index}`}>
-            <span className="stat-swatch" style={{ background: colors[index] ?? '#8a9099' }} />
+            <span className="stat-swatch" style={{ background: colors[index] ?? UNKNOWN_COLOR }} />
             T{index + 1}
             {filamentLabel(filamentTypes, filamentIds, index) && (
               <span className="stat-type" data-testid={`filament-type-${index}`}>

@@ -10,11 +10,9 @@
 // The role field is packed: enc = role + tool * 16 (see the spec). Everything downstream reads the DECODED
 // role and tool out of meta, never the raw enc — that decode happens here, once.
 import { TYPE_COLOR, TYPE_LABEL, packColor } from './toolpath_palette.js'
+import { DEFAULT_LAYER_HEIGHT, DEFAULT_LINE_WIDTH } from './viewer_defaults.js'
+import { STRIDE, ROLE, roleOf, toolOf } from './toolpath_encoding.js'
 
-const STRIDE = 8            // [x0,y0,z0,enc, x1,y1,z1,enc]
-const DEFAULT_LAYER_HEIGHT = 0.2
-const ROLE_MASK = 15
-const TOOL_SHIFT = 4
 
 const packedTypeColor = {}
 for (const role of Object.keys(TYPE_COLOR)) packedTypeColor[role] = packColor(TYPE_COLOR[role])
@@ -46,7 +44,7 @@ const segCountOf = (layer) => { const p = pathsOf(layer); return p ? Math.floor(
 export function buildSegmentData(layers, defaultLineWidth) {
   const src = Array.isArray(layers) ? layers : []
   const layerCount = src.length
-  const fallbackWidth = Number(defaultLineWidth) > 0 ? Number(defaultLineWidth) : 0.4
+  const fallbackWidth = Number(defaultLineWidth) > 0 ? Number(defaultLineWidth) : DEFAULT_LINE_WIDTH
   const heights = layerHeights(src)
 
   // ---- pass 1: counts, so every buffer is allocated once at its final size
@@ -58,7 +56,7 @@ export function buildSegmentData(layers, defaultLineWidth) {
     const paths = pathsOf(src[li])
     const count = segCountOf(src[li])
     for (let s = 0; s < count; s++) {
-      if ((paths[s * STRIDE + 3] & ROLE_MASK) === 0) nTrav++
+      if (roleOf(paths[s * STRIDE + 3]) === ROLE.TRAVEL) nTrav++
       else nSeg++
     }
     nMove += count
@@ -99,18 +97,18 @@ export function buildSegmentData(layers, defaultLineWidth) {
       const x0 = paths[o], y0 = paths[o + 1], z0 = paths[o + 2]
       const x1 = paths[o + 4], y1 = paths[o + 5], z1 = paths[o + 6]
       const enc = paths[o + 3] | 0
-      const role = enc & ROLE_MASK
-      const tool = enc >>> TOOL_SHIFT
+      const role = roleOf(enc)
+      const tool = toolOf(enc)
 
       if (!Number.isFinite(x0 + y0 + z0 + x1 + y1 + z1)) hasNaN = true
 
       // The move list is the PERFORMED order — extrusions and travels interleaved as the machine does them.
       //  It is the only record of that order once the two go to separate buffers, and moveCursor needs it.
-      moveKind[mi] = role === 0 ? 0 : 1
+      moveKind[mi] = role === ROLE.TRAVEL ? 0 : 1
       movePos[mi * 3] = x1; movePos[mi * 3 + 1] = y1; movePos[mi * 3 + 2] = z1
       mi++
 
-      if (role === 0) {
+      if (role === ROLE.TRAVEL) {
         const t = ti * 6
         travelPos[t] = x0; travelPos[t + 1] = y0; travelPos[t + 2] = z0
         travelPos[t + 3] = x1; travelPos[t + 4] = y1; travelPos[t + 5] = z1

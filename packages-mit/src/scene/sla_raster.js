@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { THEME } from '../core/theme.js'
 
 // Sampled planes in the stand-in stack; `?sl1Ghost=N` overrides for measuring (0 disables it entirely).
 const GHOST_PLANES = (() => {
@@ -59,7 +60,7 @@ export function makeSlaRaster(toolpathGroup, invalidate) {
     canvas.width = payload.affine.width; canvas.height = payload.affine.height
     const texture = new THREE.CanvasTexture(canvas)
     const material = new THREE.MeshBasicMaterial({
-      color: 0xd7862a, alphaMap: texture, transparent: true, side: THREE.DoubleSide, depthWrite: false,
+      color: THEME.slaModel, alphaMap: texture, transparent: true, side: THREE.DoubleSide, depthWrite: false,
     })
     const plane = new THREE.Mesh(new THREE.PlaneGeometry(payload.width, payload.height), material)
     plane.renderOrder = 2                     // above the ghost stack
@@ -98,7 +99,7 @@ export function makeSlaRaster(toolpathGroup, invalidate) {
       bmp?.close?.()
       const texture = new THREE.CanvasTexture(c)
       const material = new THREE.MeshBasicMaterial({
-        color: 0xd7862a, alphaMap: texture, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
+        color: THEME.slaModel, alphaMap: texture, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
       })
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(st.payload.width, st.payload.height), material)
       mesh.position.z = st.payload.zOf(i)

@@ -4,6 +4,7 @@
 // consumer's own three.js instance is used, and it is why this module has no dependency of its own and can
 // be consumed from a page that already has three loaded.
 import { SEG_VS, SEG_FS } from '../core/toolpath_shaders.js'
+import { THEME } from '../core/theme.js'
 
 // The bead template: a four-corner ring at each end of the segment, so 8 vertices.
 //  tpl = [which end (0 = start, 1 = end), which ring corner (0 = +side, 1 = +up, 2 = -side, 3 = -up)]
@@ -78,7 +79,7 @@ export function makeToolpath(THREE, data) {
 
   const travGeometry = new THREE.BufferGeometry()
   travGeometry.setAttribute('position', new THREE.BufferAttribute(travelPos, 3))
-  const travMaterial = new THREE.LineBasicMaterial({ color: 0x5a6270, transparent: true, opacity: 0.6 })
+  const travMaterial = new THREE.LineBasicMaterial({ color: THEME.travel, transparent: true, opacity: 0.6 })
   const travLines = new THREE.LineSegments(travGeometry, travMaterial)
   travLines.visible = false
   travLines.frustumCulled = false

@@ -1,0 +1,149 @@
+// Todo 5: the ported SupportPointGenerator + SupportIslands are linked and drive slice_sla.
+// Static half: the build graph and docs say what is actually true. Runtime half: mutation tests
+// prove density, head diameter and enforcers-only are consumed rather than silently defaulted.
+import { strict as assert } from 'node:assert'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import createSlicer from '../../engine/src/slicer_core.js'
+
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
+const read = (relative) => readFileSync(join(here, relative), 'utf8')
+const expectSource = (relative, label) => {
+  assert.ok(existsSync(join(here, relative)), `Missing ${label} source: ${relative}`)
+}
+
+// Given: the local Prusa 2.9.6 source staging area and the current kernel build graph.
+// When: the support-point capability is audited.
+// Then: generator and island TUs are present AND linked; the docs describe the ported state.
+for (const relative of [
+  'slasupport_port/libslic3r/SLA/SupportPointGenerator.hpp',
+  'slasupport_port/libslic3r/SLA/SupportPointGenerator.cpp',
+  'slasupport_port/libslic3r/SLA/SupportIslands/SampleConfig.hpp',
+  'slasupport_port/libslic3r/SLA/SupportIslands/SampleConfigFactory.cpp',
+  'slasupport_port/libslic3r/SLA/SupportIslands/LineUtils.cpp',
+  'slasupport_port/libslic3r/SLA/SupportIslands/UniformSupportIsland.cpp',
+  'slasupport_port/libslic3r/Geometry/Circle.hpp',
+  'slasupport_port/libslic3r/Utils.hpp',
+]) expectSource(relative, 'SupportPointGenerator/SupportIslands')
+
+const build = read('build.sh')
+const sourceMatch = build.match(/^SLA_SRC="([^"]+)"/m)
+assert.ok(sourceMatch, 'build.sh must declare SLA_SRC')
+const linked = sourceMatch[1].split(/\s+/)
+assert.ok(linked.includes('slasupport_port/libslic3r/SLA/SupportPointGenerator.cpp'),
+  'SupportPointGenerator.cpp must be linked')
+assert.equal(linked.filter((unit) => unit.includes('/SupportIslands/')).length, 13,
+  'all 13 SupportIslands TUs must be linked')
+assert.match(build, /-DCGAL_DISABLE_GMP=1/)
+
+const notes = read('slasupport_port/PORT_NOTES.md')
+assert.match(notes, /Support-point generation \(SupportPointGenerator \+ SupportIslands, LINKED\)/)
+assert.match(notes, /support_point_parity_status=ported/)
+
+const sla = read('slice_sla.cpp')
+assert.match(sla, /generator_backend = "prusa_port"/)
+assert.match(sla, /support_point_parity_status.*ported/)
+assert.doesNotMatch(sla, /heuristic_fallback/)
+
+// Given: committed deterministic SLA fixtures with support and pad disabled.
+// When: the feature-disabled baseline contract is read.
+// Then: those baselines still promise zero support output (the ported generator must not change them).
+for (const fixture of ['cube-support-off-pad-off', 'mushroom-support-off-pad-off']) {
+  const input = JSON.parse(read(`fixtures/sla/${fixture}/fixture.json`))
+  const baseline = JSON.parse(read(`fixtures/sla/${fixture}/baseline.json`))
+  assert.equal(input.schema, 'three-slicer.sla-fixture.v1', fixture)
+  assert.equal(input.settings.supports_enable, false, fixture)
+  assert.equal(input.settings.pad_enable, false, fixture)
+  assert.equal(baseline.schema, 'three-slicer.sla-feature-disabled-baseline.v1', fixture)
+  assert.equal(baseline.observable.supportPoints, 0, fixture)
+  assert.equal(baseline.observable.role5Paths, 0, fixture)
+  assert.equal(baseline.observable.role6Paths, 0, fixture)
+  assert.equal(baseline.observable.supportMeshBounds, null, fixture)
+  assert.equal(baseline.observable.padMeshBounds, null, fixture)
+}
+
+// ---- Runtime mutation tests against the committed WASM --------------------------------------------------------
+
+function boxTris(x0, y0, z0, sx, sy, sz) {
+  const v = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]]
+    .map(([x, y, z]) => [x + x0, y + y0, z + z0])
+  const f = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
+  return f.map(face => face.map(i => v[i]))
+}
+function writeSTL(tris) {
+  const buf = Buffer.alloc(84 + tris.length * 50)
+  buf.writeUInt32LE(tris.length, 80)
+  tris.forEach((t, i) => {
+    let off = 84 + 50 * i + 12
+    for (const p of t) for (const c of p) { buf.writeFloatLE(c, off); off += 4 }
+  })
+  return new Uint8Array(buf)
+}
+
+const M = await createSlicer()
+const mushroom = writeSTL([...boxTris(-2, -2, 0, 4, 4, 8), ...boxTris(-8, -8, 8, 16, 16, 3)])
+const P = (over = {}) => JSON.stringify({
+  layer_height: 0.05, initial_layer_height: 0.05, bed_width: 120.96, bed_depth: 68.04,
+  supports_enable: true, ...over,
+})
+const roleOf = (enc) => enc & 15
+const countRole = (layers, role) => layers.reduce((n, L) => {
+  for (let k = 3; k < L.paths.length; k += 8) if (roleOf(L.paths[k]) === role) n++
+  return n
+}, 0)
+
+// Given: a mushroom (overhanging cap on a thin stem) and the ported generator.
+// When: it slices with supports enabled at default density.
+// Then: points are generated by the prusa_port backend and every point sits on/near the model surface.
+const base = M.slice_sla(mushroom, P(), undefined)
+assert.equal(base.error, undefined)
+assert.equal(base.stats.support_point_generator, 'prusa_port')
+assert.equal(base.stats.support_point_parity_status, 'ported')
+assert.ok(base.stats.support_points > 0, `expected generated points, got ${base.stats.support_points}`)
+assert.equal(base.support_points.length, base.stats.support_points)
+for (const point of base.support_points) {
+  assert.ok(point.z >= -0.001 && point.z <= 11.001, `point z ${point.z} outside the model`)
+  assert.ok(Math.abs(point.x) <= 8.001 && Math.abs(point.y) <= 8.001, `point ${point.x},${point.y} outside footprint`)
+}
+
+// Given: the same model with the generator switched off.
+// Then: zero points, generator disabled.
+const off = M.slice_sla(mushroom, P({ supports_enable: false }), undefined)
+assert.equal(off.stats.support_points, 0)
+assert.equal(off.stats.support_point_generator, 'disabled')
+
+// Given: density mutated in both directions.
+// Then: the setting is consumed — the produced point sets differ from the default run.
+const sparse = M.slice_sla(mushroom, P({ support_points_density_relative: 30 }), undefined)
+const dense = M.slice_sla(mushroom, P({ support_points_density_relative: 300 }), undefined)
+assert.ok(sparse.stats.support_points > 0)
+assert.ok(dense.stats.support_points >= sparse.stats.support_points,
+  `density 300 gave ${dense.stats.support_points} < density 30's ${sparse.stats.support_points}`)
+assert.ok(dense.stats.support_points !== sparse.stats.support_points,
+  'density mutation produced identical point counts — the setting is not consumed')
+
+// Given: head diameter mutated.
+// Then: the generated points carry the configured head radius.
+const wide = M.slice_sla(mushroom, P({ support_head_front_diameter: 0.8 }), undefined)
+assert.ok(wide.support_points.length > 0)
+const radii = new Set(wide.support_points.map((p) => p.head_front_radius))
+assert.ok([...radii].some((r) => Math.abs(r - 0.4) < 1e-6),
+  `head_front_diameter 0.8 not reflected in point radii: ${[...radii].join(', ')}`)
+
+// Given: enforcers-only with no enforcer masks in the job.
+// Then: generation still runs, but the tree receives nothing — no role-5 paths and no support mesh.
+const eo = M.slice_sla(mushroom, P({ support_enforcers_only: true }), undefined)
+assert.equal(eo.error, undefined)
+assert.equal(countRole(eo.layers, 5), 0, 'enforcers-only without enforcers must emit no support paths')
+assert.equal(eo.support_mesh.length, 0)
+
+// Given: the same input twice.
+// Then: the generated point set is byte-deterministic.
+const again = M.slice_sla(mushroom, P(), undefined)
+assert.equal(again.stats.support_points, base.stats.support_points)
+assert.deepEqual(
+  again.support_points.map((p) => [p.x, p.y, p.z, p.type]),
+  base.support_points.map((p) => [p.x, p.y, p.z, p.type]))
+
+console.log('test_sla_support_points: ported generator linked; density/head-diameter/enforcers-only mutations observed; disabled fixtures validated')

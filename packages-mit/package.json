@@ -51,7 +51,8 @@
     "dist",
     "src/data.js",
     "src/settings",
-    "types"
+    "types",
+    "!**/.omc"
   ],
   "keywords": [
     "3d-printing",
@@ -108,7 +109,7 @@
   },
   "scripts": {
     "build": "vite build && cp src/make_worker.js dist/make_worker.js",
-    "prepublishOnly": "npm run build && node test_version_lockstep.mjs && node test_toolpath_contract.mjs",
-    "test": "for f in test_*.mjs; do node $f || exit 1; done"
+    "prepublishOnly": "npm run build && node tests/test_version_lockstep.mjs && node tests/test_toolpath_contract.mjs",
+    "test": "for f in tests/test_*.mjs; do node $f || exit 1; done"
   }
 }

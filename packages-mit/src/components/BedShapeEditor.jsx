@@ -4,8 +4,11 @@
 //  · Circular: diameter -> 32-gon approximation (as in the upstream BedShapePanel)
 //  · Custom: enter the coordinate JSON directly
 import React, { useEffect, useState } from 'react'
+import { leanSchema } from 'three-slicer-viewer/data'
 
 const rectPts = (w, d, ox, oy) => [[ox, oy], [w + ox, oy], [w + ox, d + oy], [ox, d + oy]]
+// The schema's own printable_area default — the bed shown when the value is missing or not a point list.
+const DEFAULT_PTS = leanSchema.printable_area.default
 const circlePts = (dia) => {
   const r = dia / 2, n = 32
   return Array.from({ length: n }, (_, i) => {
@@ -19,7 +22,7 @@ const bbox = (pts) => {
 }
 
 export default function BedShapeEditor({ value, onChange, disabled }) {
-  const pts = Array.isArray(value) && value.length >= 3 ? value : rectPts(200, 200, 0, 0)
+  const pts = Array.isArray(value) && value.length >= 3 ? value : DEFAULT_PTS
   const b = bbox(pts)
   const [mode, setMode] = useState(pts.length === 4 ? 'rect' : pts.length >= 12 ? 'circle' : 'custom')
   const [rect, setRect] = useState({ w: b.w, d: b.d, ox: b.x0, oy: b.y0 })
@@ -71,7 +74,7 @@ export default function BedShapeEditor({ value, onChange, disabled }) {
       )}
       {mode === 'custom' && (
         <textarea className={'bse-json' + (jsonErr ? ' err' : '')} rows={3} value={json} disabled={disabled}
-          data-testid="bed-json" onChange={e => commitJson(e.target.value)} placeholder='[[0,0],[200,0],[200,200],[0,200]]' />
+          data-testid="bed-json" onChange={e => commitJson(e.target.value)} placeholder={JSON.stringify(DEFAULT_PTS)} />
       )}
     </div>
   )

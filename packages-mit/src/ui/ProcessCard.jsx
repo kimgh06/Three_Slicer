@@ -1,5 +1,5 @@
 import React from 'react'
-import { scopedSettings } from '../core/plate_settings.js'
+import { cardScope } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
 
 // The Process card: the host's settings-panel slot, plus the per-plate scope toggle.
@@ -12,8 +12,8 @@ export default function ProcessCard({
   processPanel, settings, setSettings, plateSettings, setPlateSettings,
   plateCount, selectedPlate, settingsScope, setSettingsScope, onResetPlate = null,
 }) {
-  const active = settingsScope === 'plate' && plateCount > 1 && typeof processPanel === 'function'
-  const scoped = scopedSettings(settings, setSettings, plateSettings, setPlateSettings, selectedPlate, active)
+  const scoped = cardScope({ settings, setSettings, plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope }, typeof processPanel === 'function')
+  const active = scoped.plateScope
   const scopeMeta = { scope: active ? 'plate' : 'global', selectedPlate, overriddenKeys: scoped.overriddenKeys, onRevertKey: scoped.onRevertKey }
   const panel = typeof processPanel === 'function' ? processPanel(scoped.settings, scoped.setSettings, scopeMeta) : processPanel
   return (

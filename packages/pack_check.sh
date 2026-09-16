@@ -20,6 +20,16 @@ npm pack "$MIT" --pack-destination "$TMP/tarballs" >/dev/null
 npm pack "$PKG" --pack-destination "$TMP/tarballs" >/dev/null
 T=("$TMP"/tarballs/*.tgz)
 
+echo "== no dot-paths in either tarball"
+# Tooling drops state directories (.omc/, ...) inside the published folders, and `files` only keeps them out when
+#  every folder remembers its own negation — `types` did not, and three-slicer 0.3.0 shipped one.
+#  Neither package publishes a dotfile on purpose, so any path component starting with a dot is a leak.
+for tgz in "${T[@]}"; do
+  if leaked="$(tar -tzf "$tgz" | grep '/\.')"; then
+    echo "FAIL: $(basename "$tgz") contains dot-paths:"; echo "$leaked"; exit 1
+  fi
+done
+
 echo "== permissive consumer (three-slicer-viewer alone)"
 # The whole point of the split: this package installs and works with NO AGPL anywhere in the tree. If that
 #  ever stops holding, the MIT grant on it is one nobody had the right to give.

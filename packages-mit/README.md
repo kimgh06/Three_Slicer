@@ -9,7 +9,7 @@ exports; it does not slice. Slicing is plugged in through two props — `slicer`
 `catalog` (vendor presets) — which `three-slicer/viewer` supplies. Install `three-slicer` for that, and note that
 doing so puts your application under AGPL.
 
-Developed in the [`Web_Three_Slicer`](https://github.com/kimgh06/Web_Three_Slicer) monorepo (`packages-mit/`), where it
+Developed in the [`Three_Slicer`](https://github.com/kimgh06/Three_Slicer) monorepo (`packages-mit/`), where it
 is built and tested beside the kernel; this repository is that folder's history, pushed on every release. Issues and
 pull requests are welcome here — a change lands upstream and comes back with the next sync.
 
@@ -70,12 +70,12 @@ handle.setColors(computeColors(data, 'speed', ctx).color) // recolour without a 
 ## Licensing
 
 MIT. It depends on nothing AGPL, which a check in this repository enforces rather than documents
-(`packages/viewer/test_license_boundary.mjs`).
+(`packages/viewer/tests/test_license_boundary.mjs`).
 
 The implementation was written from [`TOOLPATH_SPEC.md`](./TOOLPATH_SPEC.md), a functional contract, rather
 than derived from any upstream slicer. The reasoning and evidence are in
-[`../packages/PROVENANCE.md`](../packages/PROVENANCE.md); the plan it came from is
-[`../packages/RELICENSE.md`](../packages/RELICENSE.md).
+[`PROVENANCE.md`](https://github.com/kimgh06/Three_Slicer/blob/main/packages/PROVENANCE.md); the plan it came from is
+[`RELICENSE.md`](https://github.com/kimgh06/Three_Slicer/blob/main/packages/RELICENSE.md).
 
 Published as a locked pair with `three-slicer`: both carry the same version, and `three-slicer` pins this
 package exactly, so a combination that was never built together cannot be resolved.

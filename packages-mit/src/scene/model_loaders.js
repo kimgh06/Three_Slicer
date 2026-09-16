@@ -10,6 +10,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { AMFLoader } from 'three/examples/jsm/loaders/AMFLoader.js'
 import { parse3MFProject } from '../core/parse_3mf.js'
 import { makeParse3mfWorker } from '../make_worker.js'
+import { STL_HEADER_BYTES, STL_DATA_OFFSET, stlByteLength } from '../core/stl_format.js'
 
 // ---- 3MF parsing off the main thread -------------------------------------------------------------------------
 // A slicer project is the one import big enough to be felt: 52MB compressed / 315MB of XML / 3.8M triangles takes
@@ -81,11 +82,11 @@ export function fileExt(name) { const i = name.lastIndexOf('.'); return i < 0 ? 
 // --- STL parser (binary + ASCII) -> model-space position (N*9) ---  (moved out of the old Viewport logic)
 function parseSTL(buffer) {
   const dv = new DataView(buffer)
-  if (buffer.byteLength >= 84) {
-    const n = dv.getUint32(80, true)
-    if (buffer.byteLength === 84 + n * 50) {
+  if (buffer.byteLength >= STL_DATA_OFFSET) {
+    const n = dv.getUint32(STL_HEADER_BYTES, true)
+    if (buffer.byteLength === stlByteLength(n)) {
       const pos = new Float32Array(n * 9)
-      let off = 84, p = 0
+      let off = STL_DATA_OFFSET, p = 0
       for (let i = 0; i < n; i++) {
         off += 12
         for (let v = 0; v < 3; v++) { pos[p++] = dv.getFloat32(off, true); pos[p++] = dv.getFloat32(off + 4, true); pos[p++] = dv.getFloat32(off + 8, true); off += 12 }

@@ -1,6 +1,6 @@
 import React from 'react'
 import { deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
-import { scopedSettings } from '../core/plate_settings.js'
+import { cardScope } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
 import { resolveCatalog } from '../core/catalog.js'
 
@@ -12,8 +12,8 @@ import { resolveCatalog } from '../core/catalog.js'
 //  edit lands in ITS override — which is where its slice reads from.
 export default function ResinCard({ catalog, settings: globalSettings, setSettings: setGlobalSettings, stats,
   plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null }) {
-  const plateScope = settingsScope === 'plate' && plateCount > 1 && !!setPlateSettings
-  const scoped = scopedSettings(globalSettings, setGlobalSettings, plateSettings, setPlateSettings, selectedPlate, plateScope)
+  const scoped = cardScope({ settings: globalSettings, setSettings: setGlobalSettings, plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope })
+  const plateScope = scoped.plateScope
   const settings = scoped.settings, setSettings = scoped.setSettings
   const p = deriveSlaParams(settings)
   const write = (key) => (e) => {

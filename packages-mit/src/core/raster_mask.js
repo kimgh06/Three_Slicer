@@ -7,12 +7,14 @@
 // AA is upstream's model: supersample the fill at NxN subsamples per pixel and average — a boundary
 //  pixel's gray level IS its coverage. N=1 collapses to the plain binary mask.
 
+import { STRIDE } from './toolpath_encoding.js'
+
 /** Segment-continuity loop rebuild — the same rule drawLayer (sl1_write.js) applies to the stride-8
  *  stream: a loop is a run of segments whose start is the previous segment's end. */
 export function loopsOfPaths(paths) {
   const loops = []
   let cur = null
-  for (let k = 0; k < paths.length; k += 8) {
+  for (let k = 0; k < paths.length; k += STRIDE) {
     const ax = paths[k], ay = paths[k + 1], bx = paths[k + 4], by = paths[k + 5]
     if (cur && Math.abs(cur.lx - ax) < 1e-6 && Math.abs(cur.ly - ay) < 1e-6) {
       cur.pts.push(bx, by); cur.lx = bx; cur.ly = by

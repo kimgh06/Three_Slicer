@@ -1,4 +1,4 @@
-// The kernel's stats reply -> the shape the viewer keeps (and the names wasm-core/test.mjs asserts).
+// The kernel's stats reply -> the shape the viewer keeps (and the names wasm-core/tests/test.mjs asserts).
 // Pure, so it lives here rather than beside the worker that produces it: plate_actions consumes it and
 // must not reach into the slicing module for a formatter.
 // The kernel's stats object, reduced to what the UI reads. One place, because the per-plate path shows the same

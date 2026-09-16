@@ -9,12 +9,13 @@
 // slices instead of a third of the archive (~50MB).
 import { fillSliceFromRGBA } from './core/sla_reconstruct.js'
 import { drawLayer } from './core/sl1_write.js'
+import { STRIDE, ROLE, roleOf } from './core/toolpath_encoding.js'
 
 let BATCH = 6   // slices per canvas/readback — amortizes the getImageData call, bounds bitmaps in flight
 
 const filterByRole = (paths, role) => {
   const out = []
-  for (let k = 0; k + 7 < paths.length; k += 8) if ((paths[k + 3] & 15) === role) for (let f = 0; f < 8; f++) out.push(paths[k + f])
+  for (let k = 0; k + STRIDE - 1 < paths.length; k += STRIDE) if (roleOf(paths[k + 3]) === role) for (let f = 0; f < STRIDE; f++) out.push(paths[k + f])
   return out
 }
 
@@ -71,9 +72,9 @@ self.onmessage = async (event) => {
           const rowOff = k * ny
           const map = { map: (x, y) => [(x + width / 2) / width * nx, (height / 2 - y) / height * ny + rowOff] }
           roleCtx.fillStyle = '#00f'
-          drawLayer(roleCtx, filterByRole(paths, 6), map)
+          drawLayer(roleCtx, filterByRole(paths, ROLE.RAFT), map)
           roleCtx.fillStyle = '#f00'
-          drawLayer(roleCtx, filterByRole(paths, 5), map)
+          drawLayer(roleCtx, filterByRole(paths, ROLE.SUPPORT), map)
         }
         roleGrid = roleCtx.getImageData(0, 0, nx, ny * bitmaps.length).data
         t.roles += performance.now() - mark; mark = performance.now()

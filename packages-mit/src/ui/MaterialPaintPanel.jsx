@@ -1,16 +1,17 @@
 import React from 'react'
+import { THEME } from '../core/theme.js'
 
 // Chip labels sit on the filament's own colour, which spans black PLA to white PETG — pick the ink per chip
 //  instead of hard-coding one, or the label disappears on half of any real palette.
 function readableInkFor(backgroundColor) {
   const hex = String(backgroundColor ?? '').trim().replace(/^#/, '')
-  if (hex.length !== 3 && hex.length !== 6) return '#ffffff'
+  if (hex.length !== 3 && hex.length !== 6) return THEME.inkOnDark
   const expanded = hex.length === 3 ? hex.split('').map(digit => digit + digit).join('') : hex
   const channels = [0, 2, 4].map(offset => parseInt(expanded.slice(offset, offset + 2), 16) / 255)
-  if (channels.some(Number.isNaN)) return '#ffffff'
+  if (channels.some(Number.isNaN)) return THEME.inkOnDark
   const [red, green, blue] = channels
   const relativeLuminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
-  return relativeLuminance > 0.55 ? '#10141a' : '#ffffff'
+  return relativeLuminance > 0.55 ? THEME.inkOnLight : THEME.inkOnDark
 }
 
 // The counts source indexes by extruder, but it arrives as a dense array from one producer and as a sparse

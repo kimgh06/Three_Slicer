@@ -2,7 +2,8 @@ import { log } from './core/log.js'
 import { effectiveSettings, plateTechnology } from './core/plate_settings.js'
 import { statsFromKernel } from './core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams, deriveSlaParams, printerTechnology, settingRaw } from 'three-slicer-viewer/settings'
+import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
+import { DEFAULT_BED } from './core/viewer_defaults.js'
 
 
 // Worker lifecycle + progress mapping (SAB polling) + the stage-30 streaming/watchdog/OOM retry ladder.
@@ -429,7 +430,7 @@ export function useSlicer(deps) {
     if ((params.extruder_count ?? 1) >= 2 && Number.isFinite(merged.minX) && params.prime_tower_x == null) {
       const towerSide = (params.wipe_tower_real ?? true) ? (params.prime_tower_width ?? 30) : 15
       const gap = 5
-      const bedW = params.bed_width ?? 200, bedD = params.bed_depth ?? 200
+      const bedW = params.bed_width ?? DEFAULT_BED.width, bedD = params.bed_depth ?? DEFAULT_BED.depth
       // Slice frame -> bed frame is one addition (the kernel's own gw.offX), and both boxes are now in it.
       const modelLeft = merged.minX + bedW / 2, modelMidY = (merged.minY + merged.maxY) / 2 + bedD / 2
       params.prime_tower_x = Math.min(Math.max(modelLeft - gap - towerSide, 1), bedW - towerSide - 1)

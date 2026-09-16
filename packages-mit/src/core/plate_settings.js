@@ -172,6 +172,17 @@ export function scopedSettings(settings, setSettings, plateSettings, setPlateSet
   }
 }
 
+/**
+ * The Global|Plate switch every settings card carries, as the scoped pair the card binds to. Plate scope needs the
+ * switch on it, more than one plate, and a card that can take it: `available` is the card's own condition (a setter
+ * for the overrides by default; the Process card also needs its panel slot to be a function).
+ */
+export function cardScope({ settings, setSettings, plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global' },
+  available = !!setPlateSettings) {
+  const active = settingsScope === 'plate' && plateCount > 1 && available
+  return scopedSettings(settings, setSettings, plateSettings, setPlateSettings, selectedPlate, active)
+}
+
 /** Drop one key from a plate's override — the badge's "follow the global value again". */
 export function revertPlateKey(plateSettings, plate, key) {
   const current = plateSettings?.[plate]

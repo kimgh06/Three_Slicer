@@ -394,6 +394,70 @@ for 143MB) against a 4GB pool budget, which gives 2 for that model and does not 
 manual count is capped the same way. What the browser has NOT measured yet is
 the arachne + tree-support preset, where the harness gains were largest.
 
+## Theming
+
+Both shadow roots (the viewer and `<SettingsPanel/>`) paint their chrome from one palette, `UI_TOKENS` in
+`src/core/theme.js`. Each entry is a custom property a host can set on any ancestor of the component — custom
+properties are the one thing that inherits across a shadow boundary, so this is the only styling hook the isolation
+leaves open:
+
+```css
+.my-slicer-page { --vp-accent: #0a84ff; --vp-light-bg: #f4f4f6; }
+```
+
+An unset property falls back to the default below. Four of them are also used as translucent fill, and CSS cannot
+take the alpha off a hex — those carry an `-rgb` twin (`--vp-accent-rgb: 0, 174, 66`) that a host overriding the
+colour must set as well. The 3D scene (the selection tint, plate borders, grid, SLA preview
+colours) is drawn by three.js from `THEME` in the same file and does not read these properties.
+
+| Property | Default |
+|---|---|
+| `--vp-accent` | `#00ae42` |
+| `--vp-accent-hover` | `#06c04d` |
+| `--vp-accent-deep` | `#23402c` |
+| `--vp-accent-ink` | `#167a3a` |
+| `--vp-accent-on-dark` | `#9fe3bd` |
+| `--vp-accent-soft` | `#e3f6ea` |
+| `--vp-accent-soft-border` | `#9adfb6` |
+| `--vp-on-accent` | `#ffffff` |
+| `--vp-dark-base` | `#0e1216` |
+| `--vp-dark-surface` | `#161b21` |
+| `--vp-dark-control` | `#1a2027` |
+| `--vp-dark-control-hover` | `#28313a` |
+| `--vp-dark-border` | `#2c353d` |
+| `--vp-dark-border-strong` | `#3a4550` |
+| `--vp-dark-text` | `#cdd6dd` |
+| `--vp-dark-text-muted` | `#aebcc6` |
+| `--vp-dark-text-faint` | `#8b98a2` |
+| `--vp-dark-text-disabled` | `#5a6570` |
+| `--vp-light-bg` | `#eef0f2` |
+| `--vp-light-surface` | `#ffffff` |
+| `--vp-light-subtle` | `#f6f7f8` |
+| `--vp-light-control` | `#dfe6ea` |
+| `--vp-light-control-hover` | `#d3dee4` |
+| `--vp-light-border` | `#d5d8dd` |
+| `--vp-light-divider` | `#e3e6ea` |
+| `--vp-light-text` | `#24282e` |
+| `--vp-light-text-muted` | `#5a6069` |
+| `--vp-light-text-faint` | `#8a9099` |
+| `--vp-info` | `#2b6cff` |
+| `--vp-info-ink` | `#2563eb` |
+| `--vp-info-soft` | `#e6efff` |
+| `--vp-tech-badge` | `#6d7ce0` |
+| `--vp-danger` | `#e23b3b` |
+| `--vp-danger-ink` | `#a33b37` |
+| `--vp-danger-soft` | `#fbeaea` |
+| `--vp-danger-on-dark` | `#ff8b8b` |
+| `--vp-danger-deep` | `#4a2229` |
+| `--vp-warn` | `#f0a542` |
+| `--vp-warn-ink` | `#a86a12` |
+| `--vp-warn-soft` | `#fdf4e3` |
+| `--vp-warn-soft-hover` | `#f3e2cb` |
+| `--vp-warn-border` | `#d8b48a` |
+| `--vp-warn-on-dark` | `#f0c060` |
+| `--vp-warn-deep` | `#3a2a10` |
+| `--vp-warn-deep-border` | `#7a5a1e` |
+
 ## Bundler notes
 
 - **Vite:** two config lines (worker code-splitting + top-level await in the mt glue; Chrome 89+/Safari 15+):
