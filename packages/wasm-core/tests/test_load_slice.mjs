@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import createSlicer from '../../engine/src/slicer_core.js'
-import { loadModel, SUPPORTED_EXT } from '../../../packages-mit/src/scene/model_loaders.js'
+import { loadModel, SUPPORTED_EXT } from 'three-slicer-viewer/loaders'   // the built package, like test_gcode_parse.mjs
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 // cube20.stl sits at the package root, the rest under testing_files/ — both are committed fixtures.
