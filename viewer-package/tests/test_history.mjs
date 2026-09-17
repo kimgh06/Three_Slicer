@@ -2,7 +2,7 @@
 //   node viewer-package/tests/test_history.mjs
 import assert from 'node:assert'
 import { createHistory } from '../src/core/history.js'
-import { undoRedoDirection } from '../src/use_viewport_history.js'
+import { undoRedoDirection } from '../src/hooks/use_viewport_history.js'
 
 // A stand-in scene: capture/restore of one value, which is all the stack machinery can see anyway.
 function harness(opts = {}) {

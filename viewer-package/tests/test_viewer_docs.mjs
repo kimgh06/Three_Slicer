@@ -14,7 +14,7 @@ let failures = 0
 // src/ is laid out in layers (core/ scene/ actions/ ui/). Look a file up by NAME so that moving one between
 //  layers does not silently turn this gate into a crash — the gate is about content, not about paths.
 const srcFile = (name) => {
-  for (const dir of ['', 'core', 'scene', 'actions', 'ui']) {
+  for (const dir of ['', 'hooks', 'core', 'scene', 'actions', 'ui']) {
     const path = join(here, 'src', dir, name)
     if (existsSync(path)) return readFileSync(path, 'utf8')
   }
