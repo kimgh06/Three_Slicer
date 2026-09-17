@@ -200,7 +200,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   Record at the ACTION layer, never on the buttons: delete alone is reachable from four entry points.
 - **Per-plate settings are a sparse override, and absence means "follow the global map".** `plateSettings`
   (`{[plateIndex]: sparse map}`, a host prop beside `settings`) merges over the global map for that plate's
-  slice only (`viewer-package/src/core/plate_settings.js` -> `viewer-package/src/use_slicer.js buildParams`) — upstream's
+  slice only (`viewer-package/src/core/plate_settings.js` -> `viewer-package/src/hooks/use_slicer.js buildParams`) — upstream's
   PartPlate::m_config applied over full_config, in this package's omission discipline. With no override the
   merge returns the global map BY IDENTITY, which is what keeps the no-override path byte-identical to the
   pre-feature output. `PLATE_SETTING_BLOCKED_KEYS` is EMPTY since the heterogeneous-bed stage (the exported
@@ -475,7 +475,9 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
     path). Untestable here by nature, so it should stay thin: peel the arithmetic out into `core/` instead.
   - `src/actions/` — use cases. They take the shared refs plus the scene's `apiRef` and decide what happens.
   - `src/ui/` — presentational React. Props in, markup out; it must not reach into the scene or the kernel.
-  - `src/` itself — the entry (`Viewport.jsx`), its own hooks, and `make_worker.js`/`parse_3mf.worker.js`, which
+  - `src/hooks/` — Viewport's own React hooks (`use_slicer`, the slice request/run/staleness hooks, history, host
+    events). They import `core/` and React only; `test_layers.mjs` enforces that.
+  - `src/` itself — the entry (`Viewport.jsx`) and `make_worker.js`/`parse_3mf.worker.js`, which
     the **build resolves by path** (the vite lib entry and the `cp` in the package build script). Moving those two
     breaks the published tarball rather than a test, which is why `test_layers.mjs` pins them where they are.
 - `packages/types/` — all the `.d.ts` files. Hand-written, except `settings-keys.d.ts` (976 keys) which `gen_settings_types.mjs` generates
