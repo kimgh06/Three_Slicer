@@ -9,8 +9,8 @@
 //   scene/    the three.js/DOM shell. Untestable here by nature — so it should stay thin.
 //   actions/  use cases: they take refs + the scene's apiRef and decide what happens.
 //   ui/       presentational React. Props in, markup out.
-//   hooks/    Viewport's own React hooks. React + core/ only: one that reaches scene/ or ui/ is an action or a scene
-//             helper wearing a hook's name.
+//   hooks/    Viewport's own React hooks. React, core/ and the /settings and /gcode subpaths only: one that reaches
+//             scene/ or ui/ is an action or a scene helper wearing a hook's name.
 //   src/      the entry (Viewport.jsx) and the worker entry points the build resolves by path.
 //
 // Without this file the layout is decoration: nothing stops an `import * as THREE from 'three'` landing in
@@ -45,8 +45,11 @@ for (const [name, text] of core) {
 }
 
 console.log('\n[layers: hooks/ reaches core/ and nothing else in src/]')
+// The package's own root is a way round the relative check: src/index.js re-exports scene/toolpath_gpu.js, so a
+//  bare 'three-slicer-viewer' import reaches scene/ while naming none of it. The /settings and /gcode subpaths
+//  are not layers (src/settings/ and the built G-code parser) and stay allowed.
 for (const [name, text] of sourcesIn('hooks')) {
-  const stray = text.match(/from ['"]\.\.\/(scene|ui|actions)\//g) ?? []
+  const stray = text.match(/from ['"](\.\.\/(scene|ui|actions)\/[^'"]*|three-slicer-viewer)['"]/g) ?? []
   check(`hooks/${name}: imports core/ only`, stray.length === 0, stray.join(' '))
 }
 
