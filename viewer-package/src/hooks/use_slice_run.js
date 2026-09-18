@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { resolveWorkerCount, memoryWorkerCap } from './core/slice_pool.js'
+import { resolveWorkerCount, memoryWorkerCap } from '../core/slice_pool.js'
 
 // An all-plates run's state for the component: the run map (core/slice_pool.js) while one is on, the host
 //  callback that follows it, and what the Workers select offers — Auto's resolved value for THIS machine and

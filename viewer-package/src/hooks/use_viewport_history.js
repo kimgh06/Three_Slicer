@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { createHistory } from './core/history.js'
+import { createHistory } from '../core/history.js'
 
 // Undo/redo, viewport scope. history.js holds the reasoning and the boundary; this is the React side of it:
 //  the stacks live in a ref (they must survive a render without causing one), the DEPTH is state (the toolbar

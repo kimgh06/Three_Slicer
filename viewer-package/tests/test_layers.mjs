@@ -9,7 +9,9 @@
 //   scene/    the three.js/DOM shell. Untestable here by nature — so it should stay thin.
 //   actions/  use cases: they take refs + the scene's apiRef and decide what happens.
 //   ui/       presentational React. Props in, markup out.
-//   src/      the entry (Viewport.jsx), its own hooks, and the worker entry points the build resolves by path.
+//   hooks/    Viewport's own React hooks. React, core/ and the /settings and /gcode subpaths only: one that reaches
+//             scene/ or ui/ is an action or a scene helper wearing a hook's name.
+//   src/      the entry (Viewport.jsx) and the worker entry points the build resolves by path.
 //
 // Without this file the layout is decoration: nothing stops an `import * as THREE from 'three'` landing in
 // bed_bounds.js, and the first one that does silently ends that file's testability.
@@ -40,6 +42,15 @@ for (const [name, text] of core) {
   check(`core/${name}: no DOM`, !usesDom(text))
   // fflate ships inside three's examples, so "imports three" cannot be the test — the renderer is.
   check(`core/${name}: no renderer`, !/WebGLRenderer|three\/examples\/jsm\/(controls|loaders)/.test(text))
+}
+
+console.log('\n[layers: hooks/ reaches core/ and nothing else in src/]')
+// The package's own root is a way round the relative check: src/index.js re-exports scene/toolpath_gpu.js, so a
+//  bare 'three-slicer-viewer' import reaches scene/ while naming none of it. The /settings and /gcode subpaths
+//  are not layers (src/settings/ and the built G-code parser) and stay allowed.
+for (const [name, text] of sourcesIn('hooks')) {
+  const stray = text.match(/from ['"](\.\.\/(scene|ui|actions)\/[^'"]*|three-slicer-viewer)['"]/g) ?? []
+  check(`hooks/${name}: imports core/ only`, stray.length === 0, stray.join(' '))
 }
 
 console.log('\n[layers: ui/ is presentational]')

@@ -1,9 +1,9 @@
-import { log } from './core/log.js'
-import { effectiveSettings, plateTechnology } from './core/plate_settings.js'
-import { statsFromKernel } from './core/kernel_stats.js'
+import { log } from '../core/log.js'
+import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
+import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
-import { DEFAULT_BED } from './core/viewer_defaults.js'
+import { DEFAULT_BED } from '../core/viewer_defaults.js'
 
 
 // Worker lifecycle + progress mapping (SAB polling) + the stage-30 streaming/watchdog/OOM retry ladder.
