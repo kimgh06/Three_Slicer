@@ -476,7 +476,8 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
   - `src/actions/` — use cases. They take the shared refs plus the scene's `apiRef` and decide what happens.
   - `src/ui/` — presentational React. Props in, markup out; it must not reach into the scene or the kernel.
   - `src/hooks/` — Viewport's own React hooks (`use_slicer`, the slice request/run/staleness hooks, history, host
-    events). They import `core/` and React only; `test_layers.mjs` enforces that.
+    events). They import React, `core/` and the package's `/settings` and `/gcode` subpaths only — not the package
+    root, which re-exports `scene/toolpath_gpu.js`; `test_layers.mjs` enforces that.
   - `src/` itself — the entry (`Viewport.jsx`) and `make_worker.js`/`parse_3mf.worker.js`, which
     the **build resolves by path** (the vite lib entry and the `cp` in the package build script). Moving those two
     breaks the published tarball rather than a test, which is why `test_layers.mjs` pins them where they are.
