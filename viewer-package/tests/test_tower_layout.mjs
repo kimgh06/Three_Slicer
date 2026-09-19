@@ -143,7 +143,10 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
   const CUBE_HALF_MM = 10                                 // cubeOn's 20mm cube, centred on the plate
   const boxes = towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, plateOrigin,
     modelBounds: (plate) => cubeOn(plate),
-    towerOf: (plate) => (plate === PLATE_OFF ? { on: false } : { on: true, size: OWN_WIDTH_MM }) })
+    towerOf: (plate) => {
+      if (plate === PLATE_OFF) return { on: false }
+      return { on: true, size: OWN_WIDTH_MM }
+    } })
   assert.equal(boxes.length, 1)
   assert.equal(boxes[0].plate, PLATE_ON)
   assert.equal(boxes[0].size, OWN_WIDTH_MM, 'the plate draws its own footprint')

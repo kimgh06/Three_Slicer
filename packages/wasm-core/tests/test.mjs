@@ -1366,7 +1366,8 @@ const shellBox = makeBoxSTL(SHELL_BOX_MM, SHELL_BOX_MM, SHELL_BOX_MM)
 const shellParams = { ...params, bed_width: SHELL_BED_MM, bed_depth: SHELL_BED_MM }
 const filamentOf = (stl, sliceParams = shellParams) => {
   const result = Module.slice(new Uint8Array(stl), JSON.stringify(sliceParams), () => {})
-  return result.error ? NaN : result.stats.filament_mm
+  if (result.error) return NaN
+  return result.stats.filament_mm
 }
 const oneBox = filamentOf(shellBox)
 ok(Math.abs(filamentOf(concatSTL(shellBox, shellBox)) - oneBox) < FILAMENT_TOLERANCE_MM, `two coincident boxes print as one (${oneBox.toFixed(1)}mm)`)
@@ -1381,7 +1382,8 @@ ok(Math.abs(filamentOf(flipSTL(shellBox)) - oneBox) < FILAMENT_TOLERANCE_MM, 'a 
 //  around a void comes out as more, shorter lines, so its count is no measure of area.)
 const midHeightRoles = (stl) => {
   const result = Module.slice(new Uint8Array(stl), JSON.stringify(shellParams), () => {})
-  const closest = result.layers.reduce((best, layer) => (Math.abs(layer.z - MID_HEIGHT_MM) < Math.abs(best.z - MID_HEIGHT_MM) ? layer : best))
+  let closest = result.layers[0]
+  for (const layer of result.layers) if (Math.abs(layer.z - MID_HEIGHT_MM) < Math.abs(closest.z - MID_HEIGHT_MM)) closest = layer
   return countByType(closest.paths)
 }
 const voidBox = flipSTL(moveSTL(makeBoxSTL(VOID_BOX_MM, VOID_BOX_MM, VOID_BOX_MM), VOID_INSET_MM, VOID_INSET_MM, VOID_INSET_MM))

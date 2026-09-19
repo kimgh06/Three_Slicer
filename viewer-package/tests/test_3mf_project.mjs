@@ -307,7 +307,7 @@ check('unparsable project_settings yields null settings', broken.project.setting
     }
     // Every other ref the loader reads starts as this, and anything else it calls is a no-op.
     const refStartValues = { plateResultsRef: {}, plateOffsetsRef: {}, bedRef: { bedW: BED_MM, bedD: BED_MM }, plateCountRef: 1, selectedPlateRef: 0 }
-    const refs = name => ({ current: name in refStartValues ? refStartValues[name] : null })
+    const refs = name => ({ current: refStartValues[name] ?? null })
     const deps = new Proxy({ apiRef: { current: api }, objectsRef: { current: [] }, setError: () => {},
       setSettings: (value) => settingsCalls.push(value), setPlateSettings: (value) => plateSettingsCalls.push(value) }, {
       get: (target, key) => {
@@ -318,7 +318,10 @@ check('unparsable project_settings yields null settings', broken.project.setting
       has: () => true,
     })
     await makeModelLoad(deps).loadFiles([new File([bytes], 'project.3mf')])
-    const applyCalls = (calls, start) => calls.reduce((map, call) => (typeof call === 'function' ? call(map) : call), start)
+    const applyCalls = (calls, start) => calls.reduce((map, call) => {
+      if (typeof call === 'function') return call(map)
+      return call
+    }, start)
     return { settingsAfter: applyCalls(settingsCalls, PREVIOUS_SETTINGS), plateSettingsAfter: applyCalls(plateSettingsCalls, PREVIOUS_PLATE_SETTINGS),
              plateCount: plateCalls.at(-1) }
   }

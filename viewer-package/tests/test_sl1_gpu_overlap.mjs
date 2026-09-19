@@ -15,7 +15,8 @@ import { makeSl1ParityGpu } from '../src/core/sl1_parity_gpu.js'
 let device = null
 try {
   const mod = await import(process.env.SL1_GPU_WEBGPU_PATH || 'webgpu')
-  const gpu = mod.create ? mod.create([]) : mod.gpu
+  let gpu = mod.gpu
+  if (mod.create) gpu = mod.create([])
   device = await (await gpu?.requestAdapter())?.requestDevice()
 } catch { device = null }
 if (!device) { console.log('test_sl1_gpu_overlap: skipped (no WebGPU device — CPU path is the contract)'); process.exit(0) }
@@ -47,7 +48,7 @@ const stl = (facets) => {
 const flip = (facets) => facets.map(([first, second, third]) => [first, third, second])
 const RASTER_CENTRE = RASTER_PX / 2
 const transform = { px: RASTER_PX, py: RASTER_PX, map: (x, y) => [RASTER_CENTRE + x * RASTER_SCALE, RASTER_CENTRE - y * RASTER_SCALE] }
-const litPixels = (mask) => mask.reduce((count, value) => count + (value > LIT_THRESHOLD ? 1 : 0), 0)
+const litPixels = (mask) => mask.filter(value => value > LIT_THRESHOLD).length
 const maskOf = async (facets) => {
   const parity = makeSl1ParityGpu(device)
   assert.ok(parity.prepare(stl(facets)))
