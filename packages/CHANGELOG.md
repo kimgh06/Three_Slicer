@@ -35,6 +35,12 @@
 - The GPU SL1 mask path (`sla_antialias`, `sl1_parity_gpu.js`) counted surfaces above the plane as a parity, so two
   coincident objects came out empty in the masks while the slice and its supports treated them as solid. The count
   is now signed by facing (NonZero), the kernel's fill rule.
+- Painting one plate and then another discarded the first plate's paint, and a copy placed where the original sits on
+  its own plate took the original's paint over (the original then sliced single-material, the copy printed both).
+  Paint now lives on each object (`core/paint_store.js`): the selector is written back to it before it switches
+  mesh and loaded from it after; slice-all pool workers load their plate's paint; a 3mf save writes every plate's
+  brush strokes (it used to save them only for a single-plate project); copy, duplicate and paste carry the paint.
+  Every plate's paint stays drawn, not only the plate being painted.
 
 ## 0.3.1 — 2026-09-16
 

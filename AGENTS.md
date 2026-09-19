@@ -77,6 +77,26 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream's own `TriangleSelector::serialize`/`deserialize`. It reports false and starts clean when the face count
   differs, because a different model's facet 7 is not this one's. The viewer decides which case it is from a
   TOPOLOGY key (`objectId:extruder:faces` per object), not from the vertex bytes: bytes change on every move.
+- **Paint lives on each object; the selector is a working copy of one plate's.** The kernel's selector holds one
+  merged mesh, so painting used to live nowhere else: painting a second plate discarded the first, and a copy on
+  another plate whose plate-local merge was byte-identical to the original's was taken for it — it inherited the
+  paint and the original lost it, in the G-code too. `object.paint` (the 3mf parser's shape: one Map per
+  annotation, local facet -> split-tree hex) is now the store (`core/paint_store.js`). Four rules hold it together.
+  **(1)** "Same mesh" is identity AND topology; bytes alone equate a copy with its original. **(2)** A swap to other
+  objects writes the held marks back (`exportPaint`, split per `merged.members`), prepares, then loads the new
+  mesh's marks from the store (`importPaint`) — one serialized chain per worker (`serial` in `support_paint.js`),
+  strokes blocked by a null `paintXformRef` meanwhile, and the write-back waits with NO timeout: its reply queues
+  behind a running slice, and giving up would prepare the next mesh over paint never saved. **(3)** Anything that
+  reads `object.paint` for objects the selector holds flushes first (`flushPaint`: 3mf save, copy, slice-all), and
+  every slice on the selector worker awaits `syncPaintSelector` for its own plate — a deferred pool plate included.
+  **(4)** A pool worker loads its plate's stored paint (`ctx.loadPaint`) and its reply's counts decide the extruder
+  count; a plate the selector does not hold reads its tool changes from the store (`storedPaintStates`, which
+  decodes upstream's split-tree hex — pinned against kernel strings in `test_paint_export.mjs`). A copy carries a
+  deep copy of the paint, as upstream's ModelVolume does. Paint is still outside undo. **(5)** Only the held mesh
+  has a kernel overlay, so every other object draws its stored paint itself (`refreshStoredOverlays`, run after each
+  selector job): `paintTriangles` replays upstream's split rule in JS — exact midpoints, the special-side rotation,
+  children in reverse stream order — and the result is pinned against the kernel overlay's triangle count and area.
+  Without it a plate's paint looked erased the moment another plate was painted.
 - **A `.3mf` is a project, not a mesh format.** Anything off MakerWorld, and every OrcaSlicer/BambuStudio "save
   project", is a zip whose `3D/3dmodel.model` is only one member; `Metadata/project_settings.config` holds the
   flattened preset the author sliced with, `Metadata/model_settings.config` the per-object state and plate layout.
@@ -114,10 +134,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   positions are re-encoded under UPSTREAM's grid (the constant is `UPSTREAM_PLATE_GAP_RATIO` in `plate_layout.js`,
   shared with the importer so the two cannot drift). Two asymmetries that are NOT bugs: the kernel's facet numbering
   is per merged mesh and a 3mf's is per object, so `write3MFProject` rebases with the same running offset
-  `buildMergedSTL` used — which is why `exportObjects` must return objects in that same extruder-sorted order; and
-  the kernel's marks are only taken when the whole project sits on ONE plate, because the selector only ever holds
-  the merge of the selected plate and rebasing across plates would be a guess. Otherwise each object keeps the paint
-  it was imported with, so opening a painted project and saving it again never strips it.
+  `buildMergedSTL` used — which is why `exportObjects` must return objects in that same extruder-sorted order.
+  Painting is written from the per-object store after a `flushPaint`, so every plate's brush strokes are saved in
+  each object's own numbering; the writer still accepts a merge-numbered `paintExport` for a caller that has one.
   `write3MFProject` is **async** because the deflate runs off-thread (fflate's worker pool, as the parser's `unzip`
   already does) — a save is dominated by compression, and on the main thread that is a frozen tab. Measured on a
   980k-facet model: 2.6s all-on-thread when this landed, 1.5s wall / 0.45s longest frame gap now. Two of that came
@@ -128,9 +147,8 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream's `export_stl(..., selection_only, ...)`; upstream additionally rejects anything that is not a whole
   object (`Plater.cpp:16244`), which this viewer cannot hit because it has no parts. The trap is the painting: the
   kernel numbers facets across the merge of every VISIBLE object, so handing that numbering to a file holding only
-  SOME of them paints the wrong triangles. `rebasePaintOntoSubset` (`export_actions.js`) walks each mark back to its
-  owning object through the full merge order and forwards it onto the subset's own offset; `test_3mf_export.mjs`
-  pins it, including that a gap in the middle renumbers everything after it.
+  SOME of them paints the wrong triangles. The save therefore takes each object's paint from the per-object store,
+  which is numbered per object to begin with — a subset needs no rebasing.
 - Upstream's selection rules, ported as-is (`GLCanvas3D.cpp:4412` and `:4404`): a plain click replaces the
   selection, **Ctrl+click** adds or removes, a plain click on something already selected KEEPS the set (that is what
   makes dragging several objects work), empty space clears, **Shift+drag** is the box select, and Ctrl+A selects
@@ -270,9 +288,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
   `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,
   the classic/economy ladder — lives in one closure, because it exists for one run and paints nothing. The
-  selected plate goes FIRST and to the selector worker: it is the mesh the brush painted, and a pool worker has no
-  selector, so `buildParams` reads the paint counts only for the selector worker (`painted`) — for a pool plate
-  they are someone else's facets. The selector worker's progress is re-routed through `progressSinkRef` for the
+  selected plate goes FIRST and to the selector worker: it is the mesh the brush painted. A pool worker starts with
+  an empty selector, so a pool plate with stored paint loads it first (`ctx.loadPaint`) and `buildParams` takes that
+  reply's counts; the selector worker's live counts (`painted`) belong to its own plate only. The selector worker's progress is re-routed through `progressSinkRef` for the
   run's duration so it reports per plate like the others; `reuse_stages` stays the selector worker's alone (a pool
   worker is terminated after the run — wasm heaps do not shrink, measured 8.8GB for five on a 3M-facet model).
   The STL is COPIED to a pool worker, not transferred, because the ladder re-sends it on a retry and a transferred
