@@ -135,6 +135,7 @@ export function makeExportActions(deps) {
         bedWidth: bedRef.current?.bedW ?? DEFAULT_BED.width,
         bedDepth: bedRef.current?.bedD ?? DEFAULT_BED.depth,
         plateCount: plateCountRef.current ?? 1,
+        plateSettings: plateSettingsRef?.current ?? null,   // our own member — upstream has no place for it
       })
       // Same [vp-prof] channel the model load uses — the three stages have very different cost profiles (the
       //  geometry gather is per vertex, the paint fetch is a worker round trip, the write is deflate-bound), so a

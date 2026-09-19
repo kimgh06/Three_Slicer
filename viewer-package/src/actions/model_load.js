@@ -136,12 +136,15 @@ export function makeModelLoad(deps) {
     if (imported?.applied) {
       // Replace rather than merge: this map is "what the project is", and merging would leave keys from whatever
       //  was loaded before silently overriding the author's preset in ways nothing on screen would explain.
-      //  The per-plate overrides go with it, for the same reason: a 3mf carries no per-plate printer state, so a
+      //  The per-plate overrides go with it, for the same reason: an upstream 3mf carries no per-plate printer state, so a
       //  previous session's "plate 2 is SLA / 330mm" surviving onto the imported project would resize its grid
       //  and reroute its slicer with nothing on screen explaining why.
-      setSettings?.(imported.settings)
-      setPlateSettings?.(() => ({}))
+      //  What does travel with it is this package's own member (write_3mf.js): the global viewer knobs the schema
+      //  cannot type (wipe_tower_real...) and the per-plate overrides, written by a save from this viewer.
+      setSettings?.(project.viewerSettings ? { ...imported.settings, ...project.viewerSettings } : imported.settings)
+      setPlateSettings?.(() => project.plateSettings ?? {})
       notices.push(`${imported.applied} settings`)
+      if (project.plateSettings) notices.push(`${Object.keys(project.plateSettings).length} plate override(s)`)
       // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
       //  in it. `filament_colour` is the one key that always has one entry per loaded filament (the *_settings_id
       //  vector can carry blanks for a slot with no preset), so it is what the count comes from.
