@@ -1,4 +1,7 @@
 import React from 'react'
+import { cardScope } from '../core/plate_settings.js'
+import { clampTowerPosition } from '../core/tower_layout.js'
+import ScopeToggle from './ScopeToggle.jsx'
 
 // Prime tower card. Everything about the tower used to be one checkbox in the object list, with its size, position
 // and purge amount unreachable — the kernel read prime_tower_* parameters that nothing in the UI wrote. This card is
@@ -39,36 +42,46 @@ export function writeTowerPosition(prev, plate, plateCount, x, y) {
 }
 
 export default function TowerCard({
-  settings, setSettings, extruderColors, wipeTowerReal, onToggleWipeTower, towerStats,
-  selectedPlate = 0, plateCount = 1,
+  settings: globalSettings, setSettings: setGlobalSettings, extruderColors, towerStats, towerFrame = null,
+  plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null,
 }) {
   const colors = Array.isArray(extruderColors) ? extruderColors : []
   const count = colors.length
-  const raw = settings ?? {}
+  // Global | Plate N, the same switch the other settings cards carry: in plate scope the card shows the plate's
+  //  EFFECTIVE map and its edits become that plate's override (mode, width, purge destination, the purge table).
+  //  The position is the exception — wipe_tower_x/y are already one entry per plate in the global map (upstream's
+  //  layout, and what the scene's drag writes), so it always edits the selected plate's entry there.
+  const scoped = cardScope({ settings: globalSettings, setSettings: setGlobalSettings, plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope })
+  const plateScope = scoped.plateScope
+  const setSettings = scoped.setSettings
+  const raw = scoped.settings ?? {}
   const scalar = (key) => { const v = raw[key]; return Array.isArray(v) ? v[0] : v }
   const num = (key, fallback) => { const v = Number(scalar(key)); return Number.isFinite(v) ? v : fallback }
   // Per-plate options read the SELECTED plate's entry — the card edits the plate on screen, like upstream's
   //  per-plate wipe tower. A hole (null) is "auto for this plate", so it must not fall back to another entry.
   const atPlate = (key) => { const v = raw[key]; return Array.isArray(v) ? v[selectedPlate] : v }
+  // Going back to a default. Globally that is the key's absence (the omission rule: the kernel's own default
+  //  stands). A plate override cannot express absence — it is merged OVER the global map, so a deleted key just
+  //  shows the global value again — so plate scope writes the default explicitly.
+  const reset = (out, key, value) => { if (plateScope) out[key] = value; else delete out[key] }
 
   // Three states, not two: no tower at all, the deterministic ring, or the real port. "Off" is the absence of a
   //  tower — upstream's own default — and it only makes sense next to a destination for the purge, which is the
-  //  row below. Stored as enable_prime_tower so it reads the same as upstream's key.
-  const towerOff = raw.enable_prime_tower === false
-  const mode = towerOff ? 'off' : (wipeTowerReal ? 'real' : 'ring')
-  const setMode = (next) => {
-    setSettings?.(prev => {
-      const out = { ...prev }
-      if (next === 'off') out.enable_prime_tower = false
-      else delete out.enable_prime_tower
-      return out
-    })
-    if (next !== 'off') onToggleWipeTower?.({ target: { checked: next === 'real' } })
-  }
-  const flushIntoInfill = raw.flush_into_infill === true
+  //  row below. Stored as enable_prime_tower so it reads the same as upstream's key; ring/real is wipe_tower_real,
+  //  a viewer knob in the same map (the kernel's own flag name), so both follow the plate override.
+  const towerOff = 'enable_prime_tower' in raw && !raw.enable_prime_tower
+  const mode = towerOff ? 'off' : (raw.wipe_tower_real ? 'real' : 'ring')
+  const setMode = (next) => setSettings?.(prev => {
+    const out = { ...prev }
+    if (next === 'off') { out.enable_prime_tower = false; return out }
+    reset(out, 'enable_prime_tower', true)
+    if (next === 'real') out.wipe_tower_real = true; else reset(out, 'wipe_tower_real', false)
+    return out
+  })
+  const flushIntoInfill = !!raw.flush_into_infill
   const setFlush = (on) => setSettings?.(prev => {
     const out = { ...prev }
-    if (on) out.flush_into_infill = true; else delete out.flush_into_infill
+    if (on) out.flush_into_infill = true; else reset(out, 'flush_into_infill', false)
     return out
   })
 
@@ -85,7 +98,12 @@ export default function TowerCard({
     else next[key] = Number(value)
     return next
   })
-  const setPosition = (x, y) => setSettings?.(prev => writeTowerPosition(prev, selectedPlate, plateCount, x, y))
+  // Always the global map (see above), kept on the plate's bed when the frame is known (`towerFrame`, the
+  //  selected plate's bed and footprint): a typed coordinate past the edge lands at the edge.
+  const setPosition = (x, y) => {
+    const [bedX, bedY] = x === null || !towerFrame ? [x, y] : clampTowerPosition(x, y, towerFrame)
+    setGlobalSettings?.(prev => writeTowerPosition(prev, selectedPlate, plateCount, bedX, bedY))
+  }
 
   const matrix = readMatrix(raw.flush_volumes_matrix, count)
   const setCell = (from, to, value) => setSettings?.(prev => {
@@ -98,7 +116,12 @@ export default function TowerCard({
 
   return (
     <section className="side-card" data-testid="tower-section">
-      <div className="sc-head">🗼 Prime tower</div>
+      <div className="sc-head">🗼 Prime tower
+        {plateCount > 1 && setPlateSettings && (
+          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
+            testid="tower-scope" plateTestid="tower-scope-plate" />
+        )}
+      </div>
 
       <div className="sc-info"><span>Mode</span>
         {/* The real WipeTower is the only implementation that sizes a purge from a volume, but it is not
@@ -135,8 +158,8 @@ export default function TowerCard({
         </span>
       </div>}
 
-      {/* Position is the one per-plate option on the card, so with several plates the label says which one is
-          being edited — everything else here applies to every plate alike. */}
+      {/* Position is always per plate (its own array entry, whatever the scope), so with several plates the label
+          says which one is being edited; the rows above follow the Global | Plate switch. */}
       {mode !== 'off' && <div className="sc-info"><span>{plateCount > 1 ? `Position · plate ${selectedPlate + 1}` : 'Position'}</span>
         <select className="sc-model" data-testid="tower-position-mode" value={manual ? 'manual' : 'auto'}
           onChange={e => setPosition(e.target.value === 'auto' ? null : (towerStats?.x ?? 10), towerStats?.y ?? 10)}
