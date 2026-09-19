@@ -105,7 +105,10 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   Without it a plate's paint looked erased the moment another plate was painted. **(6)** Every wait on a worker ends
   (`core/worker_reply.js` `request`): on its reply, on its own `{type:'error'}` (the worker echoes `requestId` on
   every reply, so another command's error cannot end it), on an error event, or on `terminate()` — which
-  `makeTerminationObservable` turns into an event. A hung write-back once left "Saving…" and a blank viewport
+  `makeTerminationObservable` turns into an event. The echo is pinned against the REAL worker
+  (`packages/engine/tests/test_worker_replies.mjs`, every paint command's reply type, contents and id): the viewer's
+  tests drive a fake worker, and a local `const reply` shadowing the echo helper once broke overlay, clear and import
+  with none of them noticing. A hung write-back once left "Saving…" and a blank viewport
   (rendering stays suspended until the export ends). **(7)** The selector record belongs to one worker
   (`record.worker`): after the watchdog or the memory ladder replaces it, nothing is written back from the new, empty
   selector (that wiped the store: 208 -> 0) and the next registration reloads the store. **(8)** The record carries
