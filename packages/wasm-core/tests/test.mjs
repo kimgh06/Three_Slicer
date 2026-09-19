@@ -1307,6 +1307,55 @@ for (const [name, dx, dy] of [['as built (x,y in [0,20])', 0, 0], ['off +x', 30,
      `${name}: same slice as centred (${here.filament.toFixed(1)}mm, ${segments} segments, same in every role)`)
 }
 
+// ===== Overlapping shells union, as upstream's Regular slicing mode does ==========================================
+//  The kernel slices the merge of every object as ONE mesh, and used to fill the layer loops even-odd — so two
+//  objects on the same spot counted as "inside twice" and sliced to nothing (measured in the viewer: a project
+//  imported twice printed 1210mm of a 42984mm model). Segments are now oriented by the facet normal and filled
+//  NonZero. What must not change with it: a hole is still a hole, and a shell with every facet flipped still prints.
+console.log('\n[overlapping shells]')
+const concatSTL = (...bufs) => {
+  const counts = bufs.map(b => b.readUInt32LE(80)), total = counts.reduce((a, b) => a + b, 0)
+  const out = Buffer.alloc(84 + total * 50); out.writeUInt32LE(total, 80)
+  let at = 84; for (const b of bufs) { b.copy(out, at, 84); at += b.readUInt32LE(80) * 50 }
+  return out
+}
+const moveSTL = (stl, dx, dy, dz) => {   // translateSTL above, with a z
+  const out = Buffer.from(stl)
+  for (let t = 0, off = 84; t < out.readUInt32LE(80); t++, off += 2) { off += 12
+    for (let k = 0; k < 3; k++, off += 12) { out.writeFloatLE(out.readFloatLE(off) + dx, off); out.writeFloatLE(out.readFloatLE(off + 4) + dy, off + 4); out.writeFloatLE(out.readFloatLE(off + 8) + dz, off + 8) } }
+  return out
+}
+const flipSTL = (stl) => {                // swap each facet's 2nd and 3rd vertex: every normal inverted
+  const out = Buffer.from(stl)
+  for (let t = 0, off = 84; t < out.readUInt32LE(80); t++, off += 50) {
+    const second = Buffer.from(out.subarray(off + 24, off + 36)); out.copy(out, off + 24, off + 36, off + 48); second.copy(out, off + 36)
+  }
+  return out
+}
+const shellBox = makeBoxSTL(20, 20, 20)
+const shellParams = { ...params, bed_width: 400, bed_depth: 400 }
+const filamentOf = (stl, p = shellParams) => { const r = Module.slice(new Uint8Array(stl), JSON.stringify(p), () => {}); return r.error ? NaN : r.stats.filament_mm }
+const oneBox = filamentOf(shellBox)
+ok(Math.abs(filamentOf(concatSTL(shellBox, shellBox)) - oneBox) < 1e-3, `two coincident boxes print as one (${oneBox.toFixed(1)}mm)`)
+const overlapped = filamentOf(concatSTL(shellBox, translateSTL(shellBox, 10, 0)))
+ok(overlapped > oneBox * 1.2 && overlapped < oneBox * 2, `two boxes overlapping by half print their union (${overlapped.toFixed(1)}mm, one box ${oneBox.toFixed(1)}mm)`)
+ok(Math.abs(filamentOf(flipSTL(shellBox)) - oneBox) < 1e-3, 'a box with every facet flipped still prints the same')
+//  A hollow part is an outer shell plus an inner one facing inward — the inner loops wind against the outer.
+//  Judged on the middle layer (z=10, inside the void) rather than on filament: a hollow part can use MORE filament
+//  than a solid one — the void gets walls, and solid skin above and below it. A filled void would make this layer
+//  the solid box's layer exactly; a void adds a ring of walls around it. (Segment COUNTS, not lengths — the sparse
+//  infill split around a void comes out as more, shorter lines, so its count is no measure of area.)
+const midLayer = (stl) => { const r = Module.slice(new Uint8Array(stl), JSON.stringify(shellParams), () => {})
+  return countByType(r.layers.reduce((best, L) => (Math.abs(L.z - 10) < Math.abs(best.z - 10) ? L : best)).paths) }
+const solidMid = midLayer(shellBox), hollowMid = midLayer(concatSTL(shellBox, flipSTL(moveSTL(makeBoxSTL(10, 10, 10), 5, 5, 5))))
+console.log(`  mid layer walls/sparse: solid ${solidMid[0] + solidMid[1]}/${solidMid[2]}, hollow ${hollowMid[0] + hollowMid[1]}/${hollowMid[2]}`)
+ok(hollowMid[0] + hollowMid[1] > solidMid[0] + solidMid[1],
+   'an inward-facing inner shell is still a void (walls around it at mid height, which a solid layer does not have)')
+//  The multi-material path slices each group on its own (slice_mm.cpp) and had the same even-odd fill.
+const mmShells = (second) => filamentOf(concatSTL(shellBox, second), { ...shellParams, extruder_count: 2, mm_group_split: 12 })
+const mmOne = mmShells(translateSTL(shellBox, 40, 0)), mmTwo = mmShells(concatSTL(translateSTL(shellBox, 40, 0), translateSTL(shellBox, 40, 0)))
+ok(mmOne > 0 && Math.abs(mmTwo - mmOne) < 1e-3, `a group holding two coincident boxes prints one (${mmTwo.toFixed(1)}mm vs ${mmOne.toFixed(1)}mm)`)
+
 // ===== A move must not cost the paint ============================================================================
 //  The marks are indexed by facet, and moving a model renumbers nothing — so rebuilding the selector on the moved
 //  coordinates (which the brush and the layer projection both need) can carry them across. This is upstream's own
