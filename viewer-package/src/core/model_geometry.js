@@ -53,7 +53,7 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
     topology.push(`${o.id}:${ext}:${o.localPos.length / 9}`)
     // triCount is this object's base facet index — it is only advanced at the bottom of the loop.
     if (o.paint) for (const slot of ['color', 'supports'])
-      for (const [localTri, hex] of o.paint[slot]) {
+      for (const [localTri, hex] of o.paint[slot] ?? []) {   // the store writes only the kinds it holds
         paintImport[slot].facets.push(triCount + localTri)
         paintImport[slot].hex.push(hex)
       }
@@ -105,8 +105,11 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
       : null
   // `plate` rides along so per-plate settings (the wipe_tower_x/y arrays) can be indexed by the plate this
   //  merge actually cut, not by whatever is selected when the slice runs.
+  // `members` is the merge's object order with each object's face count — the numbering the selector uses, which
+  //  the per-object paint store (paint_store.js) splits exports by and rebuilds imports from.
+  const members = sorted.map(o => ({ id: o.id, faceCount: o.localPos.length / 9 }))
   return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
-           plate, topology: topology.join('|'), minX, minY, maxX, maxY, paint }
+           plate, topology: topology.join('|'), members, minX, minY, maxX, maxY, paint }
 }
 
 /** Every object as the 3mf writer needs it: world MODEL-space triangles (three (x,y,z) -> model (x,-z,y),
