@@ -15,9 +15,9 @@
   meshes. Opening one (drop, picker or `files`) puts every plate's G-code back on its plate and makes the viewer
   preview-only until it is closed from the top bar or a model is loaded. The `gcode` prop also takes a
   `{ plateIndex: text }` map. A resin plate still exports as its own `.sl1`.
-- The sidebar's Export G-code button saves the plate you are viewing as a `.gcode.3mf` (upstream's "Export plate
-  sliced file"); the plain `.gcode` is in its ▾ menu. It also works on an opened `.gcode.3mf`, so a print job can
-  be saved again.
+- The sidebar's Export G-code button saves every sliced plate in one `.gcode.3mf` (upstream's "Export all sliced
+  file"). Its ▾ menu holds the viewed plate alone as a `.gcode.3mf` and the plain `.gcode`. It also works on an
+  opened `.gcode.3mf`, so a print job can be saved again.
 
 ### Changed
 
