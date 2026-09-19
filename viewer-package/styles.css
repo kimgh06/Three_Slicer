@@ -247,6 +247,15 @@
   border: 1px solid var(--_light-border); text-decoration: none; font-weight: 600; cursor: pointer; font-size: 13px; }
 .export-btn:hover { background: var(--_light-control-hover); }
 .export-btn:disabled { color: var(--_light-text-faint); background: var(--_light-bg); cursor: not-allowed; }
+.export-dd { flex: 1; display: flex; position: relative; }
+.export-dd .export-btn { border-top-right-radius: 0; border-bottom-right-radius: 0; white-space: nowrap; padding: 9px 6px; min-width: 0; }
+.export-more summary { list-style: none; height: 100%; box-sizing: border-box; display: flex; align-items: center; padding: 0 7px; cursor: pointer;
+  background: var(--_light-control); color: var(--_info); border-radius: 0 8px 8px 0; border: 1px solid var(--_light-border); margin-left: -1px; }
+.export-more summary::-webkit-details-marker { display: none; }
+.export-more summary:hover { background: var(--_light-control-hover); }
+.export-menu { left: auto; right: 0; min-width: 150px; }
+.export-menu a { display: block; padding: 9px 12px; color: var(--_info); text-decoration: none; font-size: 13px; }
+.export-menu a:hover { background: var(--_accent-soft); }
 
 .vp-canvas { position: absolute; inset: 0; }
 .vp-canvas canvas { display: block; }
@@ -330,6 +339,13 @@
 .drop-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   background: rgba(var(--_accent-rgb), .14); color: var(--_accent-on-dark); font-size: 18px; font-weight: 700; pointer-events: none;
   border: 3px dashed var(--_accent); box-sizing: border-box; }
+
+/* An opened .gcode.3mf, in the top bar: what is shown, and the one way back to preparing models. */
+.tb-gcode { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--_dark-text);
+  background: var(--_dark-control); border: 1px solid var(--_dark-border); border-radius: 6px; padding: 2px 3px 2px 10px; }
+.tb-gcode span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-gcode button { border: 0; background: transparent; color: var(--_dark-text-muted); cursor: pointer; width: 22px; height: 22px; border-radius: 4px; }
+.tb-gcode button:hover { background: var(--_dark-control-hover); }
 
 /* Split objects button */
 .obj-split { border: 0; background: transparent; cursor: pointer; padding: 0 3px; line-height: 0; }

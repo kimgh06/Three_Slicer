@@ -101,6 +101,7 @@ export function makeModelLoad(deps) {
     selectedPlateRef, disposePlateToolpath, plateCountRef, setPlateCount, bedRef,
     setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
+    openGcodePlates, closeImportedGcode,
   } = deps
 
   // Grow the bed to the plate count an imported 3mf project needs, then let it place its objects. setPlates is
@@ -242,6 +243,10 @@ export function makeModelLoad(deps) {
         const __tl1 = performance.now()
         const objs = await loadModel(f.name, buf)          // [{name, modelPos}] (3MF/AMF may return several)
         const __tl2 = performance.now()
+        // A .gcode.3mf is a print job, not a model: its plates go to the injection path and nothing enters the scene.
+        if (objs[0]?.gcodePlates) { openGcodePlates?.(objs[0].gcodePlates, f.name); continue }
+        // A model ends an open print job — upstream does the same, a load starts a new project.
+        closeImportedGcode?.()
         const loaded = []
         for (const ob of objs) {
           const added = apiRef.current?.addObject(ob.name, ob.modelPos, ob.paint)

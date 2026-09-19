@@ -13,7 +13,7 @@ import { makeKeyHandler } from './core/shortcut_keymap.js'
 import { setLogging } from './core/log.js'
 import { useStateRef } from './hooks/use_state_ref.js'
 import { useHostEvents } from './hooks/use_host_events.js'
-import { useInjection } from './hooks/use_injection.js'
+import { useInjection, useImportedGcode } from './hooks/use_injection.js'
 import { useMoveScrub } from './hooks/use_move_scrub.js'
 import { useViewportHistory, undoRedoDirection } from './hooks/use_viewport_history.js'
 import { useThreeScene } from './scene/use_three_scene.js'
@@ -410,7 +410,7 @@ export default function Viewport({
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
-    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
+    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
   } = makePlateActions({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
     runSlice, createPoolContext, kernelKindRef, progressSinkRef,
@@ -464,11 +464,11 @@ export default function Viewport({
     ...wiring, setExtruderColors, refreshObjects, applyViewColors, selectFilament,
   })
 
-  // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — shared by the file picker, drag-and-drop
-  //  and the `files` prop ----
+  const { importedGcode, injectedGcode, gcodeOnly, growPlates, closeImportedGcode, enterCanvasMode, openGcodePlates } = useImportedGcode({ ...wiring, gcode, globalFrame, disposePlateToolpath, refreshSlicedCount, showPlateResult })   // a dropped .gcode.3mf (use_injection.js)
+  // ---- Stage 26: model loading (STL/OBJ/3MF/AMF/PLY, cumulative) — the file picker, drag-and-drop and `files` ----
   const { loadFiles, onFiles, removeObject, onDrop, onDragOver, onDragLeave } = makeModelLoad({
     ...wiring, dragOver, clearToolpaths, refreshSlicedCount, applyProjectFilaments, importSl1, loadPresetFile,
-    selectedPlateRef, disposePlateToolpath, bedRef,
+    selectedPlateRef, disposePlateToolpath, bedRef, openGcodePlates, closeImportedGcode,
   })
 
   // Initial content (the `files` prop): mount-only import + a warning on a later change (use_initial_files.js).
@@ -484,13 +484,13 @@ export default function Viewport({
   })
 
   // Auto re-slice after a settings or model change (use_slice_request.js has the debounce and the guards).
-  useAutoSlice({ autoSlice, settings, plateSettings, objectCount: objects.length, gcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
+  useAutoSlice({ autoSlice, settings, plateSettings, objectCount: objects.length, gcode: injectedGcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
 
   // The host's Slice button — an identity change on the prop requests one slice (use_slice_request.js).
-  useSliceRequest({ sliceRequest, objectCount: objects.length, gcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
+  useSliceRequest({ sliceRequest, objectCount: objects.length, gcode: injectedGcode, sl1, pendingSliceRef, cancelSlice, onSlice, autoTimerRef })
 
   // A settings change makes every cached result stale — drop them rather than keep showing one (use_stale_slice.js).
-  useStaleSlice({ settings, plateSettings, setPlateSettings, setStatus, gcode, sl1, plateResultsRef, selectedPlateRef, canvasModeRef,
+  useStaleSlice({ settings, plateSettings, setPlateSettings, setStatus, gcode: injectedGcode, sl1, plateResultsRef, selectedPlateRef, canvasModeRef,
     clearToolpaths, showPlateResult, refreshSlicedCount, setCanvasMode })
 
   // ---- The move scrub: how far into the top shown layer the print has got (use_move_scrub.js) ----
@@ -501,9 +501,9 @@ export default function Viewport({
 
   // ---- Injection: the `gcode` and `sl1` props, rendered on the selected plate without running the kernel ----
   useInjection({
-    gcode, sl1, importSl1, tech, kp: { ...ctx.params, bed_width: ctx.bedW, bed_depth: ctx.bedD },   // the SELECTED plate's params — injected content renders on it
+    gcode: injectedGcode, sl1, importSl1, tech, kp: { ...ctx.params, bed_width: ctx.bedW, bed_depth: ctx.bedD },   // the SELECTED plate's params — injected content renders on it
     apiRef, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef,
-    lineWidthRef, refreshSlicedCount, setError, setSliceNotice, showPlateResult,
+    lineWidthRef, refreshSlicedCount, setError, setSliceNotice, showPlateResult, selectPlate, growPlates,
   })
 
   // Editing bed width x depth on the printer card — reduced to a printable_area rectangle (origin preserved). Circular/custom shapes belong to the panel editor.
@@ -629,7 +629,7 @@ export default function Viewport({
     toggleSingleLayer: toggleSingle,
     toggleTravel: () => onToggleTravel({ target: { checked: !showTravelRef.current } }),
     zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
-    leavePreview: () => setCanvasMode('prepare'),
+    leavePreview: () => enterCanvasMode('prepare'),
     setGizmo,
     // The brush's own keys, live only while one is open. V/H toggle the axis lock off when pressed again, because a
     //  lock you cannot see is a lock you cannot leave; the number row is the material brush's alone.
@@ -701,7 +701,7 @@ export default function Viewport({
         data-testid="preset-input" style={{ display: 'none' }} />
 
       {showPanel('topBar') && (
-        <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={setCanvasMode}
+        <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={enterCanvasMode} prepareEnabled={!gcodeOnly} gcodeJob={gcode == null && importedGcode} onCloseGcode={closeImportedGcode}
           previewEnabled={layerCount > 0} onOpen={openFilePicker}
           onSaveProject={exportProject} onExportSTL={exportSTL} canSave={objects.length > 0} exporting={exporting}
           onUndo={() => travelHistory('undo')} onRedo={() => travelHistory('redo')}
@@ -879,10 +879,10 @@ export default function Viewport({
                 plateRun={plateRun} kernelKind={kernelKind} workers={Number(settings?.slice_workers) || 0} autoWorkers={autoWorkers} maxWorkers={cores} memoryWorkers={memoryWorkers}
                 onWorkers={(n) => setSettings?.(prev => ({ ...prev, slice_workers: n }))}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
-                canSlice={objects.length > 0} onSlice={onSlice} onCancel={cancelSlice}
+                canSlice={objects.length > 0 && !gcodeOnly} onSlice={onSlice} onCancel={cancelSlice}
                 onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
                 slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla} slaTech={tech === 'SLA'}
-                onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready}
+                onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready} onExportGcode3mf={() => exportPlateGcode3mf()}
                 bedWarning={bedOver || overBed
                   ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the ${tech === 'SLA' ? 'resin display' : 'bed'}`
                     + (bedOverText ? ` by ${bedOverText}` : '')
