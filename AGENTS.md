@@ -263,6 +263,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   An array with a HOLE (`wipe_tower_x/y` of a plate on automatic placement) is never written as `null`: upstream's
   loader breaks out of its whole key loop on a non-string entry (`Config.cpp` `parse_str_arr` -> `break;`), which
   dropped every key sorting after it. The hole is written as the schema default and the original goes to the member.
+  The member also records the plate count (`<plate>` records name only plates holding objects, so an empty plate
+  with an override would not come back), is read even when no `project_settings.config` was written, and the
+  import keeps only overrides for plates that exist once placement is done.
 - **An all-plates run is a queue drained by K workers, and the selector worker is one of them.** `slice_pool.js`
   sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
   `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,
@@ -330,7 +333,8 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   The GPU module takes an injected GPUDevice and never touches `navigator` (layer guard); only
   `scene/gpu_device.js` does. When the SLA result still holds its merged STL (`modelSTL`), the GPU
   path upgrades to `sl1_parity_gpu.js` — slice-by-rendering: the MESH itself is drawn per layer
-  plane with stencil-invert even-odd, so the mask never depends on contour stitching (measured
+  plane with a stencil count signed by facing (NonZero, the kernel's own fill rule — it was an invert parity,
+  which left coincident objects empty in the mask), so the mask never depends on contour stitching (measured
   0.007% avg / 0.047% worst pixel diff vs the contour reference over a 775k-facet scan model, all
   658 layers rendered in 0.6s). Its `prepare()` reproduces the kernel's frame exactly: XY kept as
   the mesh's own, z seated to 0 — both measured, and the wrong half of that guess read as a 41%

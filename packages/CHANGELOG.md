@@ -32,6 +32,9 @@
   `wipe_tower_x/y`. OrcaSlicer's loader stops reading the whole file at an array entry that is not a string, which
   dropped the 17 settings after it, `z_hop` and `z_offset` among them. The hole is now written as the schema default
   for upstream and kept as a hole in `Metadata/three_slicer_settings.json`.
+- The GPU SL1 mask path (`sla_antialias`, `sl1_parity_gpu.js`) counted surfaces above the plane as a parity, so two
+  coincident objects came out empty in the masks while the slice and its supports treated them as solid. The count
+  is now signed by facing (NonZero), the kernel's fill rule.
 
 ## 0.3.1 — 2026-09-16
 
