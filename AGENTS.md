@@ -161,7 +161,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   resolves 'failed', and a swap stops there with the selector and its unsaved strokes as they were ('export-failed',
   which the pre-slice sync turns into a failed slice). Only a kernel without the export binding still swaps on.
   Clear is a selector job too: sent straight to the worker it landed between a swap's export and load, and the load
-  put the paint back; it also empties the held objects' stored marks and the remembered counts.
+  put the paint back; it also empties the held objects' stored marks and the remembered counts. Opening a brush of
+  the other kind nulls `paintXformRef` at once: its swap queues behind any running selector job while the brush
+  switches immediately, and strokes in between were filed under the old kind.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not

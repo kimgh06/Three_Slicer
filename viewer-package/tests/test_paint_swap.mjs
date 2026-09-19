@@ -253,4 +253,18 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(paintOf(scene, 2).color.size, 0, 'nothing brings it back on the next swap')
 }
 
+// ---- switching to a brush of the other kind blocks strokes until the swap to that kind has run ----
+{
+  const scene = makeScene()
+  const { paint, refs } = setup(scene)
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  assert.notEqual(refs.paintXformRef.current, null)
+  const release = paint.holdSelectorForSlice()                         // some selector job still running
+  paint.setPaintMode('enforcer')
+  assert.equal(refs.paintXformRef.current, null, 'no stroke lands on the material annotation under the support brush')
+  release(); await settle(); await settle()
+  assert.notEqual(refs.paintXformRef.current, null, 'the swap to the support annotation lets strokes through again')
+  assert.equal(refs.selectorGeomRef.current.kind, 'supports')
+}
+
 console.log('paint_swap: ok')

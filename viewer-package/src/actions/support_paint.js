@@ -503,7 +503,14 @@ export function makeSupportPaint(deps) {
   //  carries one selector state (see paintStateFor above).
   function setPaintMode(mode) {
     if (mode !== 'off' && objectsRef.current.length === 0) { setError('Upload an STL first'); return }
-    if (mode !== 'off') { apiRef.current?.detachTransform(); registerSelector(null, { kind: kindOfMode(mode) }) }
+    if (mode !== 'off') {
+      apiRef.current?.detachTransform()
+      // The swap to the new brush's annotation queues behind any selector job still running, and the brush switches
+      //  now: strokes in between landed on the old annotation and were filed under its kind (an enforcer stroke saved
+      //  as T1 material paint). A null transform blocks them until the swap sets it again.
+      if (kindOfMode(mode) !== selectorGeomRef.current?.kind) paintXformRef.current = null
+      registerSelector(null, { kind: kindOfMode(mode) })
+    }
     paintModeRef.current = mode; setPaintModeState(mode)
     apiRef.current?.refreshCursor()   // refresh the cursor hint when entering/leaving paint mode
   }
