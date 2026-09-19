@@ -12,6 +12,10 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 ## Core rules
 
 - **Never modify `slicers/`.** All development happens in `packages/` and `web/`.
+- **No nested ternaries.** One `cond ? a : b` is fine; a ternary inside another one's branch
+  (`x ? 'a' : y ? 'b' : null`, parenthesised or not) is not — a chain of them hides which condition picks which value,
+  and every added case makes it worse. Write early `return`s or `if`/`else if` instead, and a lookup table
+  (`{ key: value }[name] ?? fallback`) when the choice is a mapping from names to values. Applies to tests as well.
 - `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
 - Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (93 keys from an empty settings map today), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
