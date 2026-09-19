@@ -4,6 +4,7 @@
 // this string, so "our writer agrees with our reader" is not enough — the SPELLING has to be upstream's.
 // (get_triangle_as_string, slicer/src/libslic3r/Model.cpp:3542: four bits per digit, most significant nibble first.)
 import createSlicer from '../../engine/src/slicer_core.js'
+import { decodePaintStates, splitPaintByObject, mergedPaint, paintTriangles } from '../../../viewer-package/src/core/paint_store.js'
 
 function boxTris(ox, oy, oz, sx, sy, sz) {
   const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v => [v[0]+ox, v[1]+oy, v[2]+oz])
@@ -115,6 +116,44 @@ const beforeMove = exportPaint()
 const movedSTL = trisToSTL(boxTris(30, 15, 0, 20, 20, 20))   // same topology, elsewhere
 ok(M.selector_reprepare(new Uint8Array(movedSTL)) === true, 'the move keeps the paint')
 ok(JSON.stringify(exportPaint().pairs) === JSON.stringify(beforeMove.pairs), 'and the export is unchanged by it')
+
+// The viewer's per-object store (viewer-package/src/core/paint_store.js) reads these strings without a kernel: it
+//  decodes which states a stored mark uses (a plate the selector does not hold still has to say whether it changes
+//  tools), and it splits an export per object and rebuilds the merge's import from it. Checked here against the
+//  kernel's own strings, because a decoder that only agrees with itself is the failure this file exists to catch.
+console.log('\n[the viewer store decodes and round-trips the kernel strings]')
+for (const [state, hex] of Object.entries(HEX)) ok(decodePaintStates(hex).has(Number(state)) && decodePaintStates(hex).size === 1, `state ${state} decodes from "${hex}"`)
+prepare()
+M.selector_paint_state(0, 3, 3, 0, 0, 0, 100, 6, 2)   // split trees, two states on one mesh
+M.selector_paint_state(0, 17, 17, 0, 0, 0, 100, 6, 3)
+{
+  const painted = exportPaint()
+  const decoded = new Set(); for (const hex of painted.hex) decodePaintStates(hex, decoded)
+  ok(painted.hex.some(hex => hex.length > 2), 'the strokes produced split trees (more than one nibble)')
+  ok([...decoded].sort().join() === '2,3' && counts(2)[0] > 0 && counts(3)[0] > 0, `the decoder finds the states the kernel painted (${[...decoded].sort()})`)
+  // Two objects of 6 facets each, as a merge would list them: split, rebuild, re-import -> the same export.
+  const members = [{ id: 7, faceCount: 6 }, { id: 9, faceCount: 6 }]
+  const byObject = splitPaintByObject({ facets: painted.facets, hex: painted.hex.join('\n') }, members)
+  const objects = new Map(members.map(member => [member.id, { paint: { color: byObject.get(member.id) } }]))
+  const rebuilt = mergedPaint(objects, members, 'color')
+  prepare()
+  M.selector_import_paint(rebuilt.facets, rebuilt.hex)
+  const again = exportPaint()
+  ok(JSON.stringify(again.pairs) === JSON.stringify(painted.pairs), 'split per object -> rebuilt merge -> kernel export is the identity')
+  // The store also DRAWS a plate the selector does not hold, by replaying the split rule in JS. Same triangles as the
+  //  kernel's own overlay of the same marks: count and total area per state.
+  const localPos = new Float32Array(12 * 9)
+  for (let t = 0; t < 12; t++) for (let k = 0; k < 9; k++) localPos[t * 9 + k] = cubeSTL.readFloatLE(84 + t * 50 + 12 + k * 4)
+  const drawn = paintTriangles(localPos, new Map(painted.pairs))
+  const area = (tris) => { let sum = 0; for (let i = 0; i < tris.length; i += 9) {
+    const ux = tris[i+3]-tris[i], uy = tris[i+4]-tris[i+1], uz = tris[i+5]-tris[i+2], vx = tris[i+6]-tris[i], vy = tris[i+7]-tris[i+1], vz = tris[i+8]-tris[i+2]
+    sum += Math.hypot(uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx) / 2 } return sum }
+  for (const state of [2, 3]) {
+    const kernel = M.selector_overlay_state(state), mine = drawn.get(state) ?? new Float32Array(0)
+    ok(mine.length === kernel.length && Math.abs(area(mine) - area(kernel)) < 1e-6 * Math.max(1, area(kernel)),
+       `state ${state}: the store draws the kernel's triangles (${mine.length / 9} vs ${kernel.length / 9}, area ${area(mine).toFixed(3)} vs ${area(kernel).toFixed(3)})`)
+  }
+}
 
 console.log(fail ? `\n${fail} FAILED` : '\npaint export passed')
 process.exit(fail ? 1 : 0)
