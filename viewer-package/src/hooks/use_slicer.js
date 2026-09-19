@@ -368,7 +368,10 @@ export function useSlicer(deps) {
   //  "memory access out of bounds" (an assert at Voronoi.cpp:334 in upstream debug builds).
   //  The same model finishes fine with wall_generator=classic -> this rung comes before economy mode
   //  (economy only reduces infill, which does nothing for an Arachne crash).
-  async function sliceLadder(buf, params, ctx = selectorCtx) {
+  // `afterRecreate` runs after each ctx.recreate(): a recreated worker's selector is EMPTY, and a painted plate
+  //  retried on it came out single-material with "G-code is fine" (measured: T2 646.59 mm / 75 tool changes on the
+  //  first try, 0 / 0 on the classic-walls retry). It puts the plate's paint back before the retry is posted.
+  async function sliceLadder(buf, params, ctx = selectorCtx, afterRecreate = null) {
     const isCancel = (e) => String(e?.message || e).includes('canceled')
     try { const r = await ctx.sliceOne(buf, JSON.stringify(params)); return { r, economy: !!(r.stats && r.stats.economy) } }
     catch (e1) {
@@ -379,12 +382,14 @@ export function useSlicer(deps) {
       if (ctx !== selectorCtx && isWorkerDeath(e1)) throw e1
       if (params.wall_generator !== 'classic') {
         ctx.recreate()
+        await afterRecreate?.()
         try {
           const r = await ctx.sliceOne(buf, JSON.stringify({ ...params, wall_generator: 'classic', keep_stages: false, reuse_stages: 0 }))
           return { r, economy: !!(r.stats && r.stats.economy), classicWalls: true }
         } catch (e2) { if (isCancel(e2)) throw e2 }
       }
       ctx.recreate()
+      await afterRecreate?.()
       // Economy retry: do not keep the stage cache (minimize the heap) and disable reuse (a new worker has no cache anyway)
       const r = await ctx.sliceOne(buf, JSON.stringify({ ...params, economy: true, keep_stages: false, reuse_stages: 0 }))   // a failure propagates as a throw
       return { r, economy: true, recovered: true }
@@ -496,7 +501,9 @@ export function useSlicer(deps) {
   // One merged STL through the whole ladder: parameters + incremental digest + the last-successful-geometry bookkeeping.
   //  Finishing via economy/classic used different parameters, so the cache cannot be reused (lastGeom is cleared).
   // `ctx` is a pool context for a plate sliced beside the selected one; null is the selector worker itself.
-  async function runSlice(merged, ctx = null) {
+  // `resyncPaint` (selector worker only): puts the plate's paint back into a recreated selector worker — the caller
+  //  owns the selector (support_paint.js); a pool context re-syncs itself (ctx.syncPaint).
+  async function runSlice(merged, ctx = null, { resyncPaint = null } = {}) {
     // SLA routing: the technology key sends the merge to the pure-JS contour slicer instead of the kernel. No
     //  retry ladder and no incremental cache — there is no Arachne to crash and no stage cache to reuse — and the
     //  derived params ride on the result so the SL1 writer rasterizes with the values this slice actually used.
@@ -526,12 +533,12 @@ export function useSlicer(deps) {
       // A pool worker is thrown away after the run, so a stage cache in it is heap for nothing — and the digest
       //  bookkeeping belongs to the selector worker, which is the only one that ever slices the same plate twice.
       params.keep_stages = false; params.reuse_stages = 0
-      return withTower(await sliceLadder(merged.buf, params, ctx))
+      return withTower(await sliceLadder(merged.buf, params, ctx, () => ctx.syncPaint(merged.buf, storedPaint)))
     }
     treeSupportRef.current = params.support_style === 'tree'
     const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
     try {
-      const out = await sliceLadder(merged.buf, params)   // on a normal failure: classic walls -> economy retry
+      const out = await sliceLadder(merged.buf, params, selectorCtx, resyncPaint)   // on a normal failure: classic walls -> economy retry
       lastGeomRef.current = (out.economy || out.classicWalls) ? null : dig
       return withTower(out)
     } catch (e) { lastGeomRef.current = null; throw e }

@@ -400,9 +400,12 @@ export default function Viewport({
     //  must hold that plate's mesh — loaded from the per-object store when it is another one. A move can also reach
     //  a slice without a gizmo commit (keyboard nudge, plate re-arrange). Needed when a selector exists (it may hold
     //  another plate) or the plate carries stored paint; the caller awaits it before posting the slice.
-    syncPaintSelector: (merged) => {
+    //  The held marks go to the store first: if the retry ladder has to recreate the worker, the strokes that lived
+    //  only in its selector would go with it, and the resync after the recreate loads the plate from the store.
+    syncPaintSelector: async (merged) => {
       const needsSelector = selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports
-      if (!needsSelector) return Promise.resolve()
+      if (!needsSelector) return
+      await flushPaintRef.current?.()
       return registerSelectorRef.current?.(merged)
     },
   })
