@@ -31,11 +31,20 @@ export function splitPaintByObject(exported, members) {
   return byObject
 }
 
-/** Which annotation a merge's paint is loaded from: material paint if any member has it, else support paint. One
+/** Which annotation one object's paint is: material paint when it has any, else support paint, else none. One
  *  facet holds one state, so the two cannot share a selector (the import-time rule, support_paint.js). */
+export function storedPaintKind(paint) {
+  if (paint?.color?.size) return 'color'
+  if (paint?.supports?.size) return 'supports'
+  return null
+}
+
+/** The same choice for a whole merge: material paint if any member has it, else support paint. */
 export function paintKindFor(objectsById, members) {
   const has = (kind) => members.some(member => objectsById.get(member.id)?.paint?.[kind]?.size > 0)
-  return has('color') ? 'color' : has('supports') ? 'supports' : null
+  if (has('color')) return 'color'
+  if (has('supports')) return 'supports'
+  return null
 }
 
 /** The store's marks of one kind, rebased onto the merge's numbering — what the worker's importPaint takes. Null
@@ -70,29 +79,75 @@ export function clonePaint(paint) {
   return Object.fromEntries(Object.entries(paint).map(([kind, marks]) => [kind, marks instanceof Map ? new Map(marks) : marks]))
 }
 
-/** The selector states one split-tree hex string uses. Upstream's encoding (TriangleSelector::serialize,
- *  FacetsAnnotation::get_triangle_as_string): the hex is read last digit first, each digit least significant bit
- *  first; a node is 2 bits of split count, then either 2 bits of special side and split+1 children, or — a leaf —
- *  2 bits of state, where 0b11 means 4 more bits of (state - 3). NONE (0) is not a paint state and is not reported.
- *  A malformed string reports what it decoded before the damage. */
-export function decodePaintStates(hex, into = new Set()) {
+// Upstream's split-tree encoding (TriangleSelector::serialize, FacetsAnnotation::get_triangle_as_string): the hex
+//  is read LAST digit first, each digit least significant bit first. A node starts with the number of split sides;
+//  a split node then names its special side and is followed by (split sides + 1) children, in REVERSE index order;
+//  a leaf names its state, where the marker value means "the state is in the next bits, offset by the marker".
+const BITS_PER_HEX_DIGIT = 4
+const SPLIT_SIDES_BITS = 2
+const SPECIAL_SIDE_BITS = 2
+const STATE_BITS = 2
+const EXTENDED_STATE_MARKER = 3      // 0b11: the state did not fit in STATE_BITS
+const EXTENDED_STATE_BITS = 4
+const EXTENDED_STATE_OFFSET = 3      // the extended field stores (state - 3)
+const MAX_SPLIT_DEPTH = 32           // a guard against a malformed string, far past any real subdivision
+const FLOATS_PER_FACET = 9           // three vertices of x, y, z
+
+/** Walk one facet's split tree. `onLeaf(state, triangle)` is called for every painted leaf (NONE is skipped);
+ *  `rootTriangle` (three [x, y, z]) is subdivided along the way when given, and null when only states matter.
+ *  A malformed string stops at the damage and reports what came before it. */
+function walkSplitTree(hex, rootTriangle, onLeaf) {
+  const digits = String(hex)
   const bits = []
-  for (let i = String(hex).length - 1; i >= 0; i--) {
-    const digit = parseInt(hex[i], 16)
-    if (Number.isNaN(digit)) return into
-    for (let bit = 0; bit < 4; bit++) bits.push((digit >> bit) & 1)
+  for (let digitIndex = digits.length - 1; digitIndex >= 0; digitIndex--) {
+    const digitValue = parseInt(digits[digitIndex], 16)
+    if (Number.isNaN(digitValue)) break
+    for (let bitIndex = 0; bitIndex < BITS_PER_HEX_DIGIT; bitIndex++) bits.push((digitValue >> bitIndex) & 1)
   }
-  let at = 0
-  const read = (count) => { let value = 0; for (let bit = 0; bit < count; bit++) value |= (bits[at++] ?? 0) << bit; return value }
-  const node = (depth) => {
-    if (at >= bits.length || depth > 32) return
-    const splits = read(2)
-    if (splits) { read(2); for (let child = 0; child <= splits; child++) node(depth + 1); return }
-    let state = read(2)
-    if (state === 3) state = read(4) + 3
-    if (state) into.add(state)
+  let readPosition = 0
+  const readBits = (bitCount) => {
+    let value = 0
+    for (let bitIndex = 0; bitIndex < bitCount; bitIndex++) value |= (bits[readPosition++] ?? 0) << bitIndex
+    return value
   }
-  node(0)
+  const visitNode = (triangle, depth) => {
+    if (readPosition >= bits.length || depth > MAX_SPLIT_DEPTH) return
+    const splitSides = readBits(SPLIT_SIDES_BITS)
+    if (splitSides) {
+      const specialSide = readBits(SPECIAL_SIDE_BITS)
+      const childTriangles = triangle ? splitTriangle(triangle, splitSides, specialSide) : null
+      for (let childIndex = splitSides; childIndex >= 0; childIndex--) visitNode(childTriangles?.[childIndex] ?? null, depth + 1)
+      return
+    }
+    let state = readBits(STATE_BITS)
+    if (state === EXTENDED_STATE_MARKER) state = readBits(EXTENDED_STATE_BITS) + EXTENDED_STATE_OFFSET
+    if (state) onLeaf(state, triangle)
+  }
+  visitNode(rootTriangle, 0)
+}
+
+const midpoint = (first, second) => [(first[0] + second[0]) / 2, (first[1] + second[1]) / 2, (first[2] + second[2]) / 2]
+
+/** Upstream's TriangleSelector::perform_split: the vertices rotated to start at the special side, a split edge cut
+ *  at its exact midpoint, and the children in upstream's index order. */
+function splitTriangle(triangle, splitSides, specialSide) {
+  const first = triangle[specialSide % 3], second = triangle[(specialSide + 1) % 3], third = triangle[(specialSide + 2) % 3]
+  if (splitSides === 1) {
+    const thirdSecondMid = midpoint(third, second)
+    return [[first, second, thirdSecondMid], [thirdSecondMid, third, first]]
+  }
+  if (splitSides === 2) {
+    const secondFirstMid = midpoint(second, first), firstThirdMid = midpoint(first, third)
+    return [[first, secondFirstMid, firstThirdMid], [secondFirstMid, second, firstThirdMid], [second, third, firstThirdMid]]
+  }
+  const secondFirstMid = midpoint(second, first), thirdSecondMid = midpoint(third, second), firstThirdMid = midpoint(first, third)
+  return [[first, secondFirstMid, firstThirdMid], [secondFirstMid, second, thirdSecondMid],
+          [thirdSecondMid, third, firstThirdMid], [secondFirstMid, thirdSecondMid, firstThirdMid]]
+}
+
+/** The selector states one split-tree hex string uses. NONE (0) is not a paint state and is not reported. */
+export function decodePaintStates(hex, into = new Set()) {
+  walkSplitTree(hex, null, (state) => into.add(state))
   return into
 }
 
@@ -111,52 +166,20 @@ export function storedPaintStates(objects, kind = 'color') {
 
 /** The painted sub-triangles of one object's stored marks, per state, in the object's LOCAL frame — what the
  *  kernel's overlay draws for the plate the selector holds, rebuilt here for every other plate so a plate's paint
- *  stays on screen when another one is being painted. The split rule is upstream's own
- *  (TriangleSelector::perform_split): a split edge gets its exact midpoint, the vertices are rotated to start at the
- *  special side, and the children of 1, 2 or 3 split sides are the ones listed below; the stream holds the children
- *  in REVERSE index order (serialize walks child_idx down to 0, deserialize reads them back that way).
- *  `localPos` is the object's flat vertex array (9 floats per facet, the order the merge sends the kernel).
+ *  stays on screen when another one is being painted (the split rule is splitTriangle's, upstream's own).
+ *  `localPos` is the object's flat vertex array (FLOATS_PER_FACET per facet, the order the merge sends the kernel).
  *  Returns Map(state -> Float32Array of triangle vertices). */
 export function paintTriangles(localPos, marks) {
-  const out = new Map()
-  const push = (state, tri) => {
-    let list = out.get(state); if (!list) out.set(state, list = [])
-    for (const vertex of tri) list.push(vertex[0], vertex[1], vertex[2])
-  }
-  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
-  const children = (verts, splits, side) => {
-    const v = [verts[side % 3], verts[(side + 1) % 3], verts[(side + 2) % 3]]
-    if (splits === 1) { const m = mid(v[2], v[1]); return [[v[0], v[1], m], [m, v[2], v[0]]] }
-    if (splits === 2) { const ab = mid(v[1], v[0]), ac = mid(v[0], v[2]); return [[v[0], ab, ac], [ab, v[1], ac], [v[1], v[2], ac]] }
-    const ab = mid(v[1], v[0]), bc = mid(v[2], v[1]), ca = mid(v[0], v[2])
-    return [[v[0], ab, ca], [ab, v[1], bc], [bc, v[2], ca], [ab, bc, ca]]
-  }
+  const verticesByState = new Map()
   for (const [facet, hex] of marks ?? []) {
-    const base = facet * 9
-    if (!(base >= 0 && base + 9 <= localPos.length)) continue
-    const bits = []
-    for (let i = String(hex).length - 1; i >= 0; i--) {
-      const digit = parseInt(hex[i], 16)
-      if (Number.isNaN(digit)) { bits.length = 0; break }
-      for (let bit = 0; bit < 4; bit++) bits.push((digit >> bit) & 1)
-    }
-    let at = 0
-    const read = (count) => { let value = 0; for (let bit = 0; bit < count; bit++) value |= (bits[at++] ?? 0) << bit; return value }
-    const node = (verts, depth) => {
-      if (at >= bits.length || depth > 32) return
-      const splits = read(2)
-      if (splits) {
-        const side = read(2)
-        const kids = children(verts, splits, side)
-        for (let child = splits; child >= 0; child--) node(kids[child], depth + 1)
-        return
-      }
-      let state = read(2)
-      if (state === 3) state = read(4) + 3
-      if (state) push(state, verts)
-    }
-    node([[localPos[base], localPos[base + 1], localPos[base + 2]], [localPos[base + 3], localPos[base + 4], localPos[base + 5]],
-          [localPos[base + 6], localPos[base + 7], localPos[base + 8]]], 0)
+    const facetStart = facet * FLOATS_PER_FACET
+    if (!(facetStart >= 0 && facetStart + FLOATS_PER_FACET <= localPos.length)) continue
+    const vertexAt = (vertexIndex) => [localPos[facetStart + vertexIndex * 3], localPos[facetStart + vertexIndex * 3 + 1], localPos[facetStart + vertexIndex * 3 + 2]]
+    walkSplitTree(hex, [vertexAt(0), vertexAt(1), vertexAt(2)], (state, triangle) => {
+      let vertices = verticesByState.get(state)
+      if (!vertices) verticesByState.set(state, vertices = [])
+      for (const vertex of triangle) vertices.push(vertex[0], vertex[1], vertex[2])
+    })
   }
-  return new Map([...out].map(([state, list]) => [state, Float32Array.from(list)]))
+  return new Map([...verticesByState].map(([state, vertices]) => [state, Float32Array.from(vertices)]))
 }

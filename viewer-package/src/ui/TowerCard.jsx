@@ -70,7 +70,9 @@ export default function TowerCard({
   //  row below. Stored as enable_prime_tower so it reads the same as upstream's key; ring/real is wipe_tower_real,
   //  a viewer knob in the same map (the kernel's own flag name), so both follow the plate override.
   const towerOff = 'enable_prime_tower' in raw && !raw.enable_prime_tower
-  const mode = towerOff ? 'off' : (raw.wipe_tower_real ? 'real' : 'ring')
+  let mode = 'ring'
+  if (towerOff) mode = 'off'
+  else if (raw.wipe_tower_real) mode = 'real'
   const setMode = (next) => setSettings?.(prev => {
     const out = { ...prev }
     if (next === 'off') { out.enable_prime_tower = false; return out }

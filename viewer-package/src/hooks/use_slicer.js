@@ -4,6 +4,7 @@ import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
+import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 
 // Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
 const PAINT_STATES_ALL = Array.from({ length: MAX_PAINT_EXTRUDERS }, (_, index) => index + 1)
@@ -448,13 +449,16 @@ export function useSlicer(deps) {
     //  deriveKernelParams already wrote prime_tower_x/y if the card or a drag set wipe_tower_x/y, and this used to
     //  overwrite that on every slice, so a tower dragged in Prepare sliced somewhere else.
     if ((params.extruder_count ?? 1) >= 2 && Number.isFinite(merged.minX) && params.prime_tower_x == null) {
-      const towerSide = (params.wipe_tower_real ?? true) ? (params.prime_tower_width ?? 30) : 15
-      const gap = 5
-      const bedW = params.bed_width ?? DEFAULT_BED.width, bedD = params.bed_depth ?? DEFAULT_BED.depth
+      // The same footprint and gap the scene's stand-in uses (tower_layout.js), so the two cannot drift. One known
+      //  difference stays: the slice keeps AUTO_EDGE_MARGIN_MM inside the bed edge, the stand-in clamps flush.
+      const towerSide = towerFootprint(params, params.wipe_tower_real ?? true)
+      const bedWidth = params.bed_width ?? DEFAULT_BED.width, bedDepth = params.bed_depth ?? DEFAULT_BED.depth
       // Slice frame -> bed frame is one addition (the kernel's own gw.offX), and both boxes are now in it.
-      const modelLeft = merged.minX + bedW / 2, modelMidY = (merged.minY + merged.maxY) / 2 + bedD / 2
-      params.prime_tower_x = Math.min(Math.max(modelLeft - gap - towerSide, 1), bedW - towerSide - 1)
-      params.prime_tower_y = Math.min(Math.max(modelMidY - towerSide / 2, 1), bedD - towerSide - 1)
+      const modelLeft = merged.minX + bedWidth / 2, modelMiddleY = (merged.minY + merged.maxY) / 2 + bedDepth / 2
+      const lowestCorner = AUTO_EDGE_MARGIN_MM
+      const highestCornerX = bedWidth - towerSide - AUTO_EDGE_MARGIN_MM, highestCornerY = bedDepth - towerSide - AUTO_EDGE_MARGIN_MM
+      params.prime_tower_x = Math.min(Math.max(modelLeft - AUTO_GAP - towerSide, lowestCorner), highestCornerX)
+      params.prime_tower_y = Math.min(Math.max(modelMiddleY - towerSide / 2, lowestCorner), highestCornerY)
     }
     // Two ways a painted model slices exactly like an unpainted one, both of them by design and neither of them
     //  visible in the result — the export just comes out single-material. Said here, at the one place that knows

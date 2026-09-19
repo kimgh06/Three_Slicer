@@ -38,7 +38,10 @@ export function chosenTowerCoord(settings, key, plate) {
 }
 
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
-const AUTO_GAP = 5   // mm between the model and an auto-placed tower
+export const AUTO_GAP = 5                  // mm between the model and an auto-placed tower
+export const AUTO_EDGE_MARGIN_MM = 1       // how far inside the bed edge the SLICE keeps an auto-placed tower
+export const RING_TOWER_SIDE_MM = 15       // the fallback ring's fixed footprint (params.h prime_tower_ring_size)
+export const REAL_TOWER_DEFAULT_WIDTH_MM = 30   // the kernel's prime_tower_width when nothing reaches it
 
 /** One box per plate that gets a tower, in the bed-centred world coordinates the objects use.
  *  Every plate slices with its own tower (the kernel is per-plate), so every plate with objects gets one.
@@ -93,7 +96,8 @@ export function towerSelectionRule(selection, primary, isTower) {
  *  the kernel as the schema default (60), which a raw read of the map cannot see. Same rule as buildParams' auto
  *  placement (use_slicer.js). */
 export function towerFootprint(params, real) {
-  return real ? (params?.prime_tower_width > 0 ? params.prime_tower_width : 30) : 15
+  if (!real) return RING_TOWER_SIDE_MM
+  return params?.prime_tower_width > 0 ? params.prime_tower_width : REAL_TOWER_DEFAULT_WIDTH_MM
 }
 
 /** A chosen tower position kept on the bed: `x`/`y` are the tower's CORNER in plate-local bed coordinates (what

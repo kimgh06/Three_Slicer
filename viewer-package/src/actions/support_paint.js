@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { log } from '../core/log.js'
 import { paintStateColor } from '../core/paint_colors.js'
 import { MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
-import { splitPaintByObject, storePaint, mergedPaint, paintKindFor, paintTriangles } from '../core/paint_store.js'
+import { splitPaintByObject, storePaint, mergedPaint, paintKindFor, paintTriangles, storedPaintKind } from '../core/paint_store.js'
 
 // Stage 20: manual support painting (enforcer/blocker), extended to material painting — brushing a region so it
 //  prints with another extruder. Both brushes drive the same selector, which is why they are one mode variable.
@@ -25,6 +25,16 @@ export function paintStateFor(paintMode, materialExtruderIndex) {
   if (!Number.isInteger(materialExtruderIndex) || materialExtruderIndex < 0) return PAINT_STATE_NONE   // eraser
   return Math.min(materialExtruderIndex + 1, MAX_PAINT_EXTRUDERS)
 }
+
+// How a paint overlay is drawn, for the kernel's overlay and the stored one alike: translucent over the model, and
+//  pulled toward the camera by a polygon offset because it is coplanar with the surface it marks (see mk below).
+const PAINT_OVERLAY_OPACITY = 0.55
+const PAINT_OVERLAY_POLYGON_OFFSET = -1
+const paintOverlayMaterial = (color, clippingPlanes = null) => new THREE.MeshBasicMaterial({
+  color, transparent: true, opacity: PAINT_OVERLAY_OPACITY, side: THREE.DoubleSide,
+  polygonOffset: true, polygonOffsetFactor: PAINT_OVERLAY_POLYGON_OFFSET, polygonOffsetUnits: PAINT_OVERLAY_POLYGON_OFFSET,
+  clippingPlanes })
+const PAINT_OVERLAY_RENDER_ORDER = 999   // after the model, so the translucent overlay blends over it
 
 // The worker's painting as {facets, hex} in the held selector's numbering, or null when there is none to ask for
 //  (no worker, a kernel without the export binding, a worker that died). `timeoutMs` bounds the wait for a caller
@@ -219,10 +229,8 @@ export function makeSupportPaint(deps) {
       //  the back of the hull drew straight through the front of it. (Upstream never has this problem because its
       //  MMU gizmo REPLACES the object's own rendering with a per-state coloured pass over the whole selector
       //  — GLGizmoPainterBase.cpp:76 — so nothing is ever drawn twice at one depth.)
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.55, side:THREE.DoubleSide,
-        polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1,
-        clippingPlanes: apiRef.current?.paintClipPlanes?.() ?? null }))
-      m.renderOrder = 999; t.objectsGroup.add(m); return m
+      const m = new THREE.Mesh(g, paintOverlayMaterial(color, apiRef.current?.paintClipPlanes?.() ?? null))
+      m.renderOrder = PAINT_OVERLAY_RENDER_ORDER; t.objectsGroup.add(m); return m
     }
     // Only the states this reply carries are touched; every other state keeps the mesh it already has. That is what
     //  lets a stroke ask for one state and still leave the rest of the paint on screen, and it is why the reply's
@@ -251,16 +259,14 @@ export function makeSupportPaint(deps) {
         object.mesh.remove(child); child.geometry.dispose(); child.material.dispose()
       }
       if (held.has(object.id)) continue
-      const kind = object.paint?.color?.size ? 'color' : object.paint?.supports?.size ? 'supports' : null
+      const kind = storedPaintKind(object.paint)
       if (!kind) continue
       for (const [state, triangles] of paintTriangles(object.localPos, object.paint[kind])) {
         const geometry = new THREE.BufferGeometry()
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(triangles, 3))
-        const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-          color: paintStateColor(state, kind === 'color', extruderColorsRef?.current), transparent: true, opacity: 0.55,
-          side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }))
+        const mesh = new THREE.Mesh(geometry, paintOverlayMaterial(paintStateColor(state, kind === 'color', extruderColorsRef?.current)))
         mesh.userData.storedPaint = true
-        mesh.renderOrder = 999
+        mesh.renderOrder = PAINT_OVERLAY_RENDER_ORDER
         object.mesh.add(mesh)
       }
     }
