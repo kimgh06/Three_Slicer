@@ -3,6 +3,7 @@ import { log } from '../core/log.js'
 import { paintStateColor } from '../core/paint_colors.js'
 import { MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { splitPaintByObject, storePaint, mergedPaint, paintKindFor, paintTriangles, storedPaintKind } from '../core/paint_store.js'
+import { request } from '../core/worker_reply.js'
 
 // Stage 20: manual support painting (enforcer/blocker), extended to material painting — brushing a region so it
 //  prints with another extruder. Both brushes drive the same selector, which is why they are one mode variable.
@@ -36,30 +37,16 @@ const paintOverlayMaterial = (color, clippingPlanes = null) => new THREE.MeshBas
   clippingPlanes })
 const PAINT_OVERLAY_RENDER_ORDER = 999   // after the model, so the translucent overlay blends over it
 
-// The worker's painting as {facets, hex} in the held selector's numbering, or null when there is none to ask for
-//  (no worker, a kernel without the export binding, a worker that died). `timeoutMs` bounds the wait for a caller
-//  that can live without the answer; the store's write-back passes none, because the reply queues behind whatever
-//  the worker is doing — a long slice — and giving up there would prepare the next mesh over paint never saved.
+// The worker's painting as {facets, hex} in the held selector's numbering, or null when there is none to have
+//  (no worker, a kernel without the export binding, an error reply, a worker that died — worker_reply.js ends the
+//  wait on each). `timeoutMs` bounds it for a caller that can live without the answer; the store's write-back passes
+//  none, because the reply queues behind whatever the worker is doing — a long slice — and giving up there would
+//  prepare the next mesh over paint never saved.
 export const PAINT_EXPORT_TIMEOUT_MS = 4000
-export function requestPaintExport(worker, timeoutMs = PAINT_EXPORT_TIMEOUT_MS) {
-  if (!worker) return Promise.resolve(null)
-  return new Promise((resolve) => {
-    let done = false
-    const finish = (value) => {
-      if (done) return
-      done = true; worker.removeEventListener('message', onMessage); worker.removeEventListener('error', onError); resolve(value)
-    }
-    const onMessage = (event) => {
-      if (event.data?.type !== 'paintExport') return
-      if (event.data.supported) finish(event.data)
-      else finish(null)
-    }
-    const onError = () => finish(null)
-    worker.addEventListener('message', onMessage)
-    worker.addEventListener('error', onError)
-    if (Number.isFinite(timeoutMs)) setTimeout(() => finish(null), timeoutMs)
-    worker.postMessage({ cmd: 'exportPaint' })
-  })
+export async function requestPaintExport(worker, timeoutMs = PAINT_EXPORT_TIMEOUT_MS) {
+  const reply = await request(worker, { cmd: 'exportPaint' }, { types: ['paintExport'], timeoutMs })
+  if (!reply?.supported) return null
+  return reply
 }
 
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each render.
@@ -146,6 +133,9 @@ export function makeSupportPaint(deps) {
         return post(...args)
       }
       if (message && message.cmd === 'paint') {
+        // A stroke decides what the held marks are: the kind its write-back files them under.
+        const strokeKind = kindOfMode(paintModeRef.current)
+        if (strokeKind && selectorGeomRef.current) selectorGeomRef.current.kind = strokeKind
         const state = paintStateFor(paintModeRef.current, materialExtruderRef?.current)
         // The eraser resolves to NONE, which is not a paint state and never will be: the worker rejects an integer
         //  0 on the state path on purpose, because embind turns a JS `false` into 0 and a boolean must not be able
@@ -290,20 +280,32 @@ export function makeSupportPaint(deps) {
   const objectsById = () => new Map(objectsRef.current.map(o => [o.id, o]))
   // Which annotation the held selector's marks are: the active brush's while one is open, else what was loaded or
   //  last brushed. One selector holds one enum (see paintStateFor), so this is a property of the selector.
-  const heldKind = (worker) => {
-    const mode = paintModeRef.current
+  // The record of what the selector holds belongs to ONE worker. The watchdog and the memory ladder replace the
+  //  worker, and the new one's selector is empty — reading it as "the paint now" wrote empty maps over the store
+  //  (measured: an imported plate's 208 painted facets -> 0 on the next save). A record from another worker is no
+  //  record: nothing is written back from it, and the next registration loads the store into the new selector.
+  const heldBy = (worker) => {
+    const held = selectorGeomRef.current
+    if (held && held.worker === worker) return held
+    return null
+  }
+  // Which annotation the brush writes: the selector's recorded kind follows the strokes (paintStateAwareWorker).
+  const kindOfMode = (mode) => {
     if (mode === 'material') return 'color'
     if (mode === 'enforcer' || mode === 'blocker') return 'supports'
-    return worker.__paintImportKind ?? 'color'
+    return null
   }
-  // Write the held selector's marks back to the objects it was built from. A kernel without the export binding
-  //  answers null: the store is then left as it was rather than emptied.
+  // Write the held selector's marks back to the objects it was built from, under the kind RECORDED for them — what
+  //  was loaded, or what was last brushed — never the brush mode at write time: a mode switch queues this and flips
+  //  the mode before it runs, which filed plate 1's material paint as support paint (measured: color 208 -> supports
+  //  208, its tower box gone, drawn in the blocker red). A kernel without the export binding answers null: the store
+  //  is then left as it was rather than emptied.
   async function writeBack(worker) {
-    const held = selectorGeomRef.current
+    const held = heldBy(worker)
     if (!held?.members) return false
     const exported = await requestPaintExport(worker, Infinity)
     if (!exported) return false
-    storePaint(objectsById(), splitPaintByObject(exported, held.members), heldKind(worker))
+    storePaint(objectsById(), splitPaintByObject(exported, held.members), held.kind ?? 'color')
     return true
   }
   /** Bring every object's stored paint up to date with the selector — before anything reads `object.paint` for an
@@ -328,9 +330,9 @@ export function makeSupportPaint(deps) {
     //  This used to be the model's own bbox centre, which changed the moment the model was dragged — every stroke
     //  after a move landed at the offset the model had when it was last sliced. A plate origin does not move.
     const transform = { cx: merged.offX, cy: -merged.offZ, minz: 0 }
-    const held = selectorGeomRef.current
+    const held = heldBy(worker)
     const identity = geomIdentity(merged.buf)
-    const next = { identity, topology: merged.topology, members: merged.members, plate: merged.plate }
+    const next = { identity, topology: merged.topology, members: merged.members, plate: merged.plate, worker, kind: held?.kind ?? null }
     // Same bytes AND the same objects -> the selector already holds this mesh and every mark on it. Bytes alone
     //  are not enough: a copy on another plate, placed where the original sits on its own plate, merges to the
     //  same plate-local bytes — and was taken for the original, so its plate inherited the original's paint.
@@ -379,21 +381,16 @@ export function makeSupportPaint(deps) {
     const kind = paintKindFor(objects, merged.members)
     const chosen = mergedPaint(objects, merged.members, kind)
     if (!chosen) return Promise.resolve()
-    // Which kind was loaded, for the overlay colour — see overlayColorFor.
+    // Which kind was loaded: the overlay colour reads it (overlayColorFor), and the write-back files the marks under it.
     worker.__paintImportKind = kind
+    if (selectorGeomRef.current) selectorGeomRef.current.kind = kind
     if (kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
       setSliceNotice?.('These objects are painted for both material and support. One facet holds one paint state, so '
                      + 'the material painting was loaded and the support painting was left out.')
     // No overlay request follows: the reply carries `counts`, and the message listener above already asks for the
     //  overlay of every state whose count moved — which after an import is every state it loaded. The swap waits
     //  for that reply, so a slice queued behind it reads this mesh's counts, not the previous one's.
-    return new Promise((resolve) => {
-      const done = () => { worker.removeEventListener('message', onMessage); worker.removeEventListener('error', done); resolve() }
-      const onMessage = (event) => { if (event.data?.type === 'painted') done() }
-      worker.addEventListener('message', onMessage)
-      worker.addEventListener('error', done)
-      worker.postMessage({ cmd: 'importPaint', facets: chosen.facets, hex: chosen.hex, states: reportedPaintStates() })
-    })
+    return request(worker, { cmd: 'importPaint', facets: chosen.facets, hex: chosen.hex, states: reportedPaintStates() }, { types: ['painted'] })
   }
   // mode: 'off' | 'enforcer' | 'blocker' | 'material'. Entering either brush leaves the other, because one facet
   //  carries one selector state (see paintStateFor above).
