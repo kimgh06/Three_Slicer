@@ -1,6 +1,8 @@
 import * as THREE from 'three'
+import { log } from '../core/log.js'
 import { paintStateColor } from '../core/paint_colors.js'
 import { MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
+import { splitPaintByObject, storePaint, mergedPaint, paintKindFor, paintTriangles } from '../core/paint_store.js'
 
 // Stage 20: manual support painting (enforcer/blocker), extended to material painting — brushing a region so it
 //  prints with another extruder. Both brushes drive the same selector, which is why they are one mode variable.
@@ -24,13 +26,38 @@ export function paintStateFor(paintMode, materialExtruderIndex) {
   return Math.min(materialExtruderIndex + 1, MAX_PAINT_EXTRUDERS)
 }
 
+// The worker's painting as {facets, hex} in the held selector's numbering, or null when there is none to ask for
+//  (no worker, a kernel without the export binding, a worker that died). `timeoutMs` bounds the wait for a caller
+//  that can live without the answer; the store's write-back passes none, because the reply queues behind whatever
+//  the worker is doing — a long slice — and giving up there would prepare the next mesh over paint never saved.
+export const PAINT_EXPORT_TIMEOUT_MS = 4000
+export function requestPaintExport(worker, timeoutMs = PAINT_EXPORT_TIMEOUT_MS) {
+  if (!worker) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (value) => {
+      if (done) return
+      done = true; worker.removeEventListener('message', onMessage); worker.removeEventListener('error', onError); resolve(value)
+    }
+    const onMessage = (event) => { if (event.data?.type === 'paintExport') finish(event.data.supported ? event.data : null) }
+    const onError = () => finish(null)
+    worker.addEventListener('message', onMessage)
+    worker.addEventListener('error', onError)
+    if (Number.isFinite(timeoutMs)) setTimeout(() => finish(null), timeoutMs)
+    worker.postMessage({ cmd: 'exportPaint' })
+  })
+}
+
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each render.
 export function makeSupportPaint(deps) {
   const {
     three, objectsRef, apiRef, getWorker, selectedPlateRef, selectorGeomRef,
     paintXformRef, paintOverlayRef, paintModeRef, materialExtruderRef, extruderColorsRef,
-    setError, setPaintModeState, setPaintCounts, setPaintStateCounts, setSliceNotice,
+    setError, setPaintModeState, setPaintCounts, setPaintStateCounts, setSliceNotice, paintStateCountsRef,
   } = deps
+  // The counts a slice reads (use_slicer.js buildParams) — written here synchronously as well as through React
+  //  state, because a slice posted right after a selector swap cannot wait for a render to carry them into the ref.
+  const publishCounts = (counts) => { if (paintStateCountsRef) paintStateCountsRef.current = counts; setPaintStateCounts?.(counts) }
 
   // Identity of the mesh the kernel's selector currently holds. `prepare` builds a NEW TriangleSelector, which
   //  discards every mark on it, so re-sending it for unchanged geometry silently deletes the user's paint. Entering
@@ -129,7 +156,7 @@ export function makeSupportPaint(deps) {
     worker.addEventListener('message', event => {
       const message = event.data
       if (!message || message.type !== 'painted' || !message.counts) return
-      setPaintStateCounts?.(message.counts)
+      publishCounts(message.counts)
       const seen = lastCounts(worker)
       const changed = Object.entries(message.counts)
         .filter(([state, count]) => seen[state] !== count)
@@ -211,84 +238,165 @@ export function makeSupportPaint(deps) {
     three.current.invalidate?.()   // worker message path (scene changed without a React re-render)
   }
   function clearPaintOverlay() { disposeOverlayMeshes(); paintOverlayRef.current = null }
-  // Hand the kernel the mesh the brush is about to work on. Called on entering a brush AND on every transform
-  //  commit while one is active — a model that moved under the cursor would otherwise be painted where it was.
+  // Every object the selector does NOT hold draws its paint from the store, so a plate keeps its paint on screen
+  //  while another one is painted — the kernel overlay above only ever covers the held mesh, and painting a second
+  //  plate used to make the first plate's paint look erased (it was only undrawn). The triangles are the kernel's
+  //  own split geometry replayed in JS (paintTriangles, pinned against the kernel overlay in test_paint_export.mjs),
+  //  in the object's LOCAL frame and attached as children of its mesh, so they move, hide and delete with it.
+  function refreshStoredOverlays() {
+    const held = new Set(selectorGeomRef.current?.members?.map(member => member.id) ?? [])
+    for (const object of objectsRef.current) {
+      for (const child of [...object.mesh.children]) {
+        if (!child.userData?.storedPaint) continue
+        object.mesh.remove(child); child.geometry.dispose(); child.material.dispose()
+      }
+      if (held.has(object.id)) continue
+      const kind = object.paint?.color?.size ? 'color' : object.paint?.supports?.size ? 'supports' : null
+      if (!kind) continue
+      for (const [state, triangles] of paintTriangles(object.localPos, object.paint[kind])) {
+        const geometry = new THREE.BufferGeometry()
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(triangles, 3))
+        const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+          color: paintStateColor(state, kind === 'color', extruderColorsRef?.current), transparent: true, opacity: 0.55,
+          side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }))
+        mesh.userData.storedPaint = true
+        mesh.renderOrder = 999
+        object.mesh.add(mesh)
+      }
+    }
+    three.current?.invalidate?.()
+  }
+  // The selector is one mesh at a time, and swapping it is a round trip: the marks it holds have to come OUT of the
+  //  worker (exportPaint) into the per-object store before the next mesh goes in, or they are lost with the old
+  //  selector. Every swap, flush and slice-time sync is therefore a job on one chain per worker — a stroke, a slice
+  //  or a second swap that slipped into the gap would land on the wrong selector. The chain hangs off the worker
+  //  for the same reason lastCounts does: this factory is rebuilt on every render.
+  const serial = (worker, job) => {
+    const run = (worker.__selectorChain ?? Promise.resolve()).then(job, job)
+    // A failed job must not stall every later one, and must not vanish either.
+    worker.__selectorChain = run.catch(err => log.warn('[paint] selector job failed:', err))
+    return run
+  }
+  const objectsById = () => new Map(objectsRef.current.map(o => [o.id, o]))
+  // Which annotation the held selector's marks are: the active brush's while one is open, else what was loaded or
+  //  last brushed. One selector holds one enum (see paintStateFor), so this is a property of the selector.
+  const heldKind = (worker) => {
+    const mode = paintModeRef.current
+    if (mode === 'material') return 'color'
+    if (mode === 'enforcer' || mode === 'blocker') return 'supports'
+    return worker.__paintImportKind ?? 'color'
+  }
+  // Write the held selector's marks back to the objects it was built from. A kernel without the export binding
+  //  answers null: the store is then left as it was rather than emptied.
+  async function writeBack(worker) {
+    const held = selectorGeomRef.current
+    if (!held?.members) return false
+    const exported = await requestPaintExport(worker, Infinity)
+    if (!exported) return false
+    storePaint(objectsById(), splitPaintByObject(exported, held.members), heldKind(worker))
+    return true
+  }
+  /** Bring every object's stored paint up to date with the selector — before anything reads `object.paint` for an
+   *  object the selector holds (a 3mf save, a copy, a slice on another worker). */
+  function flushPaint() {
+    const worker = getWorker()
+    return worker ? serial(worker, () => writeBack(worker)) : Promise.resolve(false)
+  }
+
+  // Hand the kernel the mesh the brush is about to work on — on entering a brush, on every transform commit while
+  //  a selector exists, and before the selector worker slices a plate. Returns the chain's promise; a caller that
+  //  posts to the worker afterwards (a slice) must await it.
   function registerSelector(prebuiltMerged = null) {
+    const worker = paintStateAwareWorker()
+    if (!worker) return Promise.resolve()
+    return serial(worker, async () => { await swapTo(worker, prebuiltMerged); refreshStoredOverlays() })
+  }
+  async function swapTo(worker, prebuiltMerged) {
     const merged = prebuiltMerged ?? apiRef.current?.buildMergedSTL(selectedPlateRef.current); if (!merged) return
     // The selector holds plate-local coordinates, so a raycast hit (world) subtracts the plate origin to match it.
     //  This used to be the model's own bbox centre, which changed the moment the model was dragged — every stroke
     //  after a move landed at the offset the model had when it was last sliced. A plate origin does not move.
-    paintXformRef.current = { cx: merged.offX, cy: -merged.offZ, minz: 0 }
-    // Re-register ONLY when the mesh really differs from the one the selector holds. Same mesh -> the selector
-    //  already has the right facets and every mark on them, so the brush resumes where it left off.
+    const transform = { cx: merged.offX, cy: -merged.offZ, minz: 0 }
     const held = selectorGeomRef.current
     const identity = geomIdentity(merged.buf)
-    if (held?.identity !== identity) {
-      // "had paint", not "had a selector": swapping the model with nothing painted resets nothing worth saying.
-      const seen = lastCounts(getWorker())
-      const hadPaint = Object.values(seen).some(count => count > 0)
-      // Same objects with the same faces at new coordinates is a MOVE, not a different model. The selector is
-      //  rebuilt either way — the brush and the layer projection both work on real positions — but a move has no
-      //  business costing the paint, so the marks are carried across the rebuild by facet index.
-      const moved = held != null && held.topology === merged.topology
-      const worker = paintStateAwareWorker()
-      worker.postMessage({ cmd: 'prepare', stl: merged.buf, keepPaint: moved })
-      selectorGeomRef.current = { identity, topology: merged.topology }
-      if (moved) {
-        // The marks came across; their geometry did not. Every overlay triangle still describes where the model
-        //  used to be, and no facet count changed, so nothing else would ask for the redraw.
-        if (hadPaint) worker.postMessage({ cmd: 'overlay' })
-      } else {
-        // A fresh selector holds nothing, so every number and every mesh derived from the old one has to go with
-        //  it — including the enf/blk pair, whose stale value used to keep showing a count the kernel no longer had.
-        setPaintStateCounts?.({})
-        setPaintCounts?.({ enf: 0, blk: 0 })
-        clearPaintOverlay()
-        for (const state of Object.keys(seen)) delete seen[state]
-        // Losing paint to a genuine model change is unavoidable (the facets it was attached to are gone), but it
-        //  must not be silent — that is indistinguishable from the bug this replaced.
-        if (hadPaint) setSliceNotice?.('The model changed, so the painted regions were reset — the paint is tied to '
-                                     + 'the facets it was brushed onto.')
-        importProjectPaint(worker, merged)
-      }
+    const next = { identity, topology: merged.topology, members: merged.members, plate: merged.plate }
+    // Same bytes AND the same objects -> the selector already holds this mesh and every mark on it. Bytes alone
+    //  are not enough: a copy on another plate, placed where the original sits on its own plate, merges to the
+    //  same plate-local bytes — and was taken for the original, so its plate inherited the original's paint.
+    if (held?.identity === identity && held.topology === merged.topology) {
+      selectorGeomRef.current = next; paintXformRef.current = transform; return
     }
+    // Same objects with the same faces at new coordinates is a MOVE: the selector is rebuilt on the real positions
+    //  (the brush and the layer projection both need them) and the marks are carried across by facet index.
+    if (held != null && held.topology === merged.topology) {
+      worker.postMessage({ cmd: 'prepare', stl: merged.buf, keepPaint: true })
+      selectorGeomRef.current = next; paintXformRef.current = transform
+      // The marks came across; their geometry did not, and no facet count changed to ask for the redraw.
+      if (Object.values(lastCounts(worker)).some(count => count > 0)) worker.postMessage({ cmd: 'overlay' })
+      return
+    }
+    // A different set of objects (another plate, an object added or removed): the held marks go back to their
+    //  objects, and the new mesh is loaded from what its objects hold. No stroke may land in between — a null
+    //  transform is what the pointer handler already treats as "no selector".
+    paintXformRef.current = null
+    const seen = lastCounts(worker)
+    const hadPaint = Object.values(seen).some(count => count > 0)
+    const kept = await writeBack(worker)
+    worker.postMessage({ cmd: 'prepare', stl: merged.buf })
+    selectorGeomRef.current = next
+    // A fresh selector holds nothing, so every number and every mesh derived from the old one goes with it.
+    publishCounts({})
+    setPaintCounts?.({ enf: 0, blk: 0 })
+    clearPaintOverlay()
+    for (const state of Object.keys(seen)) delete seen[state]
+    // Only a kernel that cannot export loses paint here now — and that must not be silent.
+    if (hadPaint && !kept) setSliceNotice?.('The painted regions were reset: this kernel cannot hand its painting '
+                                           + 'back, so it does not survive switching the painted mesh.')
+    await loadStoredPaint(worker, merged)
+    paintXformRef.current = transform
   }
 
-  // Hand a freshly loaded 3mf's painting to the kernel. Only ever on a FRESH selector: the kernel's import calls
-  //  upstream's deserialize, which resets before loading, so running it over a selector the user has painted on
-  //  would silently discard their work. The one-shot is enforced by clearing the pending paint right after.
+  // Load a fresh selector from the per-object store (a project's painting arrives the same way: the import puts it
+  //  on the objects). Only ever on a FRESH selector: the kernel's import calls upstream's deserialize, which resets
+  //  before loading.
   //
-  // One facet carries one state (see paintStateFor), and a 3mf keeps material paint and support paint in two
-  //  independent annotations — `paint_color` and `paint_supports` — that CAN both mark the same facet. There is no
-  //  representation here that holds both, so material paint wins and the support paint is reported as dropped
-  //  rather than half-applied.
-  function importProjectPaint(worker, merged) {
-    const pending = merged?.paint
-    if (!pending) return
-    const chosen = pending.color ?? pending.supports
-    if (!chosen) { apiRef.current?.clearPaintImport?.(); return }
-    // Which kind was loaded, for the overlay colour — see overlayColorFor. It hangs off the WORKER for the same
-    //  reason lastCounts does: this factory is rebuilt on every render, so a plain local would not survive.
-    worker.__paintImportKind = pending.color ? 'color' : 'supports'
+  // One facet carries one state (see paintStateFor), and material and support paint are two independent
+  //  annotations that CAN both mark the same facet. There is no representation here that holds both, so material
+  //  paint wins and the support paint is reported as left out rather than half-applied.
+  function loadStoredPaint(worker, merged) {
+    const objects = objectsById()
+    const kind = paintKindFor(objects, merged.members)
+    const chosen = mergedPaint(objects, merged.members, kind)
+    if (!chosen) return Promise.resolve()
+    // Which kind was loaded, for the overlay colour — see overlayColorFor.
+    worker.__paintImportKind = kind
+    if (kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
+      setSliceNotice?.('These objects are painted for both material and support. One facet holds one paint state, so '
+                     + 'the material painting was loaded and the support painting was left out.')
     // No overlay request follows: the reply carries `counts`, and the message listener above already asks for the
-    //  overlay of every state whose count moved — which after an import is every state it loaded.
-    worker.postMessage({ cmd: 'importPaint', facets: chosen.facets, hex: chosen.hex, states: reportedPaintStates() })
-    apiRef.current?.clearPaintImport?.()
-    if (pending.color && pending.supports)
-      setSliceNotice?.('This project paints both material and support. One facet holds one paint state, so the '
-                     + 'material painting was imported and the support painting was dropped.')
+    //  overlay of every state whose count moved — which after an import is every state it loaded. The swap waits
+    //  for that reply, so a slice queued behind it reads this mesh's counts, not the previous one's.
+    return new Promise((resolve) => {
+      const done = () => { worker.removeEventListener('message', onMessage); worker.removeEventListener('error', done); resolve() }
+      const onMessage = (event) => { if (event.data?.type === 'painted') done() }
+      worker.addEventListener('message', onMessage)
+      worker.addEventListener('error', done)
+      worker.postMessage({ cmd: 'importPaint', facets: chosen.facets, hex: chosen.hex, states: reportedPaintStates() })
+    })
   }
   // mode: 'off' | 'enforcer' | 'blocker' | 'material'. Entering either brush leaves the other, because one facet
   //  carries one selector state (see paintStateFor above).
   function setPaintMode(mode) {
     if (mode !== 'off' && objectsRef.current.length === 0) { setError('Upload an STL first'); return }
     if (mode !== 'off') { apiRef.current?.detachTransform(); registerSelector() }
+    // The kind of what the selector will hold from now on — what writeBack files it under once the brush closes.
+    if (mode !== 'off') { const worker = getWorker(); if (worker) worker.__paintImportKind = mode === 'material' ? 'color' : 'supports' }
     paintModeRef.current = mode; setPaintModeState(mode)
     apiRef.current?.refreshCursor()   // refresh the cursor hint when entering/leaving paint mode
   }
   // `clear` wipes every state at once, so the per-state map is emptied here rather than read back — the worker's
   //  clear reply only carries `counts` when the request asked for states, and the answer would be all-zero anyway.
-  function clearPaint() { getWorker().postMessage({ cmd: 'clear' }); clearPaintOverlay(); setPaintCounts({ enf:0, blk:0 }); setPaintStateCounts?.({}) }
+  function clearPaint() { getWorker().postMessage({ cmd: 'clear' }); clearPaintOverlay(); setPaintCounts({ enf:0, blk:0 }); publishCounts({}) }
 
-  return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint, registerSelector }
+  return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, refreshStoredOverlays }
 }
