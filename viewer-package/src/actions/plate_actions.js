@@ -466,8 +466,8 @@ export function makePlateActions(deps) {
         patch(i, { state: PLATE_STATES.busy })
         try {
           // Inside the try: a paint that fails to load fails THIS plate (the catch below), not the whole run.
-          const sync = () => syncPaintSelector?.(merged)
-          const { r, economy, classicWalls } = await runSlice(merged, ctx, { syncPaint: sync, resyncPaint: sync })
+          const { r, economy, classicWalls } = await runSlice(merged, ctx, {
+            syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged) })
           plateLineWidth(i)
           plateResultsRef.current[i] = r; refreshSlicedCount(); announceSlice(i, r); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
           if (economy) anyEconomy = true
@@ -530,8 +530,9 @@ export function makePlateActions(deps) {
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
-        const sync = () => syncPaintSelector?.(merged)   // the selector must hold the mesh being cut (see slicePlate above)
-        const { r, economy, classicWalls, params } = await runSlice(merged, null, { syncPaint: sync, resyncPaint: sync })
+        // The selector must hold the mesh being cut (see slicePlate above).
+        const { r, economy, classicWalls, params } = await runSlice(merged, null, {
+          syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged) })
         if (r?.stats) log.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
         setError(''); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up

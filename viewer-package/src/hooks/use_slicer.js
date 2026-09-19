@@ -530,7 +530,7 @@ export function useSlicer(deps) {
     }
     // A pool worker's selector must hold this plate's paint, or none (ctx.syncPaint above).
     const storedPaint = merged.paint?.color ?? merged.paint?.supports
-    let paintCounts = null, dig = null, paintKind = null
+    let paintCounts = null, dig = null, paintKind = null, releaseSelector = () => {}
     if (ctx) {
       paintCounts = await ctx.syncPaint(merged.buf, storedPaint)
       if (merged.paint?.color) paintKind = 'color'
@@ -539,29 +539,38 @@ export function useSlicer(deps) {
       //  commit re-registers the selector, and one that landed in a gap (the digest used to sit there) swapped it
       //  back to the selected plate, so another plate of a slice-all was cut with that plate's facets and paint.
       dig = await geomDigest(merged.buf)
-      paintKind = await syncPaint?.() ?? null   // resolves with the annotation the selector now holds
+      const synced = await syncPaint?.()   // the annotation the selector now holds, and the hold on it
+      paintKind = synced?.kind ?? null
+      releaseSelector = synced?.release ?? releaseSelector
     }
-    const params = buildParams(merged, { painted: !ctx, paintCounts, paintKind })
-    // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
-    //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a
-    //  pool run was another plate's coordinates.
-    const withTower = (out) => {
-      if (out?.r) out.r.towerParams = { prime_tower_x: params.prime_tower_x, prime_tower_y: params.prime_tower_y }
-      return { ...out, params }
-    }
-    if (ctx) {
-      // A pool worker is thrown away after the run, so a stage cache in it is heap for nothing — and the digest
-      //  bookkeeping belongs to the selector worker, which is the only one that ever slices the same plate twice.
-      params.keep_stages = false; params.reuse_stages = 0
-      return withTower(await sliceLadder(merged.buf, params, ctx, () => ctx.syncPaint(merged.buf, storedPaint)))
-    }
-    treeSupportRef.current = params.support_style === 'tree'
-    applyIncremental(params, dig)
+    // Everything below up to the post is synchronous; the hold is released right after it (or if it throws first).
     try {
-      const out = await sliceLadder(merged.buf, params, selectorCtx, resyncPaint)   // on a normal failure: classic walls -> economy retry
-      lastGeomRef.current = (out.economy || out.classicWalls) ? null : dig
-      return withTower(out)
-    } catch (e) { lastGeomRef.current = null; throw e }
+      const params = buildParams(merged, { painted: !ctx, paintCounts, paintKind })
+      // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
+      //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a
+      //  pool run was another plate's coordinates.
+      const withTower = (out) => {
+        if (out?.r) out.r.towerParams = { prime_tower_x: params.prime_tower_x, prime_tower_y: params.prime_tower_y }
+        return { ...out, params }
+      }
+      if (ctx) {
+        // A pool worker is thrown away after the run, so a stage cache in it is heap for nothing — and the digest
+        //  bookkeeping belongs to the selector worker, which is the only one that ever slices the same plate twice.
+        params.keep_stages = false; params.reuse_stages = 0
+        return withTower(await sliceLadder(merged.buf, params, ctx, () => ctx.syncPaint(merged.buf, storedPaint)))
+      }
+      treeSupportRef.current = params.support_style === 'tree'
+      applyIncremental(params, dig)
+      // sliceLadder posts the slice before its first await, so the hold is released once the call returns.
+      const slicing = sliceLadder(merged.buf, params, selectorCtx, resyncPaint)   // on a normal failure: classic walls -> economy retry
+      releaseSelector()
+      try {
+        const out = await slicing
+        lastGeomRef.current = dig
+        if (out.economy || out.classicWalls) lastGeomRef.current = null
+        return withTower(out)
+      } catch (e) { lastGeomRef.current = null; throw e }
+    } finally { releaseSelector() }
   }
 
   return { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef }

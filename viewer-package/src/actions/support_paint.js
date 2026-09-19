@@ -379,11 +379,27 @@ export function makeSupportPaint(deps) {
     const worker = paintStateAwareWorker()
     if (!worker) return Promise.resolve()
     return serial(worker, async () => {
+      const heldPlate = selectorGeomRef.current?.plate
       const result = await swapTo(worker, prebuiltMerged, requestedKind)
       if (!paintDragRef.current) for (const mesh of paintOverlayRef.current?.values?.() ?? []) mesh.visible = true
       refreshStoredOverlays()
+      // The kernel's copy of the section plane is in the held plate's local frame; any swap to another plate (a tab
+      //  click, a brush change, a stroke) re-sends it, not only the stroke that crossed.
+      if (selectorGeomRef.current?.plate !== heldPlate) apiRef.current?.refreshCursor?.()
       return result
     })
+  }
+  // A slice on the selector worker loads its plate ('auto' above) and then posts the slice. A registration queued in
+  //  between — a drag committed at that moment — ran as soon as the load finished and posted its own prepare before
+  //  the slice, which then read another mesh. The slice therefore queues a hold right behind its load and releases
+  //  it once the slice is posted; everything queued after waits, and the worker runs it after the slice.
+  function holdSelectorForSlice() {
+    const worker = paintStateAwareWorker()
+    if (!worker) return () => {}
+    let release = () => {}
+    const released = new Promise(resolve => { release = resolve })
+    serial(worker, () => released)
+    return release
   }
   async function swapTo(worker, prebuiltMerged, requestedKind) {
     const merged = prebuiltMerged ?? apiRef.current?.buildMergedSTL(selectedPlateRef.current); if (!merged) return
@@ -483,5 +499,5 @@ export function makeSupportPaint(deps) {
   function clearPaint() { getWorker().postMessage({ cmd: 'clear' }); clearPaintOverlay(); setPaintCounts({ enf:0, blk:0 }); publishCounts({}) }
 
   return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, refreshStoredOverlays,
-           beginPaintDrag, endPaintDrag }
+           beginPaintDrag, endPaintDrag, holdSelectorForSlice }
 }

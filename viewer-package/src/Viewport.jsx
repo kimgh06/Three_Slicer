@@ -130,6 +130,7 @@ export default function Viewport({
   const flushPaintRef = useRef(null)        // same factory: the selector's strokes back onto the objects (paint_store.js)
   const paintDragRef = useRef(false)        // a transform drag is in progress (support_paint.js beginPaintDrag)
   const paintDragHandlersRef = useRef(null) // same factory: begin/end of that drag, for the scene's handlers
+  const holdSelectorRef = useRef(null)      // same factory: holds the selector between a slice's paint load and its post
   const selectPlateRef = useRef(null)       // set below, from makePlateActions — same reason
   const recordHistoryRef = useRef(null)     // set below, from the undo history — the scene hook is installed first
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
@@ -398,11 +399,12 @@ export default function Viewport({
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
-  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, beginPaintDrag, endPaintDrag } = makeSupportPaint({
+  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, beginPaintDrag, endPaintDrag, holdSelectorForSlice } = makeSupportPaint({
     ...wiring, three, getWorker, paintStateCountsRef, paintDragRef,
     isSelectorSlicing: () => !!pendingSliceRef.current,
   })
   paintDragHandlersRef.current = { begin: beginPaintDrag, end: endPaintDrag }
+  holdSelectorRef.current = holdSelectorForSlice
   registerSelectorRef.current = registerSelector
   flushPaintRef.current = flushPaint
 
@@ -419,22 +421,29 @@ export default function Viewport({
     //  another plate) or the plate carries stored paint; the caller awaits it before posting the slice.
     //  The held marks go to the store first: if the retry ladder has to recreate the worker, the strokes that lived
     //  only in its selector would go with it, and the resync after the recreate loads the plate from the store.
-    syncPaintSelector: async (merged) => {
+    // Resolves { kind, release }: the annotation the selector holds (use_slicer.js buildParams reads its counts as
+    //  tools only for material paint) and, with `holdForSlice`, the release of the hold that keeps every other
+    //  selector job queued until the slice is posted (support_paint.js holdSelectorForSlice).
+    syncPaintSelector: async (merged, { holdForSlice = false } = {}) => {
+      const nothing = { kind: null, release: () => {} }
       // A resin slice reads no paint (slice_sla has no selector), so it neither closes the brush nor waits on a load.
-      if (frameOf(merged?.plate ?? selectedPlateRef.current).tech === 'SLA') return null
+      if (frameOf(merged?.plate ?? selectedPlateRef.current).tech === 'SLA') return nothing
       // No stroke may reach the selector while it slices: the slice below may swap it to another annotation ('auto'),
       //  and a stroke of the open brush would then be filed under the wrong kind. The preview a finished slice
       //  switches to closes the brush anyway.
       if (paintModeRef.current !== 'off') setPaintMode('off')
       const needsSelector = selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports
-      if (!needsSelector) return null
+      if (!needsSelector) return nothing
       await flushPaintRef.current?.()
       // 'auto': the kernel slices with the annotation the store says wins (material first), whichever brush was open.
-      const result = await registerSelectorRef.current?.(merged, { kind: 'auto' })
+      const loading = registerSelectorRef.current?.(merged, { kind: 'auto' })
+      let release = () => {}
+      if (holdForSlice) release = holdSelectorRef.current?.() ?? release
+      let result
+      try { result = await loading } catch (error) { release(); throw error }
       // A plate whose paint did not load is not sliced bare (the pool path does the same, ctx.syncPaint).
-      if (result === 'load-failed') throw new Error('Worker failed to load the plate paint')
-      // Which annotation the selector holds decides whether its counts are tools (use_slicer.js buildParams).
-      return selectorGeomRef.current?.kind ?? null
+      if (result === 'load-failed') { release(); throw new Error('Worker failed to load the plate paint') }
+      return { kind: selectorGeomRef.current?.kind ?? null, release }
     },
   })
   selectPlateRef.current = selectPlate
@@ -588,7 +597,7 @@ export default function Viewport({
 
   // Object actions (duplicate/copy/paste/delete/split + gizmo mode) — the bodies live in object_actions.js.
   const {
-    duplicateSelected, copySelected, pasteClipboard, deleteSelected, deleteAllObjects, splitSelected, setGizmo,
+    duplicateSelected, copySelected, pasteClipboard, deleteSelected, deleteObject, deleteAllObjects, splitSelected, setGizmo,
   } = makeObjectActions({ ...wiring, setPaintMode, removeObject, refreshObjects, recordHistory })
 
   // Object toolbar — the button list lives in toolbar_items.js; only the actions are bound here.
@@ -817,7 +826,7 @@ export default function Viewport({
                   onSelect={(id, additive) => apiRef.current?.selectObjects([id], additive)}
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
                   onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }}
-                  onRemove={async id => { await flushPaintRef.current?.(); recordHistory(); removeObject(id) }}
+                  onRemove={deleteObject}
                   supportOn={supportOn} onToggleSupport={onToggleSupport} fffSupport={tech !== 'SLA'}
                   supportOnOf={supportOnOf} onPlateSupport={(p, on) => writePlateKey(p, 'enable_support', on)}
                   overhangOn={overhangOn} onToggleOverhang={e => setOverhangOn(e.target.checked)}

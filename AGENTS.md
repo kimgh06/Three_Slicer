@@ -153,6 +153,10 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   object (moving it carried the other objects' paint along until the drop). A transform drag (gizmo or scale
   corner) flushes the selector, hides the kernel overlay and lets every held object draw its stored marks as its own
   children (`beginPaintDrag`); the drop's re-registration awaits the rebuilt overlay and shows it again.
+  **(18)** A slice on the selector worker queues a hold right behind its paint load (`holdSelectorForSlice`) and
+  releases it once the slice is posted: a drag committed in between took the move path, whose `prepare` reached the
+  worker ahead of the slice. Any swap to another plate re-sends the section plane, not only a stroke's. A copy's
+  paste waits for the copy (`clipboardRef.copying`), and one delete runs at a time, so a repeat adds no undo entry.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not

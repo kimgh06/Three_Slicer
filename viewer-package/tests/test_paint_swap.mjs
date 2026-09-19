@@ -191,4 +191,29 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(ownPaint(), 0, 'and the held object stops drawing its own copy')
 }
 
+// ---- a registration queued between a slice's paint load and its post waits until the slice is posted ----
+//  A drag committed on the plate being sliced takes the MOVE path, which posts its prepare at once: without the hold
+//  it reached the worker ahead of the slice, and the slice read the selector rebuilt on the new coordinates.
+{
+  const scene = makeScene()
+  const { paint, worker } = setup(scene)
+  scene.objects[0].paint = { color: new Map([[2, HEX_STATE_2]]) }
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  paint.setPaintMode('off'); await settle()
+  const loading = paint.registerSelector(scene.buildMergedSTL(0), { kind: 'auto' })
+  const release = paint.holdSelectorForSlice()
+  const moved = scene.buildMergedSTL(0)
+  const MOVED_MARKER = 9
+  new Uint8Array(moved.buf)[1] = MOVED_MARKER                          // same objects, new coordinates
+  paint.registerSelector(moved)                                         // the drag's commit
+  // The real path: syncPaintSelector (async) awaits the load and returns, runSlice awaits that, then posts.
+  const syncPaintSelector = async () => { const result = await loading; return result }
+  await syncPaintSelector()
+  const sentBeforePost = worker().sent.length
+  worker().postMessage({ cmd: 'slice' })
+  release(); await settle(); await settle()
+  assert.equal(worker().sent[sentBeforePost], 'slice', `nothing reached the worker between the load and the slice (${worker().sent.slice(sentBeforePost)})`)
+  assert.equal(worker().sent.at(-1), 'prepare', 'the drag\'s prepare runs after the post')
+}
+
 console.log('paint_swap: ok')
