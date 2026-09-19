@@ -1,7 +1,7 @@
 // Prime tower placement — the stand-in must land where the slicer will actually put the tower.
 //   Run: node viewer-package/tests/test_tower_layout.mjs
 import assert from 'node:assert'
-import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats } from '../src/core/tower_layout.js'
+import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats, towerFootprint, clampTowerPosition, towerSelectionRule } from '../src/core/tower_layout.js'
 import { platePosition } from '../src/core/plate_layout.js'
 
 const BED = { bedWidth: 200, bedDepth: 200 }
@@ -132,6 +132,52 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
   // No purge number means no tower ran — the card shows its settings and no result, rather than a zeroed one.
   assert.equal(towerResultStats({ stats: {}, gcode }, {}), null)
   assert.equal(towerResultStats(undefined, undefined), null)
+}
+
+// ---- per plate: each plate answers "is there a tower, and how wide" for itself ----
+{
+  // Plate 0 switched off, plate 1 on at its own width: before towerOf, one plate's Off hid every box and every
+  //  box took the global width.
+  const boxes = towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, plateOrigin,
+    modelBounds: (plate) => cubeOn(plate),
+    towerOf: (plate) => (plate === 0 ? { on: false } : { on: true, size: 40 }) })
+  assert.equal(boxes.length, 1)
+  assert.equal(boxes[0].plate, 1)
+  assert.equal(boxes[0].size, 40, 'the plate draws its own footprint')
+  assert.equal(boxes[0].x, plateOrigin(1).x - 10 - 5 - 20, 'auto placement uses that footprint too')
+  assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, plateOrigin,
+    modelBounds: (plate) => cubeOn(plate), towerOf: () => ({ on: false }) }), null, 'no plate with a tower -> null')
+  // towerOf without a size keeps the shared one.
+  assert.equal(towerBoxes({ plateCount: 1, size: SIZE, ...BED, settings: {}, plateOrigin,
+    modelBounds: () => cubeOn(0), towerOf: () => ({ on: true }) })[0].size, SIZE)
+}
+
+// ---- the footprint the kernel builds: the derived width for the real tower, 15 for the ring ----
+assert.equal(towerFootprint({ prime_tower_width: 60 }, true), 60, 'an unset width reaches the kernel as the schema 60')
+assert.equal(towerFootprint({}, true), 30, 'no width at all -> the kernel default 30')
+assert.equal(towerFootprint({ prime_tower_width: 60 }, false), 15, 'the ring ignores the width')
+
+// ---- a chosen position stays on the bed: corner coordinates in [0, bed - footprint] ----
+assert.deepEqual(clampTowerPosition(-20, 500, { bedW: 200, bedD: 250, size: 30 }), [0, 220])
+assert.deepEqual(clampTowerPosition(50, 60, { bedW: 200, bedD: 200, size: 30 }), [50, 60], 'inside is untouched')
+assert.deepEqual(clampTowerPosition('12', '7', { bedW: 200, bedD: 200, size: 30 }), [12, 7], 'typed strings become numbers')
+assert.deepEqual(clampTowerPosition(500, 500, { bedW: NaN, bedD: 10, size: 30 }), [500, 500],
+  'an unknown bed, or one smaller than the tower, is not clamped into a negative range')
+
+// ---- the tower is selected alone; the primary decides which side of the rule wins ----
+{
+  const isTower = (item) => item === 'tower'
+  const withTowerPrimary = new Set(['a', 'b', 'tower'])
+  assert.equal(towerSelectionRule(withTowerPrimary, 'tower', isTower), true)
+  assert.deepEqual([...withTowerPrimary], ['tower'], 'Ctrl+click on the tower drops the objects')
+  const withObjectPrimary = new Set(['tower', 'a', 'b'])
+  assert.equal(towerSelectionRule(withObjectPrimary, 'b', isTower), false)
+  assert.deepEqual([...withObjectPrimary], ['a', 'b'], 'adding an object (click or box) drops the tower')
+  const objectsOnly = new Set(['a', 'b'])
+  assert.equal(towerSelectionRule(objectsOnly, 'a', isTower), false)
+  assert.deepEqual([...objectsOnly], ['a', 'b'], 'a selection without the tower is untouched')
+  assert.equal(towerSelectionRule(new Set(['tower']), 'tower', isTower), true, 'the tower alone -> translate only')
+  assert.equal(towerSelectionRule(new Set(), null, isTower), false)
 }
 
 console.log('tower_layout: ok')
