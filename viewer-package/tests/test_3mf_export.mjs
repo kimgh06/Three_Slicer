@@ -206,11 +206,30 @@ function viewerPlateOriginOf(plate, plateCount = 1) {
     [0, 4, 8].map(o => degenerateView.getFloat32(84 + o, true)), [0, 0, 0])
 }
 
-// ---- shared by 5, 5b and 6: a one-object project on plate 0 of a `plateCount`-plate session ----
+// ---- shared by 4b, 5, 5b and 6: a one-object project on plate 0 of a `plateCount`-plate session ----
 const TETRA_FACETS = 4
 const oneObjectOnPlateZero = (plateCount = 1) =>
   [{ id: 1, name: 'a', extruder: 1, plate: 0, ...viewerPlateOriginOf(0, plateCount), tris: tetra(0, 0), faceCount: TETRA_FACETS, paint: null }]
 const LAYER_HEIGHT_MM = 0.2
+
+// ---- 4b. each object's material and support paint under its own attribute ----------------------------------
+{
+  const HEX_STATE_2 = '8', HEX_STATE_3 = '0C', HEX_STATE_1 = '4'
+  const paintedObject = (id, paint) => ({ ...oneObjectOnPlateZero()[0], id, name: `o${id}`, tris: tetra(id * 30, 0), paint })
+  const readBack = async (objects, options = {}) => {
+    const { objects: read } = await parse3MFProject(await write3MFProject(objects, { layer_height: LAYER_HEIGHT_MM },
+      { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1, ...options }), 'kinds')
+    return read.map(o => [o.paint?.color?.size ?? 0, o.paint?.supports?.size ?? 0])
+  }
+  // Material paint on one object, support paint on another — whatever brush was used last.
+  const mixed = () => [paintedObject(1, { color: new Map([[0, HEX_STATE_2], [1, HEX_STATE_3]]) }), paintedObject(2, { supports: new Map([[2, HEX_STATE_1]]) })]
+  eq('mixed kinds keep their own attribute (last brush material)', await readBack(mixed(), { paintKind: 'color' }), [[2, 0], [0, 1]])
+  eq('mixed kinds keep their own attribute (last brush support)', await readBack(mixed(), { paintKind: 'supports' }), [[2, 0], [0, 1]])
+  // An EMPTY support map must not shadow the object's material paint.
+  eq('an empty map is no paint', await readBack([paintedObject(1, { color: new Map([[0, HEX_STATE_2]]), supports: new Map() })], { paintKind: 'supports' }), [[1, 0]])
+  // Both annotations on one facet, as upstream allows.
+  eq('both annotations on one facet', await readBack([paintedObject(1, { color: new Map([[0, HEX_STATE_2]]), supports: new Map([[0, HEX_STATE_1]]) })]), [[1, 1]])
+}
 
 // ---- 5. what upstream has no place for: per-plate overrides and the viewer knobs, in our own member -----------
 {

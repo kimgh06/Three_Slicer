@@ -83,12 +83,10 @@ export function makeExportActions(deps) {
     try { assertUniformTechnology(settingsRef.current, plateSettingsRef?.current); assertHomogeneousBeds(plateSettingsRef?.current) }
     catch (err) { setError?.(err.message); return }
     const gathered = performance.now()
-    let kind = 'color'
-    if (getWorker?.()?.__paintImportKind === 'supports') kind = 'supports'
-    const paintedFacets = objects.reduce((sum, o) => sum + (o.paint?.[kind]?.size ?? 0), 0)
+    // Each object's material and support paint are written under their own attributes (write_3mf.js).
+    const paintedFacets = objects.reduce((sum, o) => sum + (o.paint?.color?.size ?? 0) + (o.paint?.supports?.size ?? 0), 0)
     try {
       const bytes = await write3MFProject(objects, settingsRef.current, {
-        paintKind: kind,
         bedWidth: bedRef.current?.bedW ?? DEFAULT_BED.width,
         bedDepth: bedRef.current?.bedD ?? DEFAULT_BED.depth,
         plateCount: plateCountRef.current ?? 1,

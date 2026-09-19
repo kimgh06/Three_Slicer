@@ -210,6 +210,9 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
 //  import does not recreate would come back attached to whatever plate takes that index next.
 export const VIEWER_SETTINGS_MEMBER = 'Metadata/three_slicer_settings.json'
 
+// The per-facet paint attributes upstream's 3mf uses, one per annotation of the per-object store.
+const PAINT_ATTRIBUTES = [['color', 'paint_color'], ['supports', 'paint_supports']]
+
 // A hole in an array value — wipe_tower_x/y hold `null` for a plate whose tower is placed automatically — is not
 //  something upstream can read, and not harmlessly: its loader rejects an array whose entries are not all strings
 //  and then BREAKS OUT OF THE WHOLE KEY LOOP (Config.cpp load_from_json, `parse_str_arr` -> `break;`). Keys are
@@ -275,11 +278,18 @@ export async function write3MFProject(objects, settings, opts = {}) {
       paintByObject.get(at).set(facet - bases[at], hex)
     }
   }
-  // No kernel export (no selector this session): the marks a 3mf was IMPORTED with still sit on the objects, and
-  //  losing them on a save-reload round trip would be the worse outcome. Per object, so no rebasing is involved.
-  const importedPaint = (object) => object.paint?.[paintKind] ?? object.paint?.color ?? object.paint?.supports ?? null
-
-  const paintAttr = paintKind === 'supports' ? 'paint_supports' : 'paint_color'
+  // Every annotation goes under its OWN attribute, from each object's own marks (the per-object store) — upstream
+  //  keeps material and support paint as two annotations a facet can carry both of. One attribute for the whole
+  //  file, picked from the brush last used, filed one plate's material paint as another's support paint, and an
+  //  EMPTY support map shadowed the object's real material paint so nothing was written (measured: color 1,
+  //  supports 0 in -> color 0, supports 0 back). A merge-numbered kernel export (`paintExport`) stands in for the
+  //  `paintKind` annotation it describes. An empty map is no paint.
+  const marksOf = (object, at, kind) => {
+    if (kind === paintKind && paintByObject.has(at)) return paintByObject.get(at)
+    const marks = object.paint?.[kind]
+    if (marks?.size) return marks
+    return null
+  }
 
   const modelParts = [
     '<?xml version="1.0" encoding="UTF-8"?>\n',
@@ -301,10 +311,17 @@ export async function write3MFProject(objects, settings, opts = {}) {
       y: origin.y + bedDepth / 2 - (object.plateOriginY ?? 0),
     }
 
-    const painted = paintByObject.get(at) ?? importedPaint(object)
-    const paintOf = painted
-      ? (face) => { const hex = painted.get(face); return hex ? ` ${paintAttr}="${hex}"` : '' }
-      : () => ''
+    const annotations = PAINT_ATTRIBUTES
+      .map(([kind, attribute]) => [attribute, marksOf(object, at, kind)])
+      .filter(([, marks]) => marks)
+    const paintOf = (face) => {
+      let attributes = ''
+      for (const [attribute, marks] of annotations) {
+        const hex = marks.get(face)
+        if (hex) attributes += ` ${attribute}="${hex}"`
+      }
+      return attributes
+    }
     const modifiers = object.sla?.modifierVolumes || []
     const parts = [object.tris, ...modifiers.map(modifier => modifier.tris)]
     const length = parts.reduce((sum, part) => sum + part.length, 0)
