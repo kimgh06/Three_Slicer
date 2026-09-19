@@ -3,7 +3,7 @@
 //   Run: node viewer-package/tests/test_paint_store.mjs
 // The kernel side of the same strings is packages/wasm-core/tests/test_paint_export.mjs ("the viewer store ...").
 import assert from 'node:assert'
-import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates } from '../src/core/paint_store.js'
+import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates, poolPaintAction } from '../src/core/paint_store.js'
 
 // An unsplit facet's hex per state, as upstream writes it (test_paint_export.mjs pins these against the kernel).
 const HEX_OF_STATE = { 1: '4', 2: '8', 3: '0C', 5: '2C' }
@@ -83,6 +83,16 @@ const joined = (...hexes) => hexes.join('\n')
   ]
   assert.deepEqual(storedPaintStates(objects), { 2: 2, 3: 1 }, 'per state, counted per source facet')
   assert.deepEqual(storedPaintStates(objects, 'supports'), { 1: 1 })
+}
+
+// ---- what a pool worker does to its selector before a plate: slicing never resets it ----
+{
+  const stored = { facets: Int32Array.of(0), hex: HEX_OF_STATE[2] }
+  const HOLDS_PAINT = true, EMPTY = false
+  assert.equal(poolPaintAction(stored, EMPTY), 'load')
+  assert.equal(poolPaintAction(stored, HOLDS_PAINT), 'load', 'a load replaces what was there')
+  assert.equal(poolPaintAction(null, HOLDS_PAINT), 'clear', "an unpainted plate after a painted one clears the leftover")
+  assert.equal(poolPaintAction(null, EMPTY), 'none')
 }
 
 console.log('paint_store: ok')

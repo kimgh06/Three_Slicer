@@ -181,5 +181,37 @@ for (const state of STORE_STATES) M.selector_paint_state(BRUSH_FACET, ...STROKE_
   }
 }
 
+// A kernel instance reused for several plates (a slice-all pool worker) keeps its selector across slices — slicing
+//  never resets it. So a plate with no paint, sliced after a painted one, prints the painted plate's marks unless the
+//  worker clears them first (use_slicer.js ctx.syncPaint -> 'clear'). Measured on a benchy before that: T2 314 ->
+//  1215 mm. Here on cubes: plate X is a cube painted T2; plate Y is the same cube on T1 plus a second cube on T2.
+console.log('\n[a reused kernel: leftover paint, and clearing it]')
+{
+  const CUBE_FACETS = 12, STL_COUNT_OFFSET = 80, STL_FACETS_OFFSET = 84, STL_FACET_BYTES = 50
+  const SECOND_CUBE_OFFSET_MM = 40
+  const secondCube = trisToSTL(boxTris(SECOND_CUBE_OFFSET_MM, 0, 0, 20, 20, 20))
+  const plateY = Buffer.alloc(STL_FACETS_OFFSET + 2 * CUBE_FACETS * STL_FACET_BYTES)
+  plateY.writeUInt32LE(2 * CUBE_FACETS, STL_COUNT_OFFSET)
+  cubeSTL.copy(plateY, STL_FACETS_OFFSET, STL_FACETS_OFFSET)
+  secondCube.copy(plateY, STL_FACETS_OFFSET + CUBE_FACETS * STL_FACET_BYTES, STL_FACETS_OFFSET)
+  const sliceParams = (extra) => JSON.stringify({ layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2,
+    infill_density: 0.15, bed_width: 400, bed_depth: 400, gcode_stats_block: true, extruder_count: 2, ...extra })
+  const yParams = sliceParams({ mm_group_split: CUBE_FACETS })
+  const usageOf = (result) => result.gcode.match(/; filament used \[mm\] = [^\n]*/)?.[0] ?? ''
+  const fresh = await createSlicer()
+  const clean = usageOf(fresh.slice(new Uint8Array(plateY), yParams, () => {}))
+  // Plate X on the reused instance: its paint loaded, then sliced.
+  prepare()
+  const T2 = 2
+  for (let facet = 0; facet < CUBE_FACETS; facet++) M.selector_paint_state(facet, 10, 10, 20, 10, 10, 100, 30, T2)
+  ok(M.selector_painted_count_state(T2) > 0, 'plate X carries T2 paint')
+  M.slice(new Uint8Array(cubeSTL), sliceParams({}), () => {})
+  const leftover = usageOf(M.slice(new Uint8Array(plateY), yParams, () => {}))
+  ok(leftover !== clean, `without clearing, plate Y prints plate X's paint (${leftover} vs ${clean})`)
+  M.selector_clear()
+  const cleared = usageOf(M.slice(new Uint8Array(plateY), yParams, () => {}))
+  ok(cleared === clean, `after selector_clear, plate Y slices as on a fresh kernel (${cleared})`)
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\npaint export passed')
 process.exit(fail ? 1 : 0)

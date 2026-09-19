@@ -5,6 +5,8 @@ import { useEffect, useRef } from 'react'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
+import { makeTerminationObservable, request } from '../core/worker_reply.js'
+import { poolPaintAction } from '../core/paint_store.js'
 
 // Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
 const PAINT_STATES_ALL = Array.from({ length: MAX_PAINT_EXTRUDERS }, (_, index) => index + 1)
@@ -122,7 +124,9 @@ export function useSlicer(deps) {
   }
   function getWorker() {
     if (!workerRef.current) {
-      const wk = makeWorker()   // the static worker pattern is isolated in make_worker.js (shipped unbundled, verbatim)
+      // Its end is observable (worker_reply.js): the paint store's waits on it must end when the watchdog or the
+      //  memory ladder terminates it, not hang.
+      const wk = makeTerminationObservable(makeWorker())   // the static worker pattern is isolated in make_worker.js (shipped unbundled, verbatim)
       wk.onmessage = (e) => {
         const d = e.data
         const pnd = pendingSliceRef.current
@@ -265,7 +269,7 @@ export function useSlicer(deps) {
   //  a transferred buffer is detached (measured: a 150MB copy is tens of ms against a 2s+ slice).
   function createPoolContext({ onProgress, onRate } = {}) {
     let wk = null, pending = null, accum = null, sab = null, poll = 0, watchdog = 0, rate = null
-    let lastD = 0, lastT = 0, tSup = 0, readyResolve = null, loaded = false, paintLoad = null
+    let lastD = 0, lastT = 0, tSup = 0, readyResolve = null, loaded = false
     const ctx = { kernel: null, ready: new Promise(r => { readyResolve = r }) }
     const stopPoll = () => { if (poll) { clearInterval(poll); poll = 0 } }
     const stopWatchdog = () => { if (watchdog) { clearTimeout(watchdog); watchdog = 0 } }
@@ -285,7 +289,8 @@ export function useSlicer(deps) {
       watchdog = setTimeout(() => fail(`watchdog: no progress for ${ms}ms — assuming memory pressure`), ms)
     }
     const spawn = () => {
-      wk = makeWorker()
+      wk = makeTerminationObservable(makeWorker())
+      ctx.holdsPaint = false   // a fresh worker's selector is empty
       wk.onmessage = (e) => {
         const d = e.data
         if (d.type === 'warm') { loaded = true; ctx.kernel = d.kernel ?? null; readyResolve?.(ctx.kernel); readyResolve = null }
@@ -299,7 +304,6 @@ export function useSlicer(deps) {
           onProgress?.(mapProgress(d.done, d.total))
         }
         else if (d.type === 'layer') { kick(); if (accum) { accum.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) accum.gcode.push(d.gcode); noteRate(accum.layers.length) } }
-        else if (d.type === 'painted') { const load = paintLoad; paintLoad = null; load?.(d.counts ?? {}) }
         else if (d.type === 'done') { const p = settle(); p?.resolve(assembleResult(d.result, accum)) }
         else if (d.type === 'error') { const p = settle(); p?.reject(new Error(d.error)) }
       }
@@ -312,17 +316,22 @@ export function useSlicer(deps) {
       wk.onmessageerror = () => fail('Worker message error (structured clone failed)')
       wk.postMessage({ cmd: 'warmup', quiet })
     }
-    // A pool worker's kernel reads painting from its OWN selector, which starts empty — so a plate whose objects
-    //  carry paint (the per-object store, core/paint_store.js) loads it here before the slice: the plate's mesh,
-    //  then its marks in that mesh's numbering. Resolves with the painted facet count per state the reply reports,
-    //  which is what decides the extruder count (buildParams); a worker that dies resolves with none.
-    ctx.loadPaint = (buf, paint) => new Promise((resolve) => {
+    // A pool worker's kernel reads painting from its OWN selector, and slicing does not reset it — so the selector
+    //  has to hold exactly THIS plate's paint before the slice: loaded from the plate's store when it has some,
+    //  cleared when it has none but the previous plate left some (measured before this: an unpainted plate sliced
+    //  after a painted one printed the other plate's paint, T2 314 -> 1215 mm, 51 -> 85 tool changes). Resolves
+    //  with the painted facet count per state (null: nothing painted), which decides the extruder count.
+    ctx.holdsPaint = false
+    ctx.syncPaint = async (buf, paint) => {
       if (!wk) spawn()
-      paintLoad = resolve
-      wk.addEventListener('error', () => { if (paintLoad === resolve) { paintLoad = null; resolve({}) } }, { once: true })
+      const action = poolPaintAction(paint, ctx.holdsPaint)
+      if (action === 'clear') { wk.postMessage({ cmd: 'clear' }); ctx.holdsPaint = false }
+      if (action !== 'load') return null
       wk.postMessage({ cmd: 'prepare', stl: buf })
-      wk.postMessage({ cmd: 'importPaint', facets: paint.facets, hex: paint.hex, states: PAINT_STATES_ALL })
-    })
+      ctx.holdsPaint = true
+      const reply = await request(wk, { cmd: 'importPaint', facets: paint.facets, hex: paint.hex, states: PAINT_STATES_ALL }, { types: ['painted'] })
+      return reply?.counts ?? {}
+    }
     ctx.sliceOne = (buf, paramsStr, cmd) => new Promise((resolve, reject) => {
       // dev/test hook (not set in production): __vpPoolFail = n fails the next n pool slices as a worker death,
       //  which is how the re-queue path is exercised without actually exhausting memory.
@@ -501,10 +510,10 @@ export function useSlicer(deps) {
       //  as a solid mesh, lifted by the elevation, beside the kernel's support/pad meshes.
       return { r: { ...r, gcode: '', slaParams, modelSTL: merged.buf }, params: slaParams }
     }
-    // A pool worker holds no selector until the plate's stored paint is loaded into it (ctx.loadPaint above).
+    // A pool worker's selector must hold this plate's paint, or none (ctx.syncPaint above).
     const storedPaint = merged.paint?.color ?? merged.paint?.supports
     let paintCounts = null
-    if (ctx && storedPaint) paintCounts = await ctx.loadPaint(merged.buf, storedPaint)
+    if (ctx) paintCounts = await ctx.syncPaint(merged.buf, storedPaint)
     const params = buildParams(merged, { painted: !ctx, paintCounts })
     // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
     //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a

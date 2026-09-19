@@ -65,6 +65,14 @@ export function mergedPaint(objectsById, members, kind) {
   return { facets: Int32Array.from(facets), hex: hex.join('\n') }
 }
 
+/** What a pool worker must do to its selector before slicing a plate: 'load' the plate's stored paint, 'clear' the
+ *  paint the previous plate left behind (slicing never resets the selector), or nothing. */
+export function poolPaintAction(storedPaint, workerHoldsPaint) {
+  if (storedPaint) return 'load'
+  if (workerHoldsPaint) return 'clear'
+  return 'none'
+}
+
 /** Write a split export back into the store under `kind`, leaving every other annotation of the object alone. */
 export function storePaint(objectsById, byObject, kind) {
   for (const [id, marks] of byObject) {
