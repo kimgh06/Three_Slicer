@@ -385,6 +385,7 @@ export default function Viewport({
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
   const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint } = makeSupportPaint({
     ...wiring, three, getWorker, paintStateCountsRef,
+    isSelectorSlicing: () => !!pendingSliceRef.current,
   })
   registerSelectorRef.current = registerSelector
   flushPaintRef.current = flushPaint
@@ -403,6 +404,10 @@ export default function Viewport({
     //  The held marks go to the store first: if the retry ladder has to recreate the worker, the strokes that lived
     //  only in its selector would go with it, and the resync after the recreate loads the plate from the store.
     syncPaintSelector: async (merged) => {
+      // No stroke may reach the selector while it slices: the slice below may swap it to another annotation ('auto'),
+      //  and a stroke of the open brush would then be filed under the wrong kind. The preview a finished slice
+      //  switches to closes the brush anyway.
+      if (paintModeRef.current !== 'off') setPaintMode('off')
       const needsSelector = selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports
       if (!needsSelector) return
       await flushPaintRef.current?.()

@@ -55,6 +55,7 @@ export function makeSupportPaint(deps) {
     three, objectsRef, apiRef, getWorker, selectedPlateRef, selectorGeomRef,
     paintXformRef, paintOverlayRef, paintModeRef, materialExtruderRef, extruderColorsRef,
     setError, setPaintModeState, setPaintCounts, setPaintStateCounts, setSliceNotice, paintStateCountsRef,
+    isSelectorSlicing = () => false,
   } = deps
   // The counts a slice reads (use_slicer.js buildParams) — written here synchronously as well as through React
   //  state, because a slice posted right after a selector swap cannot wait for a render to carry them into the ref.
@@ -320,9 +321,14 @@ export function makeSupportPaint(deps) {
   //  `timeoutMs` bounds the wait for a caller that can fall back on the store as it is — a save during a slice: the
   //  selector worker's plate was flushed right before that slice started (syncPaintSelector), so only strokes made
   //  while it runs can be missing. Resolves 'timeout' when the bound ran out, true when written, false otherwise.
+  //  While the selector worker slices, it answers nothing until the slice ends — and there is nothing to fetch: the
+  //  store was flushed right before the slice (syncPaintSelector), and no stroke reaches the selector during one (the
+  //  brush is closed when a slice starts). So a flush then resolves 'busy' at once instead of queueing behind the
+  //  slice — a save, a copy or a duplicate used to sit there for the whole slice.
   function flushPaint(timeoutMs = Infinity) {
     const worker = getWorker()
     if (!worker) return Promise.resolve(false)
+    if (isSelectorSlicing()) return Promise.resolve('busy')
     return serial(worker, async () => {
       const started = performance.now()
       const written = await writeBack(worker, timeoutMs)

@@ -61,7 +61,7 @@ const makeScene = ({ sameBytes = false } = {}) => {
   return { objects, buildMergedSTL }
 }
 
-const setup = (scene) => {
+const setup = (scene, { slicing = { current: false } } = {}) => {
   let worker = new FakeSelectorWorker()
   const refs = { selectedPlateRef: { current: 0 }, selectorGeomRef: { current: null }, paintXformRef: { current: null },
                  paintOverlayRef: { current: null }, paintModeRef: { current: 'off' }, materialExtruderRef: { current: 1 },
@@ -73,6 +73,7 @@ const setup = (scene) => {
     apiRef: { current: { buildMergedSTL: scene.buildMergedSTL, detachTransform() {}, refreshCursor() {}, paintClipPlanes: () => null } },
     getWorker: () => worker,
     setError() {}, setPaintModeState() {}, setPaintCounts() {}, setPaintStateCounts() {}, setSliceNotice() {},
+    isSelectorSlicing: () => slicing.current,
   })
   return { paint, refs, worker: () => worker, replaceWorker: () => { worker = new FakeSelectorWorker(); return worker } }
 }
@@ -128,6 +129,21 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   assert.deepEqual(entries(paintOf(scene, 1).color), [[2, HEX_STATE_2]], 'the empty new selector does not wipe the store')
   await paint.registerSelector(); await settle()
   assert.deepEqual(entries(fresh.marks), [[2, HEX_STATE_2]], 'the next registration loads the store into the new worker')
+}
+
+// ---- a flush during a slice answers at once: the worker is busy, and the store is already current ----
+{
+  const scene = makeScene()
+  const slicing = { current: false }
+  const { paint, worker } = setup(scene, { slicing })
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  worker().brush(1, HEX_STATE_2)
+  await paint.flushPaint(); await settle()                              // the flush a slice start does
+  slicing.current = true
+  const sentBefore = worker().sent.length
+  assert.equal(await paint.flushPaint(), 'busy', 'a save or copy during the slice does not queue behind it')
+  assert.equal(worker().sent.length, sentBefore, 'and asks the busy worker nothing')
+  assert.deepEqual(entries(paintOf(scene, 1).color), [[1, HEX_STATE_2]], 'the store holds what the pre-slice flush wrote')
 }
 
 console.log('paint_swap: ok')

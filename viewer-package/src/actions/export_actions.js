@@ -109,7 +109,7 @@ export function makeExportActions(deps) {
       let paintNote = '.'
       if (paintedFacets) paintNote = ` with ${paintedFacets} painted facets.`
       let pendingNote = ''
-      if (flushed === 'timeout') pendingNote = ' Brush strokes made while the slice was running are not in this file — save again once it finishes.'
+      if (flushed === 'timeout' || flushed === 'busy') pendingNote = ' Saved while a slice was running: paint brushed during it is not in this file — save again once it finishes.'
       setSliceNotice?.(`Saved ${objects.length} ${scopeWord}object(s) as a 3mf project${paintNote}${pendingNote}`)
     } catch (err) { setError?.(`Export failed: ${err?.message || err}`) }
   }

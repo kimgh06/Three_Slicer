@@ -32,15 +32,17 @@ export function makeObjectActions(deps) {
   async function duplicateSelected() {
     const id = apiRef.current?.selectedObjectId()
     if (!id) { setError('Select an object to duplicate first'); return }
-    await flushPaintRef?.current?.()
+    // The object as it is NOW, not after the flush: the flush can take a worker round trip.
     const snap = apiRef.current?.getSnapshot(id)
-    if (snap) { recordHistory(); spawnWithPaint(snap, paintOf(id)); setError('') }
+    if (!snap) return
+    await flushPaintRef?.current?.()
+    recordHistory(); spawnWithPaint(snap, paintOf(id)); setError('')
   }
   async function copySelected() {
     const id = apiRef.current?.selectedObjectId()
     if (!id) { setError('Select an object to copy first'); return }
-    await flushPaintRef?.current?.()
     const snap = apiRef.current?.getSnapshot(id)
+    await flushPaintRef?.current?.()
     clipboardRef.current = snap && { ...snap, paint: paintOf(id) }; setError('')
     setSliceNotice('Object copied (paste with Ctrl+V)')
   }
