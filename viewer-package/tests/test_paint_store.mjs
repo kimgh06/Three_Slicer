@@ -3,7 +3,8 @@
 //   Run: node viewer-package/tests/test_paint_store.mjs
 // The kernel side of the same strings is packages/wasm-core/tests/test_paint_export.mjs ("the viewer store ...").
 import assert from 'node:assert'
-import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates, poolPaintAction } from '../src/core/paint_store.js'
+import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates, poolPaintAction, splitPaintByParts } from '../src/core/paint_store.js'
+import { splitComponentFacets, facetPositions } from '../src/scene/model_loaders.js'
 
 // An unsplit facet's hex per state, as upstream writes it (test_paint_export.mjs pins these against the kernel).
 const HEX_OF_STATE = { 1: '4', 2: '8', 3: '0C', 5: '2C' }
@@ -93,6 +94,33 @@ const joined = (...hexes) => hexes.join('\n')
   assert.equal(poolPaintAction(stored, HOLDS_PAINT), 'load', 'a load replaces what was there')
   assert.equal(poolPaintAction(null, HOLDS_PAINT), 'clear', "an unpainted plate after a painted one clears the leftover")
   assert.equal(poolPaintAction(null, EMPTY), 'none')
+}
+
+// ---- a split hands each mark to the part that holds its facet, at that part's own index ----
+{
+  // Two tetrahedra, far apart, with their facets interleaved so a part's local index differs from the parent's.
+  const TETRA = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]]
+  const TETRA_FACES = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]]
+  const APART_MM = 10
+  const facetOf = (shift, face) => face.flatMap(corner => TETRA[corner].map((coordinate, axis) => coordinate + (axis === 0) * shift))
+  const parentFacets = TETRA_FACES.flatMap(face => [facetOf(0, face), facetOf(APART_MM, face)])
+  const localPos = Float32Array.from(parentFacets.flat())
+  const partFacets = splitComponentFacets(localPos)
+  assert.equal(partFacets.length, 2)
+  const parts = partFacets.map(faces => facetPositions(localPos, faces))
+  const MARKED_COLOR = 5, MARKED_SUPPORT = 2, MARKED_SEAM = 7
+  const paint = { color: new Map([[MARKED_COLOR, HEX_OF_STATE[3]]]), supports: new Map([[MARKED_SUPPORT, HEX_OF_STATE[1]]]), seam: new Map([[MARKED_SEAM, HEX_OF_STATE[2]]]) }
+  const partPaint = splitPaintByParts(paint, partFacets)
+  const FLOATS_PER_FACET = 9
+  const positionsOfPart = (part, facet) => Array.from(parts[part].subarray(facet * FLOATS_PER_FACET, (facet + 1) * FLOATS_PER_FACET))
+  for (const [kind, marks] of Object.entries(paint)) {
+    const [[parentFacet, hex]] = marks
+    const owner = partPaint.findIndex(part => part?.[kind]?.size)
+    const [[localFacet, movedHex]] = partPaint[owner][kind]
+    assert.equal(movedHex, hex, `${kind}: the mark keeps its split tree`)
+    assert.deepEqual(positionsOfPart(owner, localFacet), parentFacets[parentFacet], `${kind}: the mark lands on the same triangle`)
+  }
+  assert.equal(splitPaintByParts(null, partFacets).every(part => part === null), true, 'an unpainted parent gives unpainted parts')
 }
 
 console.log('paint_store: ok')

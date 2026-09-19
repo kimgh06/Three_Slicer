@@ -39,7 +39,8 @@
   its own plate took the original's paint over (the original then sliced single-material, the copy printed both).
   Paint now lives on each object (`core/paint_store.js`): the selector is written back to it before it switches
   mesh and loaded from it after; slice-all pool workers load their plate's paint; a 3mf save writes every plate's
-  brush strokes (it used to save them only for a single-plate project); copy, duplicate and paste carry the paint.
+  brush strokes (it used to save them only for a single-plate project); copy, duplicate and paste carry the paint,
+  and a split hands each part the marks on its own facets.
   Every plate's paint stays drawn, not only the plate being painted.
 - Review fixes to the paint store, each reproduced before the fix: a slice-all pool worker printed the previous
   plate's paint on an unpainted plate; opening the support brush filed another plate's material paint as support

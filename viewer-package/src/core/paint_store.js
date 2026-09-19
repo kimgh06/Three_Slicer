@@ -92,6 +92,26 @@ export function clonePaint(paint) {
   return Object.fromEntries(Object.entries(paint).map(([kind, marks]) => [kind, copyOf(marks)]))
 }
 
+/** An object's paint handed out to the parts it was split into. `partFacets[part]` lists the parent facets that
+ *  part holds, in the part's own facet order; every annotation follows its facet. A part with no marks gets null. */
+export function splitPaintByParts(paint, partFacets) {
+  const partOf = new Map()
+  partFacets.forEach((facets, part) => facets.forEach((parentFacet, localFacet) => partOf.set(parentFacet, [part, localFacet])))
+  const parts = partFacets.map(() => null)
+  for (const [kind, marks] of Object.entries(paint ?? {})) {
+    if (!(marks instanceof Map)) continue
+    for (const [parentFacet, hex] of marks) {
+      const owner = partOf.get(parentFacet)
+      if (!owner) continue
+      const [part, localFacet] = owner
+      parts[part] ??= {}
+      parts[part][kind] ??= new Map()
+      parts[part][kind].set(localFacet, hex)
+    }
+  }
+  return parts
+}
+
 // Upstream's split-tree encoding (TriangleSelector::serialize, FacetsAnnotation::get_triangle_as_string): the hex
 //  is read LAST digit first, each digit least significant bit first. A node starts with the number of split sides;
 //  a split node then names its special side and is followed by (split sides + 1) children, in REVERSE index order;
@@ -168,12 +188,21 @@ export function decodePaintStates(hex, into = new Set()) {
 /** Painted facet count per state across some objects' stored paint of one kind — the shape the brush reports
  *  (`paintStateCounts`), counted per source facet rather than per sub-facet. Enough to answer "does this plate
  *  change tools", which is all a plate the selector does not hold needs it for. */
+//  A stored marks Map is never mutated (a write-back, a copy and a split each put a NEW Map on the object), so the
+//  counts are cached per Map: the tower box asks on every brush stroke, and decoding 200k stored marks took 23ms.
+const statesOfMarks = new WeakMap()
 export function storedPaintStates(objects, kind = 'color') {
   const counts = {}
   for (const object of objects ?? []) {
     const marks = object?.paint?.[kind]
     if (!marks?.size) continue
-    for (const hex of marks.values()) for (const state of decodePaintStates(hex)) counts[state] = (counts[state] ?? 0) + 1
+    let marksCounts = statesOfMarks.get(marks)
+    if (!marksCounts) {
+      marksCounts = {}
+      for (const hex of marks.values()) for (const state of decodePaintStates(hex)) marksCounts[state] = (marksCounts[state] ?? 0) + 1
+      statesOfMarks.set(marks, marksCounts)
+    }
+    for (const [state, count] of Object.entries(marksCounts)) counts[state] = (counts[state] ?? 0) + count
   }
   return counts
 }
