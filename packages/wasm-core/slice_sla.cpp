@@ -262,7 +262,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   sla_for_each_layer(N, [&](int i) {
     if (CX()) return;   // cooperative bail; the boundary check below reports the cancel
     Paths loops = chain_polys(layerSegs[i]);
-    contours[i] = SimplifyPolygons(loops, pftEvenOdd);
+    contours[i] = SimplifyPolygons(loops, pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
     if (p.gcode_resolution > 1e-6) CleanPolygons(contours[i], SCALE * p.gcode_resolution);
     contours[i].erase(std::remove_if(contours[i].begin(), contours[i].end(),
                                      [](const Path& q){ return q.size() < 3; }), contours[i].end());

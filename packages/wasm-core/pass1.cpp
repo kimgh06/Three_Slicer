@@ -100,7 +100,7 @@ bool pass1_run(SliceCtx& C) {
       LayerData ld; ld.z=z; ld.idx=i; ld.h=(i==0)?p.first_layer_height:p.layer_height;
       std::vector<Seg> segs; segs.swap(layerSegs[i]);
       Paths loops = chain_polys(segs);
-      ld.contour = SimplifyPolygons(loops, pftEvenOdd);
+      ld.contour = SimplifyPolygons(loops, pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
       // [early simplification — matching upstream] Upstream simplifies every contour to resolution right after slicing the mesh
       //  (TriangleMeshSlicer.cpp:2042 ex.simplify). The kernel passed raw contours straight through, so everything downstream (walls, infill,
       //  support, emission clipping) paid for high-density polygons. CleanPolygons (removal by perpendicular distance) gives an equivalent reduction —
