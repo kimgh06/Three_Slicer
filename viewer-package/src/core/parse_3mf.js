@@ -270,7 +270,9 @@ function readProject(files, dec) {
     const isMap = (value) => value && typeof value === 'object' && !Array.isArray(value)
     if (isMap(sidecar)) {
       if (isMap(sidecar.viewer) && Object.keys(sidecar.viewer).length) project.viewerSettings = sidecar.viewer
-      const plates = Object.entries(isMap(sidecar.plates) ? sidecar.plates : {})
+      let plateEntries = []
+      if (isMap(sidecar.plates)) plateEntries = Object.entries(sidecar.plates)
+      const plates = plateEntries
         .filter(([plate, map]) => /^\d+$/.test(plate) && isMap(map) && Object.keys(map).length)
       if (plates.length) project.plateSettings = Object.fromEntries(plates.map(([plate, map]) => [Number(plate), map]))
       if (Number.isInteger(sidecar.plateCount) && sidecar.plateCount >= 1) project.plateCount = sidecar.plateCount

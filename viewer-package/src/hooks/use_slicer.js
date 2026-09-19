@@ -416,7 +416,9 @@ export function useSlicer(deps) {
     //  so for it they are someone else's facets — reading them would widen its extruder count for nothing.
     //  A pool plate brings its own counts instead: the ones its worker reported after loading the plate's stored
     //  paint (runSlice below).
-    const paintedStates = Object.entries(paintCounts ?? (painted ? paintStateCountsRef?.current : null) ?? {})
+    let reportedCounts = paintCounts
+    if (reportedCounts == null && painted) reportedCounts = paintStateCountsRef?.current
+    const paintedStates = Object.entries(reportedCounts ?? {})
       .filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
     const highestPaintedState = paintedStates.length ? Math.max(...paintedStates) : 0
     if (highestPaintedState >= 2) {                 // state 1 alone is the default tool — nothing to switch to
@@ -501,7 +503,8 @@ export function useSlicer(deps) {
     }
     // A pool worker holds no selector until the plate's stored paint is loaded into it (ctx.loadPaint above).
     const storedPaint = merged.paint?.color ?? merged.paint?.supports
-    const paintCounts = ctx && storedPaint ? await ctx.loadPaint(merged.buf, storedPaint) : null
+    let paintCounts = null
+    if (ctx && storedPaint) paintCounts = await ctx.loadPaint(merged.buf, storedPaint)
     const params = buildParams(merged, { painted: !ctx, paintCounts })
     // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
     //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a

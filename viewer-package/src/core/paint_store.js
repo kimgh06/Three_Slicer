@@ -61,7 +61,8 @@ export function mergedPaint(objectsById, members, kind) {
     }
     base += member.faceCount
   }
-  return facets.length ? { facets: Int32Array.from(facets), hex: hex.join('\n') } : null
+  if (!facets.length) return null
+  return { facets: Int32Array.from(facets), hex: hex.join('\n') }
 }
 
 /** Write a split export back into the store under `kind`, leaving every other annotation of the object alone. */
@@ -76,7 +77,11 @@ export function storePaint(objectsById, byObject, kind) {
 /** A deep copy of an object's paint, for a copy/duplicate — the copy must not share the original's Maps. */
 export function clonePaint(paint) {
   if (!paint) return null
-  return Object.fromEntries(Object.entries(paint).map(([kind, marks]) => [kind, marks instanceof Map ? new Map(marks) : marks]))
+  const copyOf = (marks) => {
+    if (marks instanceof Map) return new Map(marks)
+    return marks
+  }
+  return Object.fromEntries(Object.entries(paint).map(([kind, marks]) => [kind, copyOf(marks)]))
 }
 
 // Upstream's split-tree encoding (TriangleSelector::serialize, FacetsAnnotation::get_triangle_as_string): the hex
@@ -115,7 +120,8 @@ function walkSplitTree(hex, rootTriangle, onLeaf) {
     const splitSides = readBits(SPLIT_SIDES_BITS)
     if (splitSides) {
       const specialSide = readBits(SPECIAL_SIDE_BITS)
-      const childTriangles = triangle ? splitTriangle(triangle, splitSides, specialSide) : null
+      let childTriangles = null
+      if (triangle) childTriangles = splitTriangle(triangle, splitSides, specialSide)
       for (let childIndex = splitSides; childIndex >= 0; childIndex--) visitNode(childTriangles?.[childIndex] ?? null, depth + 1)
       return
     }

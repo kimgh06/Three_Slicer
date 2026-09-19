@@ -49,7 +49,11 @@ export function requestPaintExport(worker, timeoutMs = PAINT_EXPORT_TIMEOUT_MS) 
       if (done) return
       done = true; worker.removeEventListener('message', onMessage); worker.removeEventListener('error', onError); resolve(value)
     }
-    const onMessage = (event) => { if (event.data?.type === 'paintExport') finish(event.data.supported ? event.data : null) }
+    const onMessage = (event) => {
+      if (event.data?.type !== 'paintExport') return
+      if (event.data.supported) finish(event.data)
+      else finish(null)
+    }
     const onError = () => finish(null)
     worker.addEventListener('message', onMessage)
     worker.addEventListener('error', onError)
@@ -306,7 +310,8 @@ export function makeSupportPaint(deps) {
    *  object the selector holds (a 3mf save, a copy, a slice on another worker). */
   function flushPaint() {
     const worker = getWorker()
-    return worker ? serial(worker, () => writeBack(worker)) : Promise.resolve(false)
+    if (!worker) return Promise.resolve(false)
+    return serial(worker, () => writeBack(worker))
   }
 
   // Hand the kernel the mesh the brush is about to work on — on entering a brush, on every transform commit while
@@ -396,7 +401,11 @@ export function makeSupportPaint(deps) {
     if (mode !== 'off' && objectsRef.current.length === 0) { setError('Upload an STL first'); return }
     if (mode !== 'off') { apiRef.current?.detachTransform(); registerSelector() }
     // The kind of what the selector will hold from now on — what writeBack files it under once the brush closes.
-    if (mode !== 'off') { const worker = getWorker(); if (worker) worker.__paintImportKind = mode === 'material' ? 'color' : 'supports' }
+    if (mode !== 'off') {
+      const worker = getWorker()
+      if (worker && mode === 'material') worker.__paintImportKind = 'color'
+      else if (worker) worker.__paintImportKind = 'supports'
+    }
     paintModeRef.current = mode; setPaintModeState(mode)
     apiRef.current?.refreshCursor()   // refresh the cursor hint when entering/leaving paint mode
   }

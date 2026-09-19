@@ -338,7 +338,8 @@ export default function Viewport({
     const changesTools = (plate) => {
       const onPlate = objects.filter(o => o.plate === plate)
       const stored = () => storedPaintStates(onPlate.map(row => objectsRef.current.find(o => o.id === row.id)).filter(o => o && o.visible !== false))
-      return usesMultipleTools(onPlate, plate === selectorPlate ? paintStateCounts : stored())
+      if (plate === selectorPlate) return usesMultipleTools(onPlate, paintStateCounts)
+      return usesMultipleTools(onPlate, stored())
     }
     // enable_prime_tower is read the way deriveKernelParams reads it: absent leaves the kernel's tower on.
     const towerOn = (effective) => !('enable_prime_tower' in effective) || !!effective.enable_prime_tower
@@ -399,8 +400,11 @@ export default function Viewport({
     //  must hold that plate's mesh — loaded from the per-object store when it is another one. A move can also reach
     //  a slice without a gizmo commit (keyboard nudge, plate re-arrange). Needed when a selector exists (it may hold
     //  another plate) or the plate carries stored paint; the caller awaits it before posting the slice.
-    syncPaintSelector: (merged) => (selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports)
-      ? registerSelectorRef.current?.(merged) : Promise.resolve(),
+    syncPaintSelector: (merged) => {
+      const needsSelector = selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports
+      if (!needsSelector) return Promise.resolve()
+      return registerSelectorRef.current?.(merged)
+    },
   })
   selectPlateRef.current = selectPlate
 

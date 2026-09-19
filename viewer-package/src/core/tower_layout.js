@@ -97,15 +97,18 @@ export function towerSelectionRule(selection, primary, isTower) {
  *  placement (use_slicer.js). */
 export function towerFootprint(params, real) {
   if (!real) return RING_TOWER_SIDE_MM
-  return params?.prime_tower_width > 0 ? params.prime_tower_width : REAL_TOWER_DEFAULT_WIDTH_MM
+  if (params?.prime_tower_width > 0) return params.prime_tower_width
+  return REAL_TOWER_DEFAULT_WIDTH_MM
 }
 
 /** A chosen tower position kept on the bed: `x`/`y` are the tower's CORNER in plate-local bed coordinates (what
  *  the kernel reads as prime_tower_x/y), so the far edge is the bed minus the footprint. A drag or a typed value
  *  used to be stored as given, and a tower off the bed was only discovered in the sliced result. */
 export function clampTowerPosition(x, y, { bedW, bedD, size }) {
-  const keep = (value, extent) => (Number.isFinite(extent) && extent > size
-    ? clamp(Number(value), 0, extent - size) : Number(value))
+  const keep = (value, extent) => {
+    if (!(Number.isFinite(extent) && extent > size)) return Number(value)
+    return clamp(Number(value), 0, extent - size)
+  }
   return [keep(x, bedW), keep(y, bedD)]
 }
 

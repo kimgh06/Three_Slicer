@@ -103,7 +103,8 @@ export default function TowerCard({
   // Always the global map (see above), kept on the plate's bed when the frame is known (`towerFrame`, the
   //  selected plate's bed and footprint): a typed coordinate past the edge lands at the edge.
   const setPosition = (x, y) => {
-    const [bedX, bedY] = x === null || !towerFrame ? [x, y] : clampTowerPosition(x, y, towerFrame)
+    let bedX = x, bedY = y
+    if (x !== null && towerFrame) [bedX, bedY] = clampTowerPosition(x, y, towerFrame)
     setGlobalSettings?.(prev => writeTowerPosition(prev, selectedPlate, plateCount, bedX, bedY))
   }
 

@@ -142,7 +142,9 @@ export function makeModelLoad(deps) {
       //  What does travel with it is this package's own member (write_3mf.js): the global viewer knobs the schema
       //  cannot type (wipe_tower_real...) layered over the map here, and the per-plate overrides once the plates
       //  exist (below).
-      setSettings?.(project.viewerSettings ? { ...imported.settings, ...project.viewerSettings } : imported.settings)
+      let settingsWithKnobs = imported.settings
+      if (project.viewerSettings) settingsWithKnobs = { ...imported.settings, ...project.viewerSettings }
+      setSettings?.(settingsWithKnobs)
       notices.push(`${imported.applied} settings`)
       // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
       //  in it. `filament_colour` is the one key that always has one entry per loaded filament (the *_settings_id

@@ -83,7 +83,8 @@ export function makeExportActions(deps) {
     try { assertUniformTechnology(settingsRef.current, plateSettingsRef?.current); assertHomogeneousBeds(plateSettingsRef?.current) }
     catch (err) { setError?.(err.message); return }
     const gathered = performance.now()
-    const kind = getWorker?.()?.__paintImportKind === 'supports' ? 'supports' : 'color'
+    let kind = 'color'
+    if (getWorker?.()?.__paintImportKind === 'supports') kind = 'supports'
     const paintedFacets = objects.reduce((sum, o) => sum + (o.paint?.[kind]?.size ?? 0), 0)
     try {
       const bytes = await write3MFProject(objects, settingsRef.current, {
@@ -101,8 +102,11 @@ export function makeExportActions(deps) {
         + ` gather ${(gathered - gotPaint).toFixed(0)}ms, write ${(performance.now() - gathered).toFixed(0)}ms`
         + ` -> ${(bytes.byteLength / 1e6).toFixed(2)}MB`)
       download(bytes, `${baseName(objects)}.3mf`, 'model/3mf', onExport)
-      setSliceNotice?.(`Saved ${objects.length} ${selectedOnly ? 'selected ' : ''}object(s) as a 3mf project`
-        + (paintedFacets ? ` with ${paintedFacets} painted facets.` : '.'))
+      let scopeWord = ''
+      if (selectedOnly) scopeWord = 'selected '
+      let paintNote = '.'
+      if (paintedFacets) paintNote = ` with ${paintedFacets} painted facets.`
+      setSliceNotice?.(`Saved ${objects.length} ${scopeWord}object(s) as a 3mf project${paintNote}`)
     } catch (err) { setError?.(`Export failed: ${err?.message || err}`) }
   }
 

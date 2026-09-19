@@ -231,7 +231,7 @@ export function useThreeScene(deps) {
     //  Every selection path ends here, so this is where the tower is kept alone and translate-only (towerSelectionRule).
     const refreshGizmo = () => {
       releasePivot()
-      const mode = towerSelectionRule(selection, selected, isTower) ? 'translate' : gizmoMode
+      let mode = gizmoMode; if (towerSelectionRule(selection, selected, isTower)) mode = 'translate'
       if (transform.mode !== mode) { transform.setMode(mode); transform.showY = (mode !== 'translate') }
       if (selection.size === 0) { transform.detach(); return }
       if (selection.size === 1) { transform.attach([...selection][0]); return }

@@ -230,7 +230,10 @@ function fillArrayHoles(projectSettings, settings) {
     const holes = Array.from(original, entry => entry == null)
     if (!holes.some(Boolean)) continue
     const fallback = [settingRaw({}, key)].flat()[0]
-    projectSettings[key] = holes.map((hole, at) => (hole ? String(fallback ?? '') : value[at]))
+    projectSettings[key] = holes.map((hole, at) => {
+      if (hole) return String(fallback ?? '')
+      return value[at]
+    })
     holed[key] = original
   }
   return holed
