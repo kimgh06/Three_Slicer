@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The prime tower is set per plate. The Prime tower card carries the same Global | Plate switch as the Process,
+  Printer and Filament cards: in plate scope its mode, width, purge destination and purging table become that
+  plate's override. The position was already per plate (`wipe_tower_x/y[plate]`) and stays in the global map.
+- A saved `.3mf` carries the per-plate overrides and the global map's non-schema keys (`wipe_tower_real`,
+  `sla_antialias`) in a member of its own, `Metadata/three_slicer_settings.json`, and an import restores them.
+  Upstream has no place for either and ignores the member, so OrcaSlicer still opens the file on the global preset.
+
+### Changed
+
+- The ring / real tower choice is the settings key `wipe_tower_real` (a viewer knob, like `sla_antialias`) instead
+  of component state, so it follows plate overrides and survives a save. Absent means the ring, as before.
+- The tower stand-ins are decided per plate: a plate gets one only when it changes tools itself, and each plate
+  draws its own width and on/off. A dragged or typed tower position is kept on the bed.
+- The tower stand-in is selected alone and only translated. It no longer joins a multi-selection, takes a
+  rotate/scale gizmo, or adds an undo entry that undid nothing.
+
+### Fixed
+
+- Two objects on the same spot sliced to nothing. The kernel slices the merge of every object as one mesh and filled
+  the layer loops even-odd, so coincident shells counted as "inside twice". Segments are now oriented by the facet
+  normal and filled NonZero, upstream's Regular slicing mode, in the FFF, multi-material and SLA paths. Measured: a
+  project imported twice printed 1,210 mm of a 42,984 mm model before, the full model now. Clean meshes slice the
+  same regions (0 area difference on the fixtures, under 0.0003 mm² per layer on the Benchy), but a loop can start
+  at a different vertex, so G-code of models other than the golden fixtures may differ in point order.
+- A saved `.3mf` with a tower position on some plates and automatic placement on others wrote `null` into
+  `wipe_tower_x/y`. OrcaSlicer's loader stops reading the whole file at an array entry that is not a string, which
+  dropped the 17 settings after it, `z_hop` and `z_offset` among them. The hole is now written as the schema default
+  for upstream and kept as a hole in `Metadata/three_slicer_settings.json`.
+
 ## 0.3.1 — 2026-09-16
 
 ### Added

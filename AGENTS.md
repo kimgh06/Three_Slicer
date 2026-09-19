@@ -240,6 +240,29 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `printerKeys` union must not be used as "what the printer owns" against a preset: it holds `layer_height`
   because two resin rows set it, and guarding it blanketly meant no FFF quality preset could change the layer
   height (measured); `applyProcessPreset` guards only the picked row's own keys.
+- **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
+  mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
+  `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and
+  `chain_polys` keeps a loop in its first segment's direction, prefers a continuation that STARTS at the current
+  point (four segments meet where shells coincide) and reverses a loop assembled mostly backwards (flipped facets).
+  That is upstream's Regular mode; a fully inverted shell still prints, an inward-facing inner shell is still a void
+  (`[overlapping shells]` in `test.mjs`). The golden fixtures stayed byte-identical; a clean mesh can still move
+  by Clipper rounding (measured on the Benchy: under 0.0003 mm² per layer), which shifts point order in its G-code.
+- **The prime tower is per plate, from two stores.** The position is `wipe_tower_x/y[plate]` in the GLOBAL map
+  (upstream's coFloats layout, written by both the card and the scene drag); everything else about the tower —
+  `enable_prime_tower`, `prime_tower_width`, `flush_into_infill`, `flush_volumes_matrix` and the viewer knob
+  `wipe_tower_real` — follows the plate override through the card's Global | Plate switch. The stand-ins are decided
+  per plate from `plateContext` (`towerOf` in `core/tower_layout.js`): the plate's own tool changes, on/off and
+  footprint. The footprint comes from the DERIVED params, not the map — an unset `prime_tower_width` reaches the
+  kernel as the schema's 60, which a raw read took as 30. In plate scope the card writes defaults explicitly instead
+  of deleting the key, because an override cannot express absence (it merges over the global map).
+- **A `.3mf` save carries what upstream has no place for in `Metadata/three_slicer_settings.json`**: the per-plate
+  overrides and the global map's non-schema keys (`serializeProjectSettings` drops those). Upstream's `<plate>`
+  metadata is a fixed key set (`bbs_3mf.cpp`) and it ignores unknown members, so an OrcaSlicer open sees the global
+  preset on every plate. Only existing plates are written; the reader keeps only plain maps under integer plate keys.
+  An array with a HOLE (`wipe_tower_x/y` of a plate on automatic placement) is never written as `null`: upstream's
+  loader breaks out of its whole key loop on a non-string entry (`Config.cpp` `parse_str_arr` -> `break;`), which
+  dropped every key sorting after it. The hole is written as the schema default and the original goes to the member.
 - **An all-plates run is a queue drained by K workers, and the selector worker is one of them.** `slice_pool.js`
   sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
   `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,
