@@ -5,6 +5,7 @@ import { log } from '../core/log.js'
 import { write3MFProject, writeSTL } from '../core/write_3mf.js'
 import { assertUniformTechnology, assertHomogeneousBeds } from '../core/plate_settings.js'
 import { DEFAULT_BED } from '../core/viewer_defaults.js'
+import { PAINT_EXPORT_TIMEOUT_MS } from './support_paint.js'
 
 /**
  * Is the click that started this still "recent" as far as the browser is concerned?
@@ -71,7 +72,10 @@ export function makeExportActions(deps) {
     // The selector's strokes back onto the objects first; then every object — on any plate, selected or not —
     //  carries its own paint in its own facet numbering, which is what the writer stores. This used to take the
     //  kernel's merge numbering directly, which only meant anything when the whole project sat on one plate.
-    await flushPaintRef?.current?.()
+    //  Bounded: behind a running slice the reply waits for the slice, and the store already holds everything up to that
+    //  slice's start (syncPaintSelector flushes before it) — so a save does not sit on "Saving…" with the viewport
+    //  frozen for a whole slice. What can be missing then is only what was brushed while it ran, and the notice says so.
+    const flushed = await flushPaintRef?.current?.(PAINT_EXPORT_TIMEOUT_MS)
     const gotPaint = performance.now()
     const objects = apiRef.current?.exportObjects?.({ selectedOnly }) ?? []
     if (!objects.length) {
@@ -104,7 +108,9 @@ export function makeExportActions(deps) {
       if (selectedOnly) scopeWord = 'selected '
       let paintNote = '.'
       if (paintedFacets) paintNote = ` with ${paintedFacets} painted facets.`
-      setSliceNotice?.(`Saved ${objects.length} ${scopeWord}object(s) as a 3mf project${paintNote}`)
+      let pendingNote = ''
+      if (flushed === 'timeout') pendingNote = ' Brush strokes made while the slice was running are not in this file — save again once it finishes.'
+      setSliceNotice?.(`Saved ${objects.length} ${scopeWord}object(s) as a 3mf project${paintNote}${pendingNote}`)
     } catch (err) { setError?.(`Export failed: ${err?.message || err}`) }
   }
 

@@ -330,7 +330,11 @@ export function useSlicer(deps) {
       wk.postMessage({ cmd: 'prepare', stl: buf })
       ctx.holdsPaint = true
       const reply = await request(wk, { cmd: 'importPaint', facets: paint.facets, hex: paint.hex, states: PAINT_STATES_ALL }, { types: ['painted'] })
-      return reply?.counts ?? {}
+      // A plate whose paint did not load must not be sliced as if it had none (single-material, and nothing said).
+      //  "failed to load" is what the run already treats as this worker's failure: it re-queues the plate onto the
+      //  selector worker (plate_actions.js), which loads the paint its own way.
+      if (!reply) throw new Error('Worker failed to load the plate paint')
+      return reply.counts ?? {}
     }
     ctx.sliceOne = (buf, paramsStr, cmd) => new Promise((resolve, reject) => {
       // dev/test hook (not set in production): __vpPoolFail = n fails the next n pool slices as a worker death,
