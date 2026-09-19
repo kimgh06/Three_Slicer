@@ -132,7 +132,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   **(13)** No stroke reaches the selector while it slices: a slice start closes the brush (its 'auto' swap could
   otherwise file the open brush's strokes under the other kind), and the store is flushed right before it. So a
   flush during a selector slice has nothing to fetch and answers `'busy'` at once — a save, copy or duplicate used to
-  queue behind the whole slice.
+  queue behind the whole slice. **(14)** A load the worker fails leaves the selector empty while the store is not:
+  the swap returns 'load-failed', clears the record's kind (nothing may be written back over the store) and keeps
+  strokes blocked; the pre-slice sync turns it into a failed slice rather than a bare one. **(15)** Undo restores a
+  DELETED object's paint (the snapshot carries `paint` by reference — the store never mutates a map — and delete
+  flushes first); a live object keeps its own, so undoing a move does not roll back strokes made after it. Strokes
+  themselves are still outside undo.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not
