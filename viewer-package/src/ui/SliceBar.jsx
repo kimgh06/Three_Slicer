@@ -49,7 +49,7 @@ export default function SliceBar({
               )}
             </label>
             {slicedPlateCount > 0 && (
-              <button onClick={onExportAll} data-testid="export-all" title="Save the G-code of every sliced plate as its own file">Export all G-code ({slicedPlateCount})</button>
+              <button onClick={onExportAll} data-testid="export-all" title="Save every sliced plate in one .gcode.3mf — reopenable here and in OrcaSlicer (a resin plate saves as its own .sl1)">Export all .gcode.3mf ({slicedPlateCount})</button>
             )}
           </div>
         )}
