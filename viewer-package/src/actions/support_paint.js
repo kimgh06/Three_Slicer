@@ -349,7 +349,11 @@ export function makeSupportPaint(deps) {
   function registerSelector(prebuiltMerged = null, { kind: requestedKind } = {}) {
     const worker = paintStateAwareWorker()
     if (!worker) return Promise.resolve()
-    return serial(worker, async () => { await swapTo(worker, prebuiltMerged, requestedKind); refreshStoredOverlays() })
+    return serial(worker, async () => {
+      const result = await swapTo(worker, prebuiltMerged, requestedKind)
+      refreshStoredOverlays()
+      return result
+    })
   }
   async function swapTo(worker, prebuiltMerged, requestedKind) {
     const merged = prebuiltMerged ?? apiRef.current?.buildMergedSTL(selectedPlateRef.current); if (!merged) return
@@ -397,7 +401,15 @@ export function makeSupportPaint(deps) {
     // Only a kernel that cannot export loses paint here now — and that must not be silent.
     if (hadPaint && !kept) setSliceNotice?.('The painted regions were reset: this kernel cannot hand its painting '
                                            + 'back, so it does not survive switching the painted mesh.')
-    await loadStoredPaint(worker, merged, wantedKind)
+    const loaded = await loadStoredPaint(worker, merged, wantedKind)
+    if (loaded === null) {
+      // The worker answered the load with an error or died: the selector is empty while the store is not. Nothing may
+      //  be written back from it (that would erase the store), no stroke may land on it, and a slice must not run on
+      //  it as if the plate were unpainted — the caller that slices turns this into a failed slice.
+      if (selectorGeomRef.current) selectorGeomRef.current.kind = null
+      setSliceNotice?.('The painting could not be loaded into the slicer; the plate was not sliced with it. Try again.')
+      return 'load-failed'
+    }
     paintXformRef.current = transform
   }
 
@@ -415,7 +427,7 @@ export function makeSupportPaint(deps) {
     //  (overlayColorFor), and the write-back files the marks under it.
     if (selectorGeomRef.current) selectorGeomRef.current.kind = kind
     const chosen = mergedPaint(objects, merged.members, kind)
-    if (!chosen) return Promise.resolve()
+    if (!chosen) return Promise.resolve(true)   // nothing to load is a success
     if (!requestedKind && kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
       setSliceNotice?.('These objects are painted for both material and support. One facet holds one paint state, so '
                      + 'the material painting was loaded and the support painting was left out.')

@@ -14,7 +14,7 @@ const HEX_STATE_1 = '4', HEX_STATE_2 = '8', HEX_STATE_3 = '0C'
 
 // A worker holding one selector: merged facet -> hex. Replies echo requestId like the real one.
 class FakeSelectorWorker extends EventTarget {
-  constructor() { super(); this.marks = new Map(); this.sent = [] }
+  constructor() { super(); this.marks = new Map(); this.sent = []; this.failImport = false }
   terminate() {}
   answer(data, request) {
     const event = new Event('message')
@@ -25,6 +25,7 @@ class FakeSelectorWorker extends EventTarget {
   postMessage(message) {
     this.sent.push(message.cmd)
     if (message.cmd === 'prepare') { if (!message.keepPaint) this.marks = new Map(); this.answer({ type: 'prepared' }, message); return }
+    if (message.cmd === 'importPaint' && this.failImport) { this.answer({ type: 'error', error: 'memory access out of bounds' }, message); return }
     if (message.cmd === 'importPaint') {
       this.marks = new Map()
       const hexes = String(message.hex).split('\n')
@@ -144,6 +145,21 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(await paint.flushPaint(), 'busy', 'a save or copy during the slice does not queue behind it')
   assert.equal(worker().sent.length, sentBefore, 'and asks the busy worker nothing')
   assert.deepEqual(entries(paintOf(scene, 1).color), [[1, HEX_STATE_2]], 'the store holds what the pre-slice flush wrote')
+}
+
+// ---- a load the worker fails: no bare slice, nothing written back over the store, no strokes on the empty selector ----
+{
+  const scene = makeScene()
+  const { paint, refs, worker } = setup(scene)
+  scene.objects[1].paint = { color: new Map([[2, HEX_STATE_2]]) }      // plate 1 carries stored paint
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()   // plate 0 held
+  worker().failImport = true
+  refs.selectedPlateRef.current = 1
+  const result = await paint.registerSelector(null, { kind: 'auto' }); await settle()
+  assert.equal(result, 'load-failed', 'the swap reports the failed load to the slice that asked for it')
+  assert.equal(refs.paintXformRef.current, null, 'no stroke may land on the empty selector')
+  await paint.flushPaint(); await settle()
+  assert.deepEqual(entries(paintOf(scene, 2).color), [[2, HEX_STATE_2]], 'nothing is written back over the store from the empty selector')
 }
 
 console.log('paint_swap: ok')

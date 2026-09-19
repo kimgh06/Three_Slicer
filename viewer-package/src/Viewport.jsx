@@ -412,7 +412,9 @@ export default function Viewport({
       if (!needsSelector) return
       await flushPaintRef.current?.()
       // 'auto': the kernel slices with the annotation the store says wins (material first), whichever brush was open.
-      return registerSelectorRef.current?.(merged, { kind: 'auto' })
+      const result = await registerSelectorRef.current?.(merged, { kind: 'auto' })
+      // A plate whose paint did not load is not sliced bare (the pool path does the same, ctx.syncPaint).
+      if (result === 'load-failed') throw new Error('Worker failed to load the plate paint')
     },
   })
   selectPlateRef.current = selectPlate
@@ -795,7 +797,7 @@ export default function Viewport({
                   onSelect={(id, additive) => apiRef.current?.selectObjects([id], additive)}
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
                   onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }}
-                  onRemove={id => { recordHistory(); removeObject(id) }}
+                  onRemove={async id => { await flushPaintRef.current?.(); recordHistory(); removeObject(id) }}
                   supportOn={supportOn} onToggleSupport={onToggleSupport} fffSupport={tech !== 'SLA'}
                   supportOnOf={supportOnOf} onPlateSupport={(p, on) => writePlateKey(p, 'enable_support', on)}
                   overhangOn={overhangOn} onToggleOverhang={e => setOverhangOn(e.target.checked)}

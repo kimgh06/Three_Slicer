@@ -526,10 +526,10 @@ export function makePlateActions(deps) {
       const merged = apiRef.current?.buildMergedSTL(idx0)
       if (!merged) { setError(`Plate ${idx0 + 1} has no objects`); return }
       log.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
-      await syncPaintSelector?.(merged)   // the selector must hold the mesh being cut (see slicePlate above)
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
+        await syncPaintSelector?.(merged)   // the selector must hold the mesh being cut (see slicePlate above)
         const { r, economy, classicWalls, params } = await runSlice(merged, null, { resyncPaint: () => syncPaintSelector?.(merged) })
         if (r?.stats) log.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
@@ -540,7 +540,10 @@ export function makePlateActions(deps) {
         else if (classicWalls) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
       } catch (e) {
         setSlicing(false)
-        if (String(e?.message || e).includes('canceled')) { setSliceNotice('Slice canceled'); return }
+        const why = String(e?.message || e)
+        if (why.includes('canceled')) { setSliceNotice('Slice canceled'); return }
+        // The paint did not load: a downgrade would not help, and "economy failed too" would say something false.
+        if (why.includes('plate paint')) { setError('Slice stopped: ' + why + ' — try again.'); return }
         setDowngradeOffer({ scope: 'current' }); setError('Slice failed (economy mode failed too): ' + e.message)
       }
     }
