@@ -10,6 +10,7 @@ import { parseSl1, sl1DisplayAffine, sl1SettingsFrom } from '../core/sl1_read.js
 import { makeSlaReconstructWorker, makeSlaSliceWorker, makeSl1EncodeWorker } from '../make_worker.js'
 import { makeSl1GpuRaster } from '../core/sl1_raster_gpu.js'
 import { makeSl1ParityGpu } from '../core/sl1_parity_gpu.js'
+import { meshWindingConsistent } from '../core/mesh_winding.js'
 import { acquireGpuDevice } from '../scene/gpu_device.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { download, saveWindowOpen } from './export_actions.js'
@@ -43,7 +44,7 @@ export function makePlateActions(deps) {
     ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
-    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector,
+    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
     onSlicedRef,
   } = deps
 
@@ -339,13 +340,14 @@ export function makePlateActions(deps) {
       //  supersample path is the always-available reference (test_sl1_gpu.mjs pins the parity).
       const aa = Math.max(1, settings?.sla_antialias | 0 || 1)
       const gpuDevice = aa > 1 ? await acquireGpuDevice() : null
-      // Two GPU raster backends, tried in fidelity order. PARITY slices the mesh itself (stencil
-      //  even-odd per layer plane — immune to whatever contour stitching drops; measured 0.007%
-      //  avg pixel diff vs the contour reference on a 775k-facet scan), and needs the merged STL
-      //  the SLA slice kept for the scene sidecar. The contour MSAA raster is the fallback for a
-      //  result without modelSTL (an imported archive re-export never reaches here).
+      // Two GPU raster backends, tried in fidelity order. PARITY slices the mesh itself (a stencil
+      //  count signed by facing per layer plane, NonZero — immune to whatever contour stitching
+      //  drops), and needs the merged STL the SLA slice kept for the scene sidecar. It agrees with
+      //  the kernel's contours only for a CONSISTENTLY wound mesh (mesh_winding.js: a mesh with some
+      //  facets flipped lit 6400 px where the slice holds 256), so any other mesh — and a result
+      //  without modelSTL — takes the contour MSAA raster of the kernel's own contours.
       let gpuRaster = null
-      if (gpuDevice && r.modelSTL) {
+      if (gpuDevice && r.modelSTL && meshWindingConsistent(new Uint8Array(r.modelSTL))) {
         const parity = makeSl1ParityGpu(gpuDevice)
         if (parity.prepare(new Uint8Array(r.modelSTL))) {
           const lh = r.stats.layer_height || 0.05
@@ -429,6 +431,9 @@ export function makePlateActions(deps) {
       // The queue holds plate INDICES; each worker builds the merge when it takes the plate and drops it after.
       //  Building all of them up front held N x 143MB of STL for the whole run in the one renderer process the
       //  workers' heaps also live in — on a five-plate scene that is 715MB before a single worker has started.
+      // Every plate's merge reads its paint from the per-object store, and the selector may hold strokes not yet
+      //  written back — so they go back first, before any worker builds a merge.
+      await flushPaintRef?.current?.()
       const plates = []; const sizes = []
       for (let i = 0; i < plateCountRef.current; i++) {
         const m = apiRef.current?.buildMergedSTL(i); if (!m) continue
@@ -453,12 +458,16 @@ export function makePlateActions(deps) {
       const slicePlate = async (i, ctx) => {
         const merged = apiRef.current?.buildMergedSTL(i)
         if (!merged) { failed.push(i + 1); patch(i, { state: PLATE_STATES.failed, error: 'plate is empty' }); return }
-        if (i === idx0) syncPaintSelector?.(merged)
+        // The selector worker's kernel reads the paint from its selector, so it must hold THIS plate's mesh before
+        //  the slice is posted — the selected plate, and a pool plate re-run here after its worker died. A pool
+        //  worker gets the plate's stored paint with the slice instead (use_slicer.js runSlice).
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         ;(ctx ? ctx.holder : sink).plate = i   // route this worker's progress to the plate it is on
         patch(i, { state: PLATE_STATES.busy })
         try {
-          const { r, economy, classicWalls } = await runSlice(merged, ctx)
+          // Inside the try: a paint that fails to load fails THIS plate (the catch below), not the whole run.
+          const { r, economy, classicWalls } = await runSlice(merged, ctx, {
+            syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged) })
           plateLineWidth(i)
           plateResultsRef.current[i] = r; refreshSlicedCount(); announceSlice(i, r); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
           if (economy) anyEconomy = true
@@ -518,11 +527,12 @@ export function makePlateActions(deps) {
       const merged = apiRef.current?.buildMergedSTL(idx0)
       if (!merged) { setError(`Plate ${idx0 + 1} has no objects`); return }
       log.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
-      if (idx0 === selectedPlateRef.current) syncPaintSelector?.(merged)
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {
-        const { r, economy, classicWalls, params } = await runSlice(merged)
+        // The selector must hold the mesh being cut (see slicePlate above).
+        const { r, economy, classicWalls, params } = await runSlice(merged, null, {
+          syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged) })
         if (r?.stats) log.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
         setError(''); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
@@ -532,7 +542,10 @@ export function makePlateActions(deps) {
         else if (classicWalls) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
       } catch (e) {
         setSlicing(false)
-        if (String(e?.message || e).includes('canceled')) { setSliceNotice('Slice canceled'); return }
+        const why = String(e?.message || e)
+        if (why.includes('canceled')) { setSliceNotice('Slice canceled'); return }
+        // The paint did not load: a downgrade would not help, and "economy failed too" would say something false.
+        if (why.includes('plate paint')) { setError('Slice stopped: ' + why + ' — try again.'); return }
         setDowngradeOffer({ scope: 'current' }); setError('Slice failed (economy mode failed too): ' + e.message)
       }
     }

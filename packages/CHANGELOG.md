@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The prime tower is set per plate. The Prime tower card carries the same Global | Plate switch as the Process,
+  Printer and Filament cards: in plate scope its mode, width, purge destination and purging table become that
+  plate's override. The position was already per plate (`wipe_tower_x/y[plate]`) and stays in the global map.
+- A saved `.3mf` carries the per-plate overrides and the global map's non-schema keys (`wipe_tower_real`,
+  `sla_antialias`) in a member of its own, `Metadata/three_slicer_settings.json`, and an import restores them.
+  Upstream has no place for either and ignores the member, so OrcaSlicer still opens the file on the global preset.
+
+### Changed
+
+- The ring / real tower choice is the settings key `wipe_tower_real` (a viewer knob, like `sla_antialias`) instead
+  of component state, so it follows plate overrides and survives a save. Absent means the ring, as before.
+- The tower stand-ins are decided per plate: a plate gets one only when it changes tools itself, and each plate
+  draws its own width and on/off. A dragged or typed tower position is kept on the bed.
+- The tower stand-in is selected alone and only translated. It no longer joins a multi-selection, takes a
+  rotate/scale gizmo, or adds an undo entry that undid nothing.
+
+### Fixed
+
+- Two objects on the same spot sliced to nothing. The kernel slices the merge of every object as one mesh and filled
+  the layer loops even-odd, so coincident shells counted as "inside twice". Segments are now oriented by the facet
+  normal and filled NonZero, upstream's Regular slicing mode, in the FFF, multi-material and SLA paths. Measured: a
+  project imported twice printed 1,210 mm of a 42,984 mm model before, the full model now. Clean meshes slice the
+  same regions (0 area difference on the fixtures, under 0.0003 mm² per layer on the Benchy), but a loop can start
+  at a different vertex, so G-code of models other than the golden fixtures may differ in point order.
+- A saved `.3mf` with a tower position on some plates and automatic placement on others wrote `null` into
+  `wipe_tower_x/y`. OrcaSlicer's loader stops reading the whole file at an array entry that is not a string, which
+  dropped the 17 settings after it, `z_hop` and `z_offset` among them. The hole is now written as the schema default
+  for upstream and kept as a hole in `Metadata/three_slicer_settings.json`.
+- The GPU SL1 mask path (`sla_antialias`, `sl1_parity_gpu.js`) counted surfaces above the plane as a parity, so two
+  coincident objects came out empty in the masks while the slice and its supports treated them as solid. The count
+  is now signed by facing (NonZero), the kernel's fill rule.
+- Painting one plate and then another discarded the first plate's paint, and a copy placed where the original sits on
+  its own plate took the original's paint over (the original then sliced single-material, the copy printed both).
+  Paint now lives on each object (`core/paint_store.js`): the selector is written back to it before it switches
+  mesh and loaded from it after; slice-all pool workers load their plate's paint; a 3mf save writes every plate's
+  brush strokes (it used to save them only for a single-plate project); copy, duplicate and paste carry the paint,
+  and a split hands each part the marks on its own facets.
+- A brush stroke painted only the first object of the plate being painted: the hit facet was sent in the hit
+  object's own numbering, not the plate merge's. A stroke now also carries across plates — reaching an object on
+  another plate selects that plate and keeps painting there, and an object added to the plate while the brush is
+  open is painted too.
+- Dragging a painted object no longer drags the paint of the other objects on its plate along with it.
+- A paste pressed right after a copy pastes that copy; a double-pressed delete records one undo step; a drag
+  committed while a slice loads its plate's paint no longer reaches the worker before that slice.
+- A paint export the worker fails no longer discards the unsaved strokes (the swap stops instead), and Clear
+  pressed during a plate switch clears the plate it lands on instead of doing nothing. Strokes made right after
+  switching between the support and material brushes are no longer saved as the other kind of paint.
+- Paint for a filament that is not configured (T3 painted, then the list cut to two) no longer widens the extruder
+  count on a slice-all pool worker only; every path leaves it out and the slice says so.
+  Every plate's paint stays drawn, not only the plate being painted.
+- Review fixes to the paint store, each reproduced before the fix: a slice-all pool worker printed the previous
+  plate's paint on an unpainted plate; opening the support brush filed another plate's material paint as support
+  paint; a 3mf save wrote every object under one paint attribute and let an empty support map hide material paint;
+  a worker replaced by the watchdog wiped the stored paint of the plate it held; and a save waiting on a worker
+  that was then terminated stayed on "Saving…" with the viewport blank. Worker replies now echo a `requestId`, so
+  an error reply ends only the request it belongs to.
+
 ## 0.3.1 — 2026-09-16
 
 ### Added

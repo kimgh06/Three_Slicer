@@ -12,6 +12,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 ## Core rules
 
 - **Never modify `slicers/`.** All development happens in `packages/` and `web/`.
+- **No ternary operator (`cond ? a : b`), in any language or test.** Not nested, not single, not in JSX. A ternary
+  packs a branch into an expression, where the condition, the two values and their order all have to be read at
+  once — and a single one invites the next one inside it. Write an early `return`, an `if`/`else` assignment, a
+  lookup table with `??` when the choice maps names to values (`{ key: value }[name] ?? fallback`), and `cond &&
+  <Element/>` for conditional JSX. `?.` and `??` are not ternaries and stay. Existing code is converted as it is
+  touched.
 - `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
 - Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (93 keys from an empty settings map today), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
@@ -77,6 +83,92 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream's own `TriangleSelector::serialize`/`deserialize`. It reports false and starts clean when the face count
   differs, because a different model's facet 7 is not this one's. The viewer decides which case it is from a
   TOPOLOGY key (`objectId:extruder:faces` per object), not from the vertex bytes: bytes change on every move.
+- **Paint lives on each object; the selector is a working copy of one plate's.** The kernel's selector holds one
+  merged mesh, so painting used to live nowhere else: painting a second plate discarded the first, and a copy on
+  another plate whose plate-local merge was byte-identical to the original's was taken for it — it inherited the
+  paint and the original lost it, in the G-code too. `object.paint` (the 3mf parser's shape: one Map per
+  annotation, local facet -> split-tree hex) is now the store (`core/paint_store.js`). Four rules hold it together.
+  **(1)** "Same mesh" is identity AND topology; bytes alone equate a copy with its original. **(2)** A swap to other
+  objects writes the held marks back (`exportPaint`, split per `merged.members`), prepares, then loads the new
+  mesh's marks from the store (`importPaint`) — one serialized chain per worker (`serial` in `support_paint.js`),
+  strokes blocked by a null `paintXformRef` meanwhile, and the write-back waits with NO timeout: its reply queues
+  behind a running slice, and giving up would prepare the next mesh over paint never saved. **(3)** Anything that
+  reads `object.paint` for objects the selector holds flushes first (`flushPaint`: 3mf save, copy, slice-all), and
+  every slice on the selector worker awaits `syncPaintSelector` for its own plate — a deferred pool plate included.
+  **(4)** A pool worker loads its plate's stored paint (`ctx.loadPaint`) and its reply's counts decide the extruder
+  count; a plate the selector does not hold reads its tool changes from the store (`storedPaintStates`, which
+  decodes upstream's split-tree hex — pinned against kernel strings in `test_paint_export.mjs`). A copy carries a
+  deep copy of the paint, as upstream's ModelVolume does. Paint is still outside undo. **(5)** Only the held mesh
+  has a kernel overlay, so every other object draws its stored paint itself (`refreshStoredOverlays`, run after each
+  selector job): `paintTriangles` replays upstream's split rule in JS — exact midpoints, the special-side rotation,
+  children in reverse stream order — and the result is pinned against the kernel overlay's triangle count and area.
+  Without it a plate's paint looked erased the moment another plate was painted. **(6)** Every wait on a worker ends
+  (`core/worker_reply.js` `request`): on its reply, on its own `{type:'error'}` (the worker echoes `requestId` on
+  every reply, so another command's error cannot end it), on an error event, or on `terminate()` — which
+  `makeTerminationObservable` turns into an event. The echo is pinned against the REAL worker
+  (`packages/engine/tests/test_worker_replies.mjs`, every paint command's reply type, contents and id): the viewer's
+  tests drive a fake worker, and a local `const reply` shadowing the echo helper once broke overlay, clear and import
+  with none of them noticing. A hung write-back once left "Saving…" and a blank viewport
+  (rendering stays suspended until the export ends). **(7)** The selector record belongs to one worker
+  (`record.worker`): after the watchdog or the memory ladder replaces it, nothing is written back from the new, empty
+  selector (that wiped the store: 208 -> 0) and the next registration reloads the store. **(8)** The record carries
+  the KIND of its marks — set when paint is loaded and when a stroke lands — and the write-back files them under it;
+  reading the brush mode at write time filed material paint as support paint. **(9)** A pool worker's selector must
+  hold exactly its plate's paint: slicing never resets it, so an unpainted plate after a painted one is sliced after
+  a `clear` (`poolPaintAction`; measured without it: T2 314 -> 1215 mm). **(10)** The 3mf writes each object's
+  `color` and `supports` marks under their own attribute; an empty map is no paint. **(11)** Every worker the retry
+  ladder recreates gets its plate's paint back before the retry (`sliceLadder`'s `afterRecreate`: `ctx.syncPaint`
+  for a pool worker, `syncPaintSelector` — which flushes first — for the selector worker); a retried painted plate
+  came out single-material with "G-code is fine". The overlay colour reads the recorded kind, never the last brush
+  opened. **(12)** The selector holds ONE annotation — upstream keeps material and support paint as two annotations
+  of a volume. Opening a brush of the other kind swaps it (`registerSelector(merged, {kind})`: the held marks go back
+  under their own kind, the requested kind is loaded), and a slice asks for `'auto'` (material first). Brushing
+  material over loaded support paint used to file every support mark as material paint (supports 208 -> 0, color
+  278). While the support annotation is held, the held objects' material paint is drawn from the store. A save
+  waits at most `PAINT_EXPORT_TIMEOUT_MS` for the write-back — the store is flushed before every selector slice, so
+  only strokes made during a running slice can be missing, and the notice says so. A pool worker whose plate paint
+  fails to load fails the plate ("failed to load" -> re-queued on the selector worker) rather than slicing it bare.
+  `test_paint_swap.mjs` drives the real `makeSupportPaint` against a fake selector worker for all of this.
+  **(13)** No stroke reaches the selector while it slices: a slice start closes the brush (its 'auto' swap could
+  otherwise file the open brush's strokes under the other kind), and the store is flushed right before it. So a
+  flush during a selector slice has nothing to fetch and answers `'busy'` at once — a save, copy or duplicate used to
+  queue behind the whole slice. **(14)** A load the worker fails leaves the selector empty while the store is not:
+  the swap returns 'load-failed', clears the record's kind (nothing may be written back over the store) and keeps
+  strokes blocked; the pre-slice sync turns it into a failed slice rather than a bare one. **(15)** Undo restores a
+  DELETED object's paint (the snapshot carries `paint` by reference — the store never mutates a map — and delete
+  flushes first); a live object keeps its own, so undoing a move does not roll back strokes made after it. Strokes
+  themselves are still outside undo. **(16)** A raycast reports the facet in the HIT OBJECT's numbering and the
+  selector numbers across its merge, so every stroke goes through `mergedFacetOf(members, id, facet)` — it used to
+  send the raw index, and only the merge's first object could be painted. A stroke that reaches an object of
+  another plate selects that plate and swaps the selector to it with the open brush's kind (`onPaintPlateNeeded`);
+  the samples arriving during the swap are held (the latest one is painted once it lands, which is what makes a
+  fill click on another plate work), the capsule restarts, and the section plane is re-sent in the new plate's
+  frame. A hover never swaps. An object on the held plate that the merge predates (an unpainted file dropped with
+  the brush open, an object shown again) takes the same path — its strokes used to vanish — and one the
+  registration still leaves out is not asked for again until the merge changes. `test_paint_plate_switch.mjs`
+  drives the real `createPaintInput`. Paint for a filament that is not configured is left out of the extruder count
+  on every path (`paintedExtruderCount`, `usesMultipleTools`) and named in a notice: the selector worker reported
+  only the configured states and a pool worker all 16, so one plate sliced with two different counts.
+  **(17)** The kernel overlay is one mesh per state across every held object, so it cannot follow one dragged
+  object (moving it carried the other objects' paint along until the drop). A transform drag (gizmo or scale
+  corner) flushes the selector, hides the kernel overlay and lets every held object draw its stored marks as its own
+  children (`beginPaintDrag`); the drop's re-registration awaits the rebuilt overlay and shows it again.
+  **(18)** A slice on the selector worker queues a hold right behind its paint load (`holdSelectorForSlice`) and
+  releases it once the slice is posted: a drag committed in between took the move path, whose `prepare` reached the
+  worker ahead of the slice. Any swap to another plate re-sends the section plane, not only a stroke's. A copy's
+  paste waits for the copy (`clipboardRef.copying`), and one delete runs at a time, so a repeat adds no undo entry.
+  **(19)** A write-back the worker FAILS (error reply, death, timeout) is not "nothing to write": `writeBack`
+  resolves 'failed', and a swap stops there with the selector and its unsaved strokes as they were ('export-failed',
+  which the pre-slice sync turns into a failed slice). Only a kernel without the export binding still swaps on.
+  Clear is a selector job too: sent straight to the worker it landed between a swap's export and load, and the load
+  put the paint back; it also empties the held objects' stored marks and the remembered counts. Opening a brush of
+  the other kind nulls `paintXformRef` at once: its swap queues behind any running selector job while the brush
+  switches immediately, and strokes in between were filed under the old kind.
+- **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
+  720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
+  assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not
+  when only some facets are flipped (measured: 6400 px lit under a table top whose top faces were flipped, where the
+  slice holds the 256 px leg). Any other mesh gets the contour raster of the kernel's own contours.
 - **A `.3mf` is a project, not a mesh format.** Anything off MakerWorld, and every OrcaSlicer/BambuStudio "save
   project", is a zip whose `3D/3dmodel.model` is only one member; `Metadata/project_settings.config` holds the
   flattened preset the author sliced with, `Metadata/model_settings.config` the per-object state and plate layout.
@@ -114,10 +206,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   positions are re-encoded under UPSTREAM's grid (the constant is `UPSTREAM_PLATE_GAP_RATIO` in `plate_layout.js`,
   shared with the importer so the two cannot drift). Two asymmetries that are NOT bugs: the kernel's facet numbering
   is per merged mesh and a 3mf's is per object, so `write3MFProject` rebases with the same running offset
-  `buildMergedSTL` used — which is why `exportObjects` must return objects in that same extruder-sorted order; and
-  the kernel's marks are only taken when the whole project sits on ONE plate, because the selector only ever holds
-  the merge of the selected plate and rebasing across plates would be a guess. Otherwise each object keeps the paint
-  it was imported with, so opening a painted project and saving it again never strips it.
+  `buildMergedSTL` used — which is why `exportObjects` must return objects in that same extruder-sorted order.
+  Painting is written from the per-object store after a `flushPaint`, so every plate's brush strokes are saved in
+  each object's own numbering; the writer still accepts a merge-numbered `paintExport` for a caller that has one.
   `write3MFProject` is **async** because the deflate runs off-thread (fflate's worker pool, as the parser's `unzip`
   already does) — a save is dominated by compression, and on the main thread that is a frozen tab. Measured on a
   980k-facet model: 2.6s all-on-thread when this landed, 1.5s wall / 0.45s longest frame gap now. Two of that came
@@ -128,9 +219,8 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream's `export_stl(..., selection_only, ...)`; upstream additionally rejects anything that is not a whole
   object (`Plater.cpp:16244`), which this viewer cannot hit because it has no parts. The trap is the painting: the
   kernel numbers facets across the merge of every VISIBLE object, so handing that numbering to a file holding only
-  SOME of them paints the wrong triangles. `rebasePaintOntoSubset` (`export_actions.js`) walks each mark back to its
-  owning object through the full merge order and forwards it onto the subset's own offset; `test_3mf_export.mjs`
-  pins it, including that a gap in the middle renumbers everything after it.
+  SOME of them paints the wrong triangles. The save therefore takes each object's paint from the per-object store,
+  which is numbered per object to begin with — a subset needs no rebasing.
 - Upstream's selection rules, ported as-is (`GLCanvas3D.cpp:4412` and `:4404`): a plain click replaces the
   selection, **Ctrl+click** adds or removes, a plain click on something already selected KEEPS the set (that is what
   makes dragging several objects work), empty space clears, **Shift+drag** is the box select, and Ctrl+A selects
@@ -240,13 +330,39 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `printerKeys` union must not be used as "what the printer owns" against a preset: it holds `layer_height`
   because two resin rows set it, and guarding it blanketly meant no FFF quality preset could change the layer
   height (measured); `applyProcessPreset` guards only the picked row's own keys.
+- **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
+  mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
+  `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and
+  `chain_polys` keeps a loop in its first segment's direction, prefers a continuation that STARTS at the current
+  point (four segments meet where shells coincide) and reverses a loop assembled mostly backwards (flipped facets).
+  That is upstream's Regular mode; a fully inverted shell still prints, an inward-facing inner shell is still a void
+  (`[overlapping shells]` in `test.mjs`). The golden fixtures stayed byte-identical; a clean mesh can still move
+  by Clipper rounding (measured on the Benchy: under 0.0003 mm² per layer), which shifts point order in its G-code.
+- **The prime tower is per plate, from two stores.** The position is `wipe_tower_x/y[plate]` in the GLOBAL map
+  (upstream's coFloats layout, written by both the card and the scene drag); everything else about the tower —
+  `enable_prime_tower`, `prime_tower_width`, `flush_into_infill`, `flush_volumes_matrix` and the viewer knob
+  `wipe_tower_real` — follows the plate override through the card's Global | Plate switch. The stand-ins are decided
+  per plate from `plateContext` (`towerOf` in `core/tower_layout.js`): the plate's own tool changes, on/off and
+  footprint. The footprint comes from the DERIVED params, not the map — an unset `prime_tower_width` reaches the
+  kernel as the schema's 60, which a raw read took as 30. In plate scope the card writes defaults explicitly instead
+  of deleting the key, because an override cannot express absence (it merges over the global map).
+- **A `.3mf` save carries what upstream has no place for in `Metadata/three_slicer_settings.json`**: the per-plate
+  overrides and the global map's non-schema keys (`serializeProjectSettings` drops those). Upstream's `<plate>`
+  metadata is a fixed key set (`bbs_3mf.cpp`) and it ignores unknown members, so an OrcaSlicer open sees the global
+  preset on every plate. Only existing plates are written; the reader keeps only plain maps under integer plate keys.
+  An array with a HOLE (`wipe_tower_x/y` of a plate on automatic placement) is never written as `null`: upstream's
+  loader breaks out of its whole key loop on a non-string entry (`Config.cpp` `parse_str_arr` -> `break;`), which
+  dropped every key sorting after it. The hole is written as the schema default and the original goes to the member.
+  The member also records the plate count (`<plate>` records name only plates holding objects, so an empty plate
+  with an override would not come back), is read even when no `project_settings.config` was written, and the
+  import keeps only overrides for plates that exist once placement is done.
 - **An all-plates run is a queue drained by K workers, and the selector worker is one of them.** `slice_pool.js`
   sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
   `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,
   the classic/economy ladder — lives in one closure, because it exists for one run and paints nothing. The
-  selected plate goes FIRST and to the selector worker: it is the mesh the brush painted, and a pool worker has no
-  selector, so `buildParams` reads the paint counts only for the selector worker (`painted`) — for a pool plate
-  they are someone else's facets. The selector worker's progress is re-routed through `progressSinkRef` for the
+  selected plate goes FIRST and to the selector worker: it is the mesh the brush painted. A pool worker starts with
+  an empty selector, so a pool plate with stored paint loads it first (`ctx.loadPaint`) and `buildParams` takes that
+  reply's counts; the selector worker's live counts (`painted`) belong to its own plate only. The selector worker's progress is re-routed through `progressSinkRef` for the
   run's duration so it reports per plate like the others; `reuse_stages` stays the selector worker's alone (a pool
   worker is terminated after the run — wasm heaps do not shrink, measured 8.8GB for five on a 3M-facet model).
   The STL is COPIED to a pool worker, not transferred, because the ladder re-sends it on a retry and a transferred
@@ -307,7 +423,8 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   The GPU module takes an injected GPUDevice and never touches `navigator` (layer guard); only
   `scene/gpu_device.js` does. When the SLA result still holds its merged STL (`modelSTL`), the GPU
   path upgrades to `sl1_parity_gpu.js` — slice-by-rendering: the MESH itself is drawn per layer
-  plane with stencil-invert even-odd, so the mask never depends on contour stitching (measured
+  plane with a stencil count signed by facing (NonZero, the kernel's own fill rule — it was an invert parity,
+  which left coincident objects empty in the mask), so the mask never depends on contour stitching (measured
   0.007% avg / 0.047% worst pixel diff vs the contour reference over a 775k-facet scan model, all
   658 layers rendered in 0.6s). Its `prepare()` reproduces the kernel's frame exactly: XY kept as
   the mesh's own, z seated to 0 — both measured, and the wrong half of that guess read as a 41%

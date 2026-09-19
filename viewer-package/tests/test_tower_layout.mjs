@@ -1,7 +1,8 @@
 // Prime tower placement — the stand-in must land where the slicer will actually put the tower.
 //   Run: node viewer-package/tests/test_tower_layout.mjs
 import assert from 'node:assert'
-import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats } from '../src/core/tower_layout.js'
+import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats, towerFootprint, clampTowerPosition, towerSelectionRule,
+  AUTO_GAP, RING_TOWER_SIDE_MM, REAL_TOWER_DEFAULT_WIDTH_MM } from '../src/core/tower_layout.js'
 import { platePosition } from '../src/core/plate_layout.js'
 
 const BED = { bedWidth: 200, bedDepth: 200 }
@@ -113,6 +114,10 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
   assert.equal(usesMultipleTools(onT1, { 1: 500 }), false, 'painting in state 1 alone is still the default tool')
   assert.equal(usesMultipleTools(onT1, { 2: 12 }), true, 'paint reaching extruder 2 does')
   assert.equal(usesMultipleTools(onT1, { 3: 0 }), false, 'a state with no painted facets does not')
+  // Paint for a filament that is not configured is left out of the slice, so it is not a switch here either.
+  const TWO_FILAMENTS = 2
+  assert.equal(usesMultipleTools(onT1, { 3: 12 }, TWO_FILAMENTS), false, 'T3 paint with two filaments switches nothing')
+  assert.equal(usesMultipleTools(onT1, { 2: 12, 3: 12 }, TWO_FILAMENTS), true, 'T2 paint still does')
   // An unassigned object defaults to T1 rather than to "unknown", which would otherwise read as a second tool.
   assert.equal(usesMultipleTools([{ visible: true }, { extruder: 1, visible: true }], {}), false,
     'an object with no extruder set counts as T1')
@@ -132,6 +137,70 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
   // No purge number means no tower ran — the card shows its settings and no result, rather than a zeroed one.
   assert.equal(towerResultStats({ stats: {}, gcode }, {}), null)
   assert.equal(towerResultStats(undefined, undefined), null)
+}
+
+// ---- per plate: each plate answers "is there a tower, and how wide" for itself ----
+{
+  // Plate 0 switched off, plate 1 on at its own width: before towerOf, one plate's Off hid every box and every
+  //  box took the global width.
+  const PLATE_OFF = 0, PLATE_ON = 1, OWN_WIDTH_MM = 40
+  const CUBE_HALF_MM = 10                                 // cubeOn's 20mm cube, centred on the plate
+  const boxes = towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, plateOrigin,
+    modelBounds: (plate) => cubeOn(plate),
+    towerOf: (plate) => {
+      if (plate === PLATE_OFF) return { on: false }
+      return { on: true, size: OWN_WIDTH_MM }
+    } })
+  assert.equal(boxes.length, 1)
+  assert.equal(boxes[0].plate, PLATE_ON)
+  assert.equal(boxes[0].size, OWN_WIDTH_MM, 'the plate draws its own footprint')
+  // Auto placement: one gap to the model's left, and the box is centred, so half its own footprint further.
+  assert.equal(boxes[0].x, plateOrigin(PLATE_ON).x - CUBE_HALF_MM - AUTO_GAP - OWN_WIDTH_MM / 2, 'auto placement uses that footprint too')
+  assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, plateOrigin,
+    modelBounds: (plate) => cubeOn(plate), towerOf: () => ({ on: false }) }), null, 'no plate with a tower -> null')
+  // towerOf without a size keeps the shared one.
+  assert.equal(towerBoxes({ plateCount: 1, size: SIZE, ...BED, settings: {}, plateOrigin,
+    modelBounds: () => cubeOn(0), towerOf: () => ({ on: true }) })[0].size, SIZE)
+}
+
+// ---- the footprint the kernel builds: the derived width for the real tower, the fixed ring otherwise ----
+{
+  const SCHEMA_DEFAULT_TOWER_WIDTH_MM = 60   // what an unset prime_tower_width derives to (config-schema.json)
+  const REAL = true, RING = false
+  assert.equal(towerFootprint({ prime_tower_width: SCHEMA_DEFAULT_TOWER_WIDTH_MM }, REAL), SCHEMA_DEFAULT_TOWER_WIDTH_MM,
+    'an unset width reaches the kernel as the schema default')
+  assert.equal(towerFootprint({}, REAL), REAL_TOWER_DEFAULT_WIDTH_MM, 'no width at all -> the kernel default')
+  assert.equal(towerFootprint({ prime_tower_width: SCHEMA_DEFAULT_TOWER_WIDTH_MM }, RING), RING_TOWER_SIDE_MM, 'the ring ignores the width')
+}
+
+// ---- a chosen position stays on the bed: corner coordinates in [0, bed - footprint] ----
+{
+  const BED_WIDTH_MM = 200, BED_DEPTH_MM = 250, TOWER_MM = 30
+  const frame = { bedW: BED_WIDTH_MM, bedD: BED_DEPTH_MM, size: TOWER_MM }
+  const FAR_PAST_THE_BED_MM = 500, BEFORE_THE_BED_MM = -20
+  assert.deepEqual(clampTowerPosition(BEFORE_THE_BED_MM, FAR_PAST_THE_BED_MM, frame), [0, BED_DEPTH_MM - TOWER_MM], 'clamped to the near and far edges')
+  const inside = [50, 60]
+  assert.deepEqual(clampTowerPosition(...inside, frame), inside, 'inside is untouched')
+  assert.deepEqual(clampTowerPosition('12', '7', frame), [12, 7], 'typed strings become numbers')
+  const BED_SMALLER_THAN_TOWER_MM = TOWER_MM / 3
+  assert.deepEqual(clampTowerPosition(FAR_PAST_THE_BED_MM, FAR_PAST_THE_BED_MM, { bedW: NaN, bedD: BED_SMALLER_THAN_TOWER_MM, size: TOWER_MM }),
+    [FAR_PAST_THE_BED_MM, FAR_PAST_THE_BED_MM], 'an unknown bed, or one smaller than the tower, is not clamped into a negative range')
+}
+
+// ---- the tower is selected alone; the primary decides which side of the rule wins ----
+{
+  const isTower = (item) => item === 'tower'
+  const withTowerPrimary = new Set(['a', 'b', 'tower'])
+  assert.equal(towerSelectionRule(withTowerPrimary, 'tower', isTower), true)
+  assert.deepEqual([...withTowerPrimary], ['tower'], 'Ctrl+click on the tower drops the objects')
+  const withObjectPrimary = new Set(['tower', 'a', 'b'])
+  assert.equal(towerSelectionRule(withObjectPrimary, 'b', isTower), false)
+  assert.deepEqual([...withObjectPrimary], ['a', 'b'], 'adding an object (click or box) drops the tower')
+  const objectsOnly = new Set(['a', 'b'])
+  assert.equal(towerSelectionRule(objectsOnly, 'a', isTower), false)
+  assert.deepEqual([...objectsOnly], ['a', 'b'], 'a selection without the tower is untouched')
+  assert.equal(towerSelectionRule(new Set(['tower']), 'tower', isTower), true, 'the tower alone -> translate only')
+  assert.equal(towerSelectionRule(new Set(), null, isTower), false)
 }
 
 console.log('tower_layout: ok')

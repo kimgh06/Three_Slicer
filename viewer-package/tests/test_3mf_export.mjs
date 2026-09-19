@@ -2,8 +2,7 @@
 // is what went in. A writer can only be wrong in ways its own reader hides, so every assertion here goes through
 // parse3MFProject / normalizeProjectSettings / platePlacements — the code that reads a MakerWorld file — rather
 // than re-parsing the XML the writer just produced.
-import { write3MFProject, writeSTL } from '../src/core/write_3mf.js'
-import { rebasePaintOntoSubset } from '../src/actions/export_actions.js'
+import { write3MFProject, writeSTL, VIEWER_SETTINGS_MEMBER } from '../src/core/write_3mf.js'
 import { parse3MFProject } from '../src/core/parse_3mf.js'
 import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from '../src/settings/index.js'
 import { platePlacements } from '../src/actions/model_load.js'
@@ -207,30 +206,117 @@ function viewerPlateOriginOf(plate, plateCount = 1) {
     [0, 4, 8].map(o => degenerateView.getFloat32(84 + o, true)), [0, 0, 0])
 }
 
-// ---- 7. exporting a SUBSET rebases the kernel's facet numbering ----------------------------------------------
-// The kernel numbers facets across every visible object's merge. Handing that numbering to a file containing only
-// some of those objects would paint the wrong triangles — silently, and on the model the user is looking at.
+// ---- shared by 4b, 5, 5b and 6: a one-object project on plate 0 of a `plateCount`-plate session ----
+const TETRA_FACETS = 4
+const oneObjectOnPlateZero = (plateCount = 1) =>
+  [{ id: 1, name: 'a', extruder: 1, plate: 0, ...viewerPlateOriginOf(0, plateCount), tris: tetra(0, 0), faceCount: TETRA_FACETS, paint: null }]
+const LAYER_HEIGHT_MM = 0.2
+
+// ---- 4b. each object's material and support paint under its own attribute ----------------------------------
 {
-  const all = [
-    { id: 1, faceCount: 4 },
-    { id: 2, faceCount: 4 },
-    { id: 3, faceCount: 4 },
-  ]
-  // merged facet 9 is object 3's facet 1; merged facet 2 is object 1's facet 2.
-  const kernelPaint = { facets: [2, 5, 9], hex: '8\n4\n0C' }
+  const HEX_STATE_2 = '8', HEX_STATE_3 = '0C', HEX_STATE_1 = '4'
+  const paintedObject = (id, paint) => ({ ...oneObjectOnPlateZero()[0], id, name: `o${id}`, tris: tetra(id * 30, 0), paint })
+  const readBack = async (objects, options = {}) => {
+    const { objects: read } = await parse3MFProject(await write3MFProject(objects, { layer_height: LAYER_HEIGHT_MM },
+      { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1, ...options }), 'kinds')
+    return read.map(o => [o.paint?.color?.size ?? 0, o.paint?.supports?.size ?? 0])
+  }
+  // Material paint on one object, support paint on another — whatever brush was used last.
+  const mixed = () => [paintedObject(1, { color: new Map([[0, HEX_STATE_2], [1, HEX_STATE_3]]) }), paintedObject(2, { supports: new Map([[2, HEX_STATE_1]]) })]
+  eq('mixed kinds keep their own attribute (last brush material)', await readBack(mixed(), { paintKind: 'color' }), [[2, 0], [0, 1]])
+  eq('mixed kinds keep their own attribute (last brush support)', await readBack(mixed(), { paintKind: 'supports' }), [[2, 0], [0, 1]])
+  // An EMPTY support map must not shadow the object's material paint.
+  eq('an empty map is no paint', await readBack([paintedObject(1, { color: new Map([[0, HEX_STATE_2]]), supports: new Map() })], { paintKind: 'supports' }), [[1, 0]])
+  // Both annotations on one facet, as upstream allows.
+  eq('both annotations on one facet', await readBack([paintedObject(1, { color: new Map([[0, HEX_STATE_2]]), supports: new Map([[0, HEX_STATE_1]]) })]), [[1, 1]])
+}
 
-  const middleOnly = rebasePaintOntoSubset(kernelPaint, all, [all[1]])
-  eq('only the marks of the exported object survive', middleOnly.facets, [1])
-  eq('...with its own hex', middleOnly.hex, '4')
+// ---- 5. what upstream has no place for: per-plate overrides and the viewer knobs, in our own member -----------
+{
+  const SESSION_PLATES = 3
+  const OVERRIDDEN_PLATE = 1, EMPTIED_PLATE = 2, DELETED_PLATE = 5   // DELETED_PLATE >= SESSION_PLATES
+  const OVERRIDE_TOWER_WIDTH_MM = 40, OVERRIDE_LAYER_HEIGHT_MM = 0.3
+  const overrideOfPlate = { enable_prime_tower: false, prime_tower_width: OVERRIDE_TOWER_WIDTH_MM, wipe_tower_real: false }
+  const settings = { layer_height: LAYER_HEIGHT_MM, wipe_tower_real: true, enable_prime_tower: true }
+  const plateSettings = {
+    [OVERRIDDEN_PLATE]: overrideOfPlate,
+    [EMPTIED_PLATE]: {},                                         // an emptied override is not a plate override
+    [DELETED_PLATE]: { layer_height: OVERRIDE_LAYER_HEIGHT_MM },  // a plate that no longer exists is not written
+  }
+  const bytes = await write3MFProject(oneObjectOnPlateZero(SESSION_PLATES), settings,
+    { bedWidth: BED_W, bedDepth: BED_D, plateCount: SESSION_PLATES, plateSettings })
+  const { project } = await parse3MFProject(bytes, 'sidecar')
+  eq('the per-plate overrides come back, keyed by plate, with their JS types', project.plateSettings, { [OVERRIDDEN_PLATE]: overrideOfPlate })
+  eq('the non-schema knobs of the global map come back', project.viewerSettings, { wipe_tower_real: true })
+  check('project_settings.config still carries only schema keys', !('wipe_tower_real' in project.settings))
 
-  const firstAndLast = rebasePaintOntoSubset(kernelPaint, all, [all[0], all[2]])
-  // object 1 keeps base 0, object 3 now starts at 4 — so its facet 1 becomes 5.
-  eq('a gap in the middle renumbers what follows it', firstAndLast.facets, [2, 5])
-  eq('...and each hex rides with its own facet', firstAndLast.hex, '8\n0C')
+  // No overrides and no knobs: no member at all, so a plain project is the file it always was.
+  const plain = await parse3MFProject(await write3MFProject(oneObjectOnPlateZero(), { layer_height: LAYER_HEIGHT_MM },
+    { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 }), 'plain')
+  eq('nothing to carry -> no sidecar', [plain.project.plateSettings, plain.project.viewerSettings], [null, null])
+}
 
-  eq('exporting everything is the identity', rebasePaintOntoSubset(kernelPaint, all, all).facets, [2, 5, 9])
-  eq('a subset with no marks yields nothing', rebasePaintOntoSubset(kernelPaint, all, [{ id: 9, faceCount: 4 }]), null)
-  eq('no kernel paint yields nothing', rebasePaintOntoSubset(null, all, all), null)
+// ---- 5b. an array with holes: strings only for upstream, the holes kept for us --------------------------------
+{
+  const SESSION_PLATES = 3
+  // Upstream's schema defaults for wipe_tower_x/y — what a hole is written as (settingRaw({}, key)).
+  const UPSTREAM_TOWER_X_DEFAULT = '15', UPSTREAM_TOWER_Y_DEFAULT = '220'
+  const CHOSEN_X_MM = 160, CHOSEN_Y_MM = 150, Z_HOP_MM = 0.4
+  // Plate 0 automatic, plate 1 chosen: the shape writeTowerPosition produces (x is sparse, y holds an explicit null).
+  const towerX = []; towerX[1] = CHOSEN_X_MM
+  const settings = { layer_height: LAYER_HEIGHT_MM, z_hop: Z_HOP_MM, wipe_tower_x: towerX, wipe_tower_y: [null, CHOSEN_Y_MM] }
+  const bytes = await write3MFProject(oneObjectOnPlateZero(SESSION_PLATES), settings, { bedWidth: BED_W, bedDepth: BED_D, plateCount: SESSION_PLATES })
+  const { project } = await parse3MFProject(bytes, 'holes')
+  // Upstream's parse_str_arr accepts an array only when every entry is a string; anything else ends its key loop.
+  const isStringArrayOrScalar = (value) => !Array.isArray(value) || value.every(entry => typeof entry === 'string')
+  check('every array entry in project_settings.config is a string', Object.values(project.settings).every(isStringArrayOrScalar))
+  eq('a hole is written as the schema default', [project.settings.wipe_tower_x, project.settings.wipe_tower_y],
+     [[UPSTREAM_TOWER_X_DEFAULT, String(CHOSEN_X_MM)], [UPSTREAM_TOWER_Y_DEFAULT, String(CHOSEN_Y_MM)]])
+  eq('keys after it are still there for upstream', project.settings.z_hop, String(Z_HOP_MM))
+  // The import lays the sidecar over project_settings.config, so the plate is automatic again here.
+  const restored = { ...normalizeProjectSettings(project.settings).settings, ...project.viewerSettings }
+  eq('the hole comes back as a hole', [restored.wipe_tower_x[0] == null, restored.wipe_tower_x[1]], [true, CHOSEN_X_MM])
+  eq('...on both axes', [restored.wipe_tower_y[0], restored.wipe_tower_y[1]], [null, CHOSEN_Y_MM])
+}
+
+// ---- 5c. a hole in a bool array is written in upstream's bool spelling, not "false" --------------------------
+{
+  // retract_when_changing_layer is a coBools (one per extruder); a hole must become the schema default as "0"/"1".
+  const holedBools = []; holedBools[1] = true
+  const bytes = await write3MFProject(oneObjectOnPlateZero(), { layer_height: LAYER_HEIGHT_MM, retract_when_changing_layer: holedBools },
+    { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 })
+  const { project } = await parse3MFProject(bytes, 'bool holes')
+  eq('a bool hole is the default in bool spelling', project.settings.retract_when_changing_layer, ['0', '1'])
+}
+
+// ---- 5d. an empty plate keeps the grid: every plate gets a <plate> record ----------------------------------
+{
+  const SESSION_PLATES = 5, OCCUPIED = [0, 3]
+  const objects = OCCUPIED.map(plate => {
+    const origin = viewerPlateOrigin(plate, SESSION_PLATES, BED_W, BED_D)
+    return { id: plate + 1, name: `p${plate}`, extruder: 1, plate, plateOriginX: origin.x, plateOriginY: origin.y,
+             tris: tetra(origin.x + 20, origin.y + 30, 6), faceCount: TETRA_FACETS, paint: null }
+  })
+  const bytes = await write3MFProject(objects, { layer_height: LAYER_HEIGHT_MM }, { bedWidth: BED_W, bedDepth: BED_D, plateCount: SESSION_PLATES })
+  const { objects: read, project } = await parse3MFProject(bytes, 'empty plates')
+  eq('a <plate> record for every plate, the empty ones too', project.plates.map(plate => plate.index), [0, 1, 2, 3, 4])
+  const placements = platePlacements(project.plates, read, BED_W, BED_D)
+  eq('objects decode onto their own plates under the same grid', placements.map(([, plate]) => plate), OCCUPIED)
+  const TETRA_SIZE_MM = 6, TETRA_BBOX_CENTRE_MM = TETRA_SIZE_MM / 2   // offsets are of the bbox centre (as in section 2)
+  near('...at their own offset', placements[1][2], 20 + TETRA_BBOX_CENTRE_MM, 0.01)
+}
+
+// ---- 6. the sidecar is read defensively: a file from anywhere costs only itself ----------------------------
+{
+  const { zipSync, unzipSync, strToU8 } = await import('three/examples/jsm/libs/fflate.module.js')
+  const base = await write3MFProject(oneObjectOnPlateZero(), { layer_height: LAYER_HEIGHT_MM }, { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 })
+  const withMember = (text) => { const files = unzipSync(base); files[VIEWER_SETTINGS_MEMBER] = strToU8(text); return zipSync(files) }
+  const broken = await parse3MFProject(withMember('{ not json'), 'broken')
+  eq('malformed JSON -> nothing, and the geometry still loads', [broken.project.plateSettings, broken.objects.length], [null, 1])
+  const VALID_PLATE = 1, VALID_OVERRIDE = { layer_height: 0.3 }
+  const oddSidecar = { version: 1, viewer: [1], plates: { '-1': { a: 1 }, x: { a: 1 }, 0: [1], [VALID_PLATE]: VALID_OVERRIDE } }
+  const odd = await parse3MFProject(withMember(JSON.stringify(oddSidecar)), 'odd')
+  eq('only plain maps under plate indices survive', [odd.project.plateSettings, odd.project.viewerSettings], [{ [VALID_PLATE]: VALID_OVERRIDE }, null])
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\n3mf export passed')

@@ -21,7 +21,7 @@ static Paths slice_group(const std::vector<Tri>& tris, int lo, int hi, double z)
   for (int ti=lo; ti<hi; ++ti){ const Tri& t=tris[ti];
     double zmin=std::min({t.v[0].z,t.v[1].z,t.v[2].z}), zmax=std::max({t.v[0].z,t.v[1].z,t.v[2].z});
     if (z<zmin||z>=zmax) continue; if (tri_plane(t,z,sg)) segs.push_back(sg); }
-  return SimplifyPolygons(chain_polys(segs), pftEvenOdd);
+  return SimplifyPolygons(chain_polys(segs), pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
 }
 // =============================================================================
 // Multi-material basics (a stretch goal): two triangle groups (mm_group_split) are sliced separately within a layer,

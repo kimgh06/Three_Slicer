@@ -193,6 +193,20 @@ export async function loadModel(name, buffer) {
 // Returns: Float32Array[] when there are 2+ components (each component's localPos, in the input coordinate system),
 //       null when there is only 1 (cannot split).
 export function splitConnectedComponents(localPos) {
+  return splitComponentFacets(localPos)?.map(faces => facetPositions(localPos, faces)) ?? null
+}
+
+// The triangle stream of the listed facets, in that order.
+export function facetPositions(localPos, faces) {
+  const out = new Float32Array(faces.length * 9)
+  let w = 0
+  for (const t of faces) { const o = t * 9; for (let k = 0; k < 9; k++) out[w++] = localPos[o + k] }
+  return out
+}
+
+// The same components as input facet indices, largest first, each in input order — what a split needs to hand the
+//  parent's per-facet paint to the parts (splitConnectedComponents returns the parts in this order).
+export function splitComponentFacets(localPos) {
   const nTri = Math.floor(localPos.length / 9)
   if (nTri < 2) return null
 
@@ -240,11 +254,5 @@ export function splitConnectedComponents(localPos) {
   if (groups.size < 2) return null
 
   // Largest component first (upstream also sorts by volume so the first object is the main body)
-  const parts = [...groups.values()].sort((a, b) => b.length - a.length)
-  return parts.map(faces => {
-    const out = new Float32Array(faces.length * 9)
-    let w = 0
-    for (const t of faces) { const o = t * 9; for (let k = 0; k < 9; k++) out[w++] = localPos[o + k] }
-    return out
-  })
+  return [...groups.values()].sort((a, b) => b.length - a.length)
 }

@@ -8,7 +8,7 @@
 //   · plates live in WORLD space under upstream's own grid (corner origin, gap = bed/5, rows along -y)
 //   · painting rides on the <triangle> tag as paint_color / paint_supports hex, not in model_settings.config
 import { zipSync, zip, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
-import { serializeProjectSettings } from 'three-slicer-viewer/settings'
+import { serializeProjectSettings, settingRaw } from 'three-slicer-viewer/settings'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
 import { DEFAULT_BED, SLA_POINT_RADIUS } from './viewer_defaults.js'
 import { STL_HEADER_BYTES, STL_DATA_OFFSET, stlByteLength } from './stl_format.js'
@@ -199,10 +199,65 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
  *   opts.bedWidth/bedDepth/plateCount — the plate grid to encode positions under.
  * Returns a Promise of a Uint8Array (the zip) — the compression runs off the main thread where it can.
  */
+// What upstream's project format has no place for, in a member of our own. project_settings.config is ONE
+//  flattened preset, typed by the schema, and upstream's <plate> metadata is a fixed set of keys (bed type, print
+//  sequence, spiral mode, filament map — bbs_3mf.cpp), so two things used to be lost on every save: the per-plate
+//  overrides (a plate's own tower, width, layer height...) and the viewer knobs in the global map that no schema
+//  types (wipe_tower_real, sla_antialias). Plain JSON, because only this package reads it — the values keep their JS
+//  types and need none of the string coercion project_settings.config does. Upstream ignores an unknown zip member,
+//  so an OrcaSlicer open of the same file sees the global preset on every plate, exactly as before this existed.
+//  Only plates that exist are written, and the plate count with them: an override left on a plate index the
+//  import does not recreate would come back attached to whatever plate takes that index next.
+export const VIEWER_SETTINGS_MEMBER = 'Metadata/three_slicer_settings.json'
+
+// The per-facet paint attributes upstream's 3mf uses, one per annotation of the per-object store.
+const PAINT_ATTRIBUTES = [['color', 'paint_color'], ['supports', 'paint_supports']]
+
+// A hole in an array value — wipe_tower_x/y hold `null` for a plate whose tower is placed automatically — is not
+//  something upstream can read, and not harmlessly: its loader rejects an array whose entries are not all strings
+//  and then BREAKS OUT OF THE WHOLE KEY LOOP (Config.cpp load_from_json, `parse_str_arr` -> `break;`). Keys are
+//  visited in sorted order, so one `null` in wipe_tower_x silently dropped the 17 keys after it — z_hop, z_offset,
+//  xy_hole_compensation among them (measured with upstream's own parse loop on a file this writer produced).
+//  Upstream has no "automatic" position, so the hole is written as the schema default (what a fresh upstream plate
+//  holds), and the original array — holes included — goes to our own member, whose values the import lays over
+//  project_settings.config, so this viewer still reads "automatic". Mutates `projectSettings`; returns the
+//  originals it replaced.
+function fillArrayHoles(projectSettings, settings) {
+  const holed = {}
+  for (const [key, value] of Object.entries(projectSettings)) {
+    const original = settings?.[key]
+    if (!Array.isArray(value) || !Array.isArray(original)) continue
+    // A hole is judged on the ORIGINAL entry (null, or a sparse array's missing slot — Array.from reads it as
+    //  undefined), not on the serialized one: serializeScalar writes null as '', and '' is also a legitimate blank
+    //  in a string vector (a filament slot with no preset id), which must stay as written.
+    const holes = Array.from(original, entry => entry == null)
+    if (!holes.some(Boolean)) continue
+    // The default in upstream's spelling for its type (a bool as "0"/"1", a point as "XxY") — a String() of it wrote
+    //  "false", which upstream rejects, ending its key loop exactly as a null did.
+    const fallback = [settingRaw({}, key)].flat()[0]
+    const fallbackText = serializeProjectSettings({ [key]: [fallback] })[key]?.[0] ?? ''
+    projectSettings[key] = holes.map((hole, at) => {
+      if (hole) return fallbackText
+      return value[at]
+    })
+    holed[key] = original
+  }
+  return holed
+}
+function viewerSettingsSidecar(settings, projectSettings, plateSettings, plateCount, holed = {}) {
+  const viewer = { ...Object.fromEntries(Object.entries(settings ?? {}).filter(([key]) => !(key in projectSettings))), ...holed }
+  const plates = Object.fromEntries(Object.entries(plateSettings ?? {})
+    .filter(([plate, map]) => Number(plate) < plateCount && map && Object.keys(map).length))
+  if (!Object.keys(viewer).length && !Object.keys(plates).length) return null
+  // The plate count too: the <plate> records hold only plates with objects, so an EMPTY plate that carries an
+  //  override would not exist after import, and its override would attach to whatever plate took that index next.
+  return { version: 1, viewer, plates, plateCount }
+}
+
 export async function write3MFProject(objects, settings, opts = {}) {
   const {
     paintExport = null, paintKind = 'color', bedWidth = DEFAULT_BED.width, bedDepth = DEFAULT_BED.depth, plateCount = 1,
-    application = 'ThreeSlicer',
+    application = 'ThreeSlicer', plateSettings = null,
   } = opts
   if (!objects?.length) throw new Error('nothing to export')
 
@@ -226,11 +281,18 @@ export async function write3MFProject(objects, settings, opts = {}) {
       paintByObject.get(at).set(facet - bases[at], hex)
     }
   }
-  // No kernel export (no selector this session): the marks a 3mf was IMPORTED with still sit on the objects, and
-  //  losing them on a save-reload round trip would be the worse outcome. Per object, so no rebasing is involved.
-  const importedPaint = (object) => object.paint?.[paintKind] ?? object.paint?.color ?? object.paint?.supports ?? null
-
-  const paintAttr = paintKind === 'supports' ? 'paint_supports' : 'paint_color'
+  // Every annotation goes under its OWN attribute, from each object's own marks (the per-object store) — upstream
+  //  keeps material and support paint as two annotations a facet can carry both of. One attribute for the whole
+  //  file, picked from the brush last used, filed one plate's material paint as another's support paint, and an
+  //  EMPTY support map shadowed the object's real material paint so nothing was written (measured: color 1,
+  //  supports 0 in -> color 0, supports 0 back). A merge-numbered kernel export (`paintExport`) stands in for the
+  //  `paintKind` annotation it describes. An empty map is no paint.
+  const marksOf = (object, at, kind) => {
+    if (kind === paintKind && paintByObject.has(at)) return paintByObject.get(at)
+    const marks = object.paint?.[kind]
+    if (marks?.size) return marks
+    return null
+  }
 
   const modelParts = [
     '<?xml version="1.0" encoding="UTF-8"?>\n',
@@ -252,10 +314,17 @@ export async function write3MFProject(objects, settings, opts = {}) {
       y: origin.y + bedDepth / 2 - (object.plateOriginY ?? 0),
     }
 
-    const painted = paintByObject.get(at) ?? importedPaint(object)
-    const paintOf = painted
-      ? (face) => { const hex = painted.get(face); return hex ? ` ${paintAttr}="${hex}"` : '' }
-      : () => ''
+    const annotations = PAINT_ATTRIBUTES
+      .map(([kind, attribute]) => [attribute, marksOf(object, at, kind)])
+      .filter(([, marks]) => marks)
+    const paintOf = (face) => {
+      let attributes = ''
+      for (const [attribute, marks] of annotations) {
+        const hex = marks.get(face)
+        if (hex) attributes += ` ${attribute}="${hex}"`
+      }
+      return attributes
+    }
     const modifiers = object.sla?.modifierVolumes || []
     const parts = [object.tris, ...modifiers.map(modifier => modifier.tris)]
     const length = parts.reduce((sum, part) => sum + part.length, 0)
@@ -291,7 +360,11 @@ export async function write3MFProject(objects, settings, opts = {}) {
     objectConfig.push('  </object>\n')
   })
   // plater_id is 1-based upstream; the viewer's plates are 0-based (parse_3mf.js reads it back the same way).
+  // A record for EVERY plate, the empty ones included, as upstream writes them: the importer lays its grid out from
+  //  the number of records, and one short (an empty plate between two occupied ones) moved every column —
+  //  objects failed to decode onto their plates and fell back to group-centred placement.
   const plates = new Map()
+  for (let plate = 0; plate < plateCount; plate++) plates.set(plate, [])
   objects.forEach((object, at) => {
     const plate = object.plate ?? 0
     if (!plates.has(plate)) plates.set(plate, [])
@@ -313,8 +386,11 @@ export async function write3MFProject(objects, settings, opts = {}) {
     'Metadata/model_settings.config': strToU8(objectConfig.join('')),
   }
   const projectSettings = serializeProjectSettings(settings)
+  const holed = fillArrayHoles(projectSettings, settings)
   if (Object.keys(projectSettings).length)
     files['Metadata/project_settings.config'] = strToU8(JSON.stringify(projectSettings, null, 4) + '\n')
+  const sidecar = viewerSettingsSidecar(settings, projectSettings, plateSettings, plateCount, holed)
+  if (sidecar) files[VIEWER_SETTINGS_MEMBER] = strToU8(JSON.stringify(sidecar, null, 2) + '\n')
 
   const supportLines = []
   const drainLines = []

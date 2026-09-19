@@ -79,8 +79,8 @@ export function platePlacements(plates, loaded, bedWidth, bedDepth) {
 
 function droppedFeatures(project, loaded) {
   const dropped = []
-  if (loaded.some(o => o.paint?.seam.size)) dropped.push('seam painting')
-  if (loaded.some(o => o.paint?.fuzzy.size)) dropped.push('fuzzy-skin painting')
+  if (loaded.some(o => o.paint?.seam?.size)) dropped.push('seam painting')
+  if (loaded.some(o => o.paint?.fuzzy?.size)) dropped.push('fuzzy-skin painting')
   if (project.hasLayerHeightProfile) dropped.push('variable layer height')
   if (project.hasCustomGcodePerLayer) dropped.push('per-layer custom G-code')
   // A per-object override only counts if it names something the config schema knows — the rest of that metadata is
@@ -136,11 +136,15 @@ export function makeModelLoad(deps) {
     if (imported?.applied) {
       // Replace rather than merge: this map is "what the project is", and merging would leave keys from whatever
       //  was loaded before silently overriding the author's preset in ways nothing on screen would explain.
-      //  The per-plate overrides go with it, for the same reason: a 3mf carries no per-plate printer state, so a
+      //  The per-plate overrides go with it, for the same reason: an upstream 3mf carries no per-plate printer state, so a
       //  previous session's "plate 2 is SLA / 330mm" surviving onto the imported project would resize its grid
       //  and reroute its slicer with nothing on screen explaining why.
-      setSettings?.(imported.settings)
-      setPlateSettings?.(() => ({}))
+      //  What does travel with it is this package's own member (write_3mf.js): the global viewer knobs the schema
+      //  cannot type (wipe_tower_real...) layered over the map here, and the per-plate overrides once the plates
+      //  exist (below).
+      let settingsWithKnobs = imported.settings
+      if (project.viewerSettings) settingsWithKnobs = { ...imported.settings, ...project.viewerSettings }
+      setSettings?.(settingsWithKnobs)
       notices.push(`${imported.applied} settings`)
       // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
       //  in it. `filament_colour` is the one key that always has one entry per loaded filament (the *_settings_id
@@ -151,6 +155,9 @@ export function makeModelLoad(deps) {
         notices.push(`${colors.length} filaments`)
       }
     }
+    //  A save whose global map held no schema key writes no project_settings.config at all, but may still carry our
+    //  member — its knobs then go over the settings already loaded rather than being dropped with the missing file.
+    else if (project.viewerSettings) setSettings?.(settings => ({ ...settings, ...project.viewerSettings }))
     for (const entry of loaded) {
       const meta = project.objectMeta.get(entry.objectid)
       if (!meta) continue
@@ -160,10 +167,13 @@ export function makeModelLoad(deps) {
     }
     // Plates last: placing an object needs the FINAL plate count, because the plate origins are laid out against it.
     const assignments = platePlacements(project.plates, loaded, bed?.bed_width, bed?.bed_depth)
-    let beyondLastPlate = 0
+    let beyondLastPlate = 0, finalPlateCount = plateCountRef?.current ?? 1
     if (assignments.length && applyProjectPlates) {
-      const needed = Math.max(...assignments.map(([, index]) => index)) + 1
+      //  The saved plate count counts too (our member): the <plate> records name only plates holding objects, so an
+      //  empty plate the author configured would otherwise not come back.
+      const needed = Math.max(Math.max(...assignments.map(([, index]) => index)) + 1, project.plates.length, project.plateCount ?? 0)
       applyProjectPlates(needed, bed?.bed_width, bed?.bed_depth, (plateCount) => {
+        finalPlateCount = plateCount
         for (const [id, index, offsetX, offsetY] of assignments) {
           // The bed tops out at MAX_PLATES, so a project with more of them keeps those objects where they landed
           //  rather than piling them onto the last plate — and says so, because a silently merged plate prints wrong.
@@ -172,6 +182,14 @@ export function makeModelLoad(deps) {
         }
       })
       notices.push(`${project.plates.length} plates`)
+    }
+    //  Per-plate overrides once the plate count is final, and only for plates that exist: MAX_PLATES can cut the
+    //  project short, and an override on an index past the last plate would attach itself to the next plate added.
+    //  A project with settings replaces the overrides even when it carries none (see "Replace rather than merge").
+    if (imported?.applied || project.plateSettings) {
+      const kept = Object.fromEntries(Object.entries(project.plateSettings ?? {}).filter(([plate]) => Number(plate) < finalPlateCount))
+      setPlateSettings?.(() => kept)
+      if (Object.keys(kept).length) notices.push(`${Object.keys(kept).length} plate override(s)`)
     }
     const dropped = droppedFeatures(project, loaded)
     if (beyondLastPlate) dropped.push(`${beyondLastPlate} object(s) on plates past this viewer's limit`)
@@ -240,9 +258,8 @@ export function makeModelLoad(deps) {
     setObjects(objectRows(objectsRef.current, apiRef.current))
     if (totalTri > 100000) setTriWarn(`${Math.round(totalTri).toLocaleString()} triangles — slicing may take a while`)
     for (const f of sl1Files) await importSl1(f)
-    // Imported painting only reaches the kernel through the selector, and nothing else registers one until the user
-    //  enters a brush — so a project could otherwise be sliced with its paint still sitting in JS. Registering here
-    //  is also what makes the import one-shot: it consumes the pending marks (see support_paint.js).
+    // Imported painting sits on the objects (the per-object store, core/paint_store.js); registering the selector
+    //  here loads the selected plate's share of it into the kernel and draws it, without waiting for a brush.
     if (anyPaint) registerSelectorRef?.current?.()
   }
   function onFiles(e) { loadFiles(e.target.files); e.target.value = '' }

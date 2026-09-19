@@ -4,7 +4,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster } from './sla_raster.js'
-import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'
+import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'; import { towerSelectionRule } from '../core/tower_layout.js'
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates } from './plate_scene.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
@@ -119,39 +119,18 @@ export function useThreeScene(deps) {
     //  cannot slice negative z, so sinking is unsupported -> any minZ≠0 snaps to 0 in either direction. World bbox minY (three height) -> 0.
     const _seatBox = new THREE.Box3()
     const seatMesh = (m) => { if (!m) return; m.updateMatrixWorld(true); _seatBox.setFromObject(m); const minY = _seatBox.min.y; if (Number.isFinite(minY) && Math.abs(minY) > 1e-4) { m.position.y -= minY; m.updateMatrixWorld(true) } }
-    // The paint overlay is baked in world coordinates and rebuilt from the kernel only on commit, so between grab
-    //  and drop it would sit still while the mesh moves under it. Instead, the delta from the grab pose rides on
-    //  the overlay meshes every objectChange — position, rotation and scale all fold into one matrix — and the
-    //  commit's kernel rebuild then replaces the approximation with the truth.
-    //  ponytail: the WHOLE overlay follows the dragged object; with paint on several objects the others' marks
-    //  ride along for the duration of the drag (snapped right on drop). Splitting per object needs the kernel to
-    //  report each overlay triangle's source facet.
-    const paintDragStartInverse = new THREE.Matrix4(), paintDragDelta = new THREE.Matrix4()
-    const paintDragBase = new Map()   // overlay mesh -> its matrix at grab (a prior drag's delta may still be on it)
-    let paintDragging = false
+    // The kernel's paint overlay is one mesh per state across every object the selector holds, so it cannot follow
+    //  one dragged object: the paint module draws per object for the drag instead (support_paint.js beginPaintDrag).
     transform.addEventListener('objectChange', () => {
       if (transform.mode === 'scale' && transform.object) clampMeshScale(transform.object)
-      if (!paintDragging || !transform.object) return
-      transform.object.updateMatrixWorld(true)
-      paintDragDelta.copy(transform.object.matrixWorld).multiply(paintDragStartInverse)
-      for (const [mesh, base] of paintDragBase) {
-        mesh.matrixAutoUpdate = false
-        mesh.matrix.multiplyMatrices(paintDragDelta, base)
-      }
     })
     transform.addEventListener('dragging-changed', e => {
       orbit.enabled = !e.value
       if (e.value) {
-        deps.onTransformStarted?.()   // undo records the state BEFORE the drag; the commit below only says it ended
-        paintDragBase.clear()
-        const overlays = deps.paintOverlayRef?.current
-        paintDragging = !!(overlays && overlays.size && transform.object && !transform.object.userData?.isPrimeTower)
-        if (paintDragging) {
-          transform.object.updateMatrixWorld(true)
-          paintDragStartInverse.copy(transform.object.matrixWorld).invert()
-          for (const mesh of overlays.values()) paintDragBase.set(mesh, mesh.matrix.clone())
-        }
-      } else paintDragging = false
+        // Undo records the state BEFORE the drag (the commit only says it ended); not the tower's — a host setting.
+        if (!isTower(transform.object)) deps.onTransformStarted?.()
+        if (transform.object && !isTower(transform.object)) deps.onPaintDragStart?.()
+      } else deps.onPaintDragEnd?.()
       if (!e.value) {
         // The tower stands on the bed by definition and has no geometry to seat — it reports its new XY instead.
         if (transform.object && transform.object.userData?.isPrimeTower) {
@@ -159,8 +138,8 @@ export function useThreeScene(deps) {
           // The kernel reads prime_tower_x/y as the tower's CORNER (ptx .. ptx+side), so the box's centre has to
           //  give up half its footprint on the way out — otherwise a dropped tower re-renders half a width away.
           const half = transform.object.scale.x / 2
-          // Which plate's box was dragged decides which origin comes back off the world coordinates — the
-          //  setting itself is one shared scalar, so a drag on any plate moves every plate's tower alike.
+          // Which plate's box was dragged decides which origin comes back off the world coordinates, and which
+          //  plate's wipe_tower_x/y entry is written — the other plates' towers stay where they are.
           deps.onTowerMoved?.(transform.object.position.x - half, -transform.object.position.z - half,
                               transform.object.userData.plate)
         } else if (transform.object === pivot) {
@@ -202,7 +181,7 @@ export function useThreeScene(deps) {
     //  selected removes it, and clicking empty space clears — but a plain click on something ALREADY selected
     //  keeps the set, which is what makes dragging several objects at once possible.
     const selection = new Set()
-    let selected = null
+    let selected = null; const isTower = (mesh) => !!mesh?.userData?.isPrimeTower
     // The selection bounding box + its uniform-scale corner handles. It is fed the current selection once per
     //  rendered frame instead of being attached and detached, so the eight places that change `selected` do not
     //  each need a second call to keep in step. The prime tower is excluded: its size is a setting, not a drag.
@@ -227,8 +206,11 @@ export function useThreeScene(deps) {
     }
     // Point the gizmo at whatever the selection currently is. Always releases the pivot first, so the meshes are
     //  back under objectsGroup with their world transforms baked before anything reads them.
+    //  Every selection path ends here, so this is where the tower is kept alone and translate-only (towerSelectionRule).
     const refreshGizmo = () => {
       releasePivot()
+      let mode = gizmoMode; if (towerSelectionRule(selection, selected, isTower)) mode = 'translate'
+      if (transform.mode !== mode) { transform.setMode(mode); transform.showY = (mode !== 'translate') }
       if (selection.size === 0) { transform.detach(); return }
       if (selection.size === 1) { transform.attach([...selection][0]); return }
       const box = new THREE.Box3()
@@ -297,8 +279,7 @@ export function useThreeScene(deps) {
     //  the tower existed only in the sliced result, so "does it collide with the model?" could not be answered
     //  until after slicing. It is pickable and moves on the same TransformControls the objects use; dragging it
     //  writes wipe_tower_x/y, which is what turns the placement from automatic into chosen.
-    //  One mesh per plate: the position setting is a single shared scalar (plate-local), so every plate's tower
-    //  sits at the same local spot, but each stand-in must still be drawn at its own plate's world offset.
+    //  One mesh per plate, drawn at its plate's world offset; wipe_tower_x/y hold one plate-local entry per plate.
     let towerMeshes = []
     const activeMeshes = () => {
       const list = objectsRef.current.map(o => o.mesh)
@@ -396,7 +377,7 @@ export function useThreeScene(deps) {
       if (!transform.dragging && gizmoMode === 'scale' && scaleBoxTarget()) {
         toPointer(ev); raycaster.setFromCamera(pointer, camera)
         if (scaleBox.hitTest(raycaster) && scaleBox.begin(ev, scaleBoxTarget())) {
-          deps.onTransformStarted?.()
+          deps.onTransformStarted?.(); deps.onPaintDragStart?.()
           orbit.enabled = false
           renderer.domElement.setPointerCapture?.(ev.pointerId)
           return
@@ -430,7 +411,7 @@ export function useThreeScene(deps) {
       if (scaleBox.dragging()) {
         const scaled = scaleBox.end()
         orbit.enabled = true
-        seatMesh(scaled); deps.onTransformCommitted?.()
+        deps.onPaintDragEnd?.(); seatMesh(scaled); deps.onTransformCommitted?.()
         // Re-decide from where the pointer actually ended up: the handles moved with the new size, so leaving the
         //  gizmo disabled (or re-enabling it blindly) would decide the next press on a stale hover.
         if (ev) updateHandleHover(ev); else { overScaleHandle = false; transform.enabled = true }
@@ -490,7 +471,7 @@ export function useThreeScene(deps) {
     // Leaving scale mode with the pointer parked on a handle would otherwise keep the gizmo switched off until the
     //  next pointermove — which never comes if the next thing the user does is click without moving.
     const setMode = m => {
-      transform.setMode(m); transform.showY = (m !== 'translate'); gizmoMode = m
+      gizmoMode = m; refreshGizmo()   // applies the mode — unless the tower is selected, which only moves
       overScaleHandle = false; transform.enabled = true; applyCursor(); setGmode(m)
     }
     const frameObjects = () => {
@@ -682,7 +663,7 @@ export function useThreeScene(deps) {
        *  50-deep history costs kilobytes. Paint is not in here — see history.js. */
       sceneSnapshot: () => objectsRef.current.map(o => ({
         id: o.id, name: o.name, localPos: o.localPos,
-        extruder: o.extruder || 1, visible: o.visible !== false,
+        extruder: o.extruder || 1, visible: o.visible !== false, paint: o.paint ?? null,   // by reference: the store never mutates a map
         pos: o.mesh.position.clone(), rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(),
       })),
       /** Put the scene back the way a snapshot found it, as a diff by id: drop what is gone, re-create what is
@@ -700,6 +681,7 @@ export function useThreeScene(deps) {
                       { id: s.id, extruder: s.extruder, visible: s.visible, quiet: true })
             o = objectsRef.current.find(x => x.id === s.id)
             if (!o) continue
+            o.paint = s.paint   // a re-created object's paint lives only here; a live object keeps its own (later strokes)
           }
           o.mesh.position.copy(s.pos); o.mesh.rotation.copy(s.rot); o.mesh.scale.copy(s.scale)
           o.mesh.updateMatrixWorld(true)
@@ -753,8 +735,6 @@ export function useThreeScene(deps) {
         geometryInput(o => o.visible !== false && (!selectedOnly || selection.has(o.mesh))), plateGrid()),
       /** Drop the pending 3mf painting after it has been handed to the kernel — the import is one-shot, and a
        *  second one would resurrect marks the user has since erased. */
-      clearPaintImport: () => { for (const o of objectsRef.current) o.paint = null },
-      hasPaintImport: () => objectsRef.current.some(o => o.paint),
       setObjectExtruder: (id, e) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.extruder = e; const c = extruderColorsRef.current[e - 1]; if (c) o.mesh.material.color.set(c) } },
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)
       recolorObjects: () => { for (const o of objectsRef.current) { const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // reflect filament color changes

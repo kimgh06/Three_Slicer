@@ -132,14 +132,21 @@ const applyFill = (Module, message, state) => {
 //  listener predating the per-state map keeps working; `counts` appears only when the message asked for states,
 //  which is what keeps a legacy paint reply byte-identical to what it was before the protocol was widened.
 const paintedReply = (Module, message, paintedState) => {
-  const reply = { type: 'painted', enf: Module.selector_painted_count(true), blk: Module.selector_painted_count(false) }
+  const answer = { type: 'painted', enf: Module.selector_painted_count(true), blk: Module.selector_painted_count(false) }
   const states = reportedPaintStates(message, paintedState)
-  if (states) reply.counts = Object.fromEntries(states.map(state => [state, Module.selector_painted_count_state(state)]))
-  return reply
+  if (states) answer.counts = Object.fromEntries(states.map(state => [state, Module.selector_painted_count_state(state)]))
+  return answer
 }
 
 self.onmessage = async (e) => {
   const d = e.data
+  // Every reply to a request that carried a `requestId` carries it back, the error reply included — so a caller
+  //  waiting on one request cannot take another request's answer (or another command's error) for its own. A
+  //  request without one gets exactly the replies it always got.
+  const reply = (message, transfer) => {
+    if (d?.requestId === undefined) { self.postMessage(message, transfer); return }
+    self.postMessage({ ...message, requestId: d.requestId }, transfer)
+  }
   // Read before the kernel loads: loadCore() below is what prints, so a `quiet` arriving with the first message
   //  (the warmup) has to take effect before that call, not after it.
   if (d.quiet !== undefined) quiet = !!d.quiet
@@ -148,28 +155,28 @@ self.onmessage = async (e) => {
     //  has never loaded it then selector_prepare has never run either, so there is no painting to report — and
     //  making a save wait on a 4MB WASM load before the first slice is seconds of nothing, for an empty answer.
     if (d.cmd === 'exportPaint' && !modPromise) {
-      self.postMessage({ type: 'paintExport', supported: false, facets: [], hex: '' }); return
+      reply({ type: 'paintExport', supported: false, facets: [], hex: '' }); return
     }
     if (d.cmd === 'slaJob') {
       const job = parseSlaJob(d.job)
       if (!modPromise) modPromise = loadCore()
       const Kernel = await modPromise
-      const onProgress = (done, total) => self.postMessage({ type: 'progress', done, total })
+      const onProgress = (done, total) => reply({ type: 'progress', done, total })
       if (Kernel.slice_sla_job) {
         Kernel.set_layer_sink((z, idx, gcode, paths, widths) => {
           const transfer = []
           if (paths?.buffer) transfer.push(paths.buffer)
           if (widths?.buffer) transfer.push(widths.buffer)
-          self.postMessage({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
+          reply({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
         })
         let r
         const started = performance.now()
         try { r = Kernel.slice_sla_job(job, onProgress) }
         finally { Kernel.clear_layer_sink() }
-        if (r?.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
-        self.postMessage({ type: 'done', result: withSliceThroughput(r, performance.now() - started) }); return
+        if (r?.error) { reply({ type: 'error', error: String(r.error) }); return }
+        reply({ type: 'done', result: withSliceThroughput(r, performance.now() - started) }); return
       }
-      self.postMessage({ type: 'error', code: 'SLA_UNSUPPORTED_OBJECT_AWARE',
+      reply({ type: 'error', code: 'SLA_UNSUPPORTED_OBJECT_AWARE',
                         error: 'Object-aware SLA slicing requires WASM kernel support' })
       return
     }
@@ -180,20 +187,20 @@ self.onmessage = async (e) => {
       const params = paramsText(d.params)
       if (!modPromise) modPromise = loadCore()
       const Kernel = await modPromise
-      const onProgress = (done, total) => self.postMessage({ type: 'progress', done, total })
+      const onProgress = (done, total) => reply({ type: 'progress', done, total })
       if (Kernel.slice_sla) {
         Kernel.set_layer_sink((z, idx, gcode, paths, widths) => {
           const transfer = []
           if (paths && paths.buffer) transfer.push(paths.buffer)
           if (widths && widths.buffer) transfer.push(widths.buffer)
-          self.postMessage({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
+          reply({ type: 'layer', z, idx, gcode: '', paths, widths }, transfer)
         })
         let r
         const started = performance.now()
         try { r = Kernel.slice_sla(new Uint8Array(d.stl), params, onProgress) }
         finally { Kernel.clear_layer_sink() }
-        if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
-        self.postMessage({ type: 'done', result: withSliceThroughput(r, performance.now() - started) })
+        if (r && r.error) { reply({ type: 'error', error: String(r.error) }); return }
+        reply({ type: 'done', result: withSliceThroughput(r, performance.now() - started) })
         return
       }
       const { sliceSla } = await import('./sla_core.js')
@@ -208,23 +215,23 @@ self.onmessage = async (e) => {
           const transfer = []
           if (L.paths?.buffer) transfer.push(L.paths.buffer)
           if (L.widths?.buffer) transfer.push(L.widths.buffer)
-          self.postMessage({ type: 'layer', z: L.z, idx: L.idx, gcode: '', paths: L.paths, widths: L.widths }, transfer)
+          reply({ type: 'layer', z: L.z, idx: L.idx, gcode: '', paths: L.paths, widths: L.widths }, transfer)
         },
       })
-      if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
-      self.postMessage({ type: 'done', result: withSliceThroughput(r, performance.now() - startedFallback) })
+      if (r && r.error) { reply({ type: 'error', error: String(r.error) }); return }
+      reply({ type: 'done', result: withSliceThroughput(r, performance.now() - startedFallback) })
       return
     }
     if (!modPromise) modPromise = loadCore()
     const Module = await modPromise
     // Warmup: only load the kernel (+ spawn the mt pthread pool) ahead of time — removes the perceived load on the first slice
-    if (d.cmd === 'warmup') { self.postMessage({ type: 'warm', kernel: kernelKind }); return }
+    if (d.cmd === 'warmup') { reply({ type: 'warm', kernel: kernelKind }); return }
     // Stage 20: manual support painting — selector state persists in this worker Module (slicing uses the same Module).
     // `keepPaint` says the mesh is the same model in a new place, so the marks carry over — the reply reports whether
     //  they actually did, since a face-count change makes the kernel fall back to a clean registration.
     if (d.cmd === 'prepare') {
       const kept = d.keepPaint ? Module.selector_reprepare(new Uint8Array(d.stl)) : (Module.selector_prepare(new Uint8Array(d.stl)), false)
-      self.postMessage({ type: 'prepared', facets: Module.selector_facet_count(), kept })
+      reply({ type: 'prepared', facets: Module.selector_facet_count(), kept })
       return
     }
     // paint: legacy {enforcer:boolean} stays on the boolean binding (false == BLOCKER); {state:1..16} reaches any
@@ -242,7 +249,7 @@ self.onmessage = async (e) => {
       else if (strokeFrom(d) && Module.selector_paint_stroke)
         Module.selector_paint_stroke(d.facet, d.px, d.py, d.pz, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, paintedState, cursorShapeOf(d))
       else Module.selector_paint_shape(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, paintedState, cursorShapeOf(d))
-      self.postMessage(paintedReply(Module, d, paintedState)); return
+      reply(paintedReply(Module, d, paintedState)); return
     }
     // erase: the brush writes NONE, returning the brushed facets to the default extruder (upstream's shift+drag).
     //  It is its OWN command and NOT `{cmd:'paint', state:0}`, because 0 is the one integer a boolean can become:
@@ -259,7 +266,7 @@ self.onmessage = async (e) => {
       //  the paint brush never touched. `selector_erase` (no shape) stays the fallback for an older kernel.
       else if (Module.selector_erase_shape) Module.selector_erase_shape(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius, cursorShapeOf(d))
       else Module.selector_erase(d.facet, d.hx, d.hy, d.hz, d.cx, d.cy, d.cz, d.radius)
-      self.postMessage(paintedReply(Module, d, null)); return
+      reply(paintedReply(Module, d, null)); return
     }
     // importPaint: load painting out of a 3mf. `facets` is an Int32Array of facet indices in the CURRENT selector's
     //  numbering and `hex` the newline-joined per-facet split-tree strings the 3mf carried, in the same order.
@@ -269,9 +276,9 @@ self.onmessage = async (e) => {
     //  rather than throwing, because losing a 3mf's paint must not also lose its geometry.
     if (d.cmd === 'importPaint') {
       const applied = Module.selector_import_paint ? Module.selector_import_paint(d.facets, d.hex ?? '') : 0
-      const reply = paintedReply(Module, d, null)
-      reply.applied = applied
-      self.postMessage(reply); return
+      const importedReply = paintedReply(Module, d, null)
+      importedReply.applied = applied
+      reply(importedReply); return
     }
     // exportPaint: the reverse of importPaint — every marked facet's split tree as {facets, hex} in the CURRENT
     //  selector's numbering, the same parallel-array pairing importPaint takes (hex is one newline-joined blob).
@@ -280,17 +287,17 @@ self.onmessage = async (e) => {
     //  reports supported:false rather than throwing — the save then falls back to the paint it imported.
     if (d.cmd === 'exportPaint') {
       const exported = Module.selector_export_paint ? Module.selector_export_paint() : null
-      self.postMessage({ type: 'paintExport', supported: !!Module.selector_export_paint,
+      reply({ type: 'paintExport', supported: !!Module.selector_export_paint,
                          facets: exported?.facets ?? [], hex: exported?.hex ?? '' })
       return
     }
     // clear wipes every state at once, so each requested count is 0 by construction — no need to ask the kernel back.
     if (d.cmd === 'clear')   {
       Module.selector_clear()
-      const reply = { type: 'painted', enf: 0, blk: 0 }
+      const clearedReply = { type: 'painted', enf: 0, blk: 0 }
       const states = reportedPaintStates(d, null)
-      if (states) reply.counts = Object.fromEntries(states.map(state => [state, 0]))
-      self.postMessage(reply); return
+      if (states) clearedReply.counts = Object.fromEntries(states.map(state => [state, 0]))
+      reply(clearedReply); return
     }
     // overlay: `enf`/`blk` (states 1/2) are always sent because the viewer's overlay rebuild consumes exactly those two;
     //  `overlays` adds the requested states, so an MMU caller can ask for 3..16 without losing the support overlays.
@@ -305,13 +312,13 @@ self.onmessage = async (e) => {
       // enf/blk stay unconditional for the listener that predates the per-state map. When the request names states,
       //  they are the ONLY ones read, so building the other two would be pure waste on the hot path.
       const wanted = states && !states.includes(PAINT_STATE_ENFORCER) && !states.includes(PAINT_STATE_BLOCKER)
-      const reply = { type: 'overlay',
+      const overlayReply = { type: 'overlay',
         enf: wanted ? EMPTY_OVERLAY : Module.selector_overlay(true),
         blk: wanted ? EMPTY_OVERLAY : Module.selector_overlay(false) }
-      if (states) reply.overlays = Object.fromEntries(states.map(state => [state, Module.selector_overlay_state(state)]))
-      const transfer = [reply.enf, reply.blk, ...Object.values(reply.overlays ?? {})]
+      if (states) overlayReply.overlays = Object.fromEntries(states.map(state => [state, Module.selector_overlay_state(state)]))
+      const transfer = [overlayReply.enf, overlayReply.blk, ...Object.values(overlayReply.overlays ?? {})]
         .filter(a => a?.buffer && a.byteLength > 0).map(a => a.buffer)
-      self.postMessage(reply, transfer); return
+      reply(overlayReply, transfer); return
     }
 
     // fillPreview: what a fill WOULD select, without applying it. Upstream runs this on every mouse move while a
@@ -319,14 +326,14 @@ self.onmessage = async (e) => {
     //  nothing, so it needs no state at all and there is no NONE for a stray boolean to become. `{clear:true}`
     //  drops the standing selection, which is what leaving the model under the pointer means.
     if (d.cmd === 'fillPreview') {
-      if (!Module.selector_fill_preview) { self.postMessage({ type: 'fillPreview', supported: false, tris: EMPTY_OVERLAY }); return }
-      if (d.clear) { Module.selector_fill_preview_clear(); self.postMessage({ type: 'fillPreview', supported: true, tris: EMPTY_OVERLAY }); return }
+      if (!Module.selector_fill_preview) { reply({ type: 'fillPreview', supported: false, tris: EMPTY_OVERLAY }); return }
+      if (d.clear) { Module.selector_fill_preview_clear(); reply({ type: 'fillPreview', supported: true, tris: EMPTY_OVERLAY }); return }
       const angle = Number.isFinite(d.angle) ? d.angle : 30
       const mode = FILL_PREVIEW_MODE[d.tool] ?? FILL_PREVIEW_MODE.smart
       // Upstream's -1 for the non-propagating case, the same value applyFill sends: one facet has no neighbour to
       //  measure an angle against.
       const tris = Module.selector_fill_preview(d.facet, d.hx, d.hy, d.hz, mode === FILL_PREVIEW_MODE.triangle ? -1 : angle, mode)
-      self.postMessage({ type: 'fillPreview', supported: true, tris },
+      reply({ type: 'fillPreview', supported: true, tris },
                        tris?.buffer && tris.byteLength > 0 ? [tris.buffer] : [])
       return
     }
@@ -339,7 +346,7 @@ self.onmessage = async (e) => {
         if (plane) Module.selector_set_clip_plane(plane[0], plane[1], plane[2], plane[3], true)
         else if (d.clipPlane === null) Module.selector_set_clip_plane(0, 0, 1, 0, false)
       }
-      self.postMessage({ type: 'paintMode', ok: true }); return
+      reply({ type: 'paintMode', ok: true }); return
     }
 
     if (d.stall) return   // stage-30 test hook: simulate a hang -> verifies the main-thread watchdog fires (not set in production)
@@ -352,17 +359,17 @@ self.onmessage = async (e) => {
         const v = Module.sup_progress_view && Module.sup_progress_view()
         const c = Module.cancel_flag_view && Module.cancel_flag_view()
         if (v && v.buffer instanceof SharedArrayBuffer)
-          self.postMessage({ type: 'supsab', buf: v.buffer, ptr: v.byteOffset, cancelPtr: c ? c.byteOffset : 0 })
+          reply({ type: 'supsab', buf: v.buffer, ptr: v.byteOffset, cancelPtr: c?.byteOffset ?? 0 })
       } catch {}
     }
     // Default: slice. Register the layer sink -> the kernel calls back per layer (z, idx, gcodeChunk, pathsF32, widthsF32).
     //  Each layer is transferred to main immediately (toolpath buffers moved) -> the worker copy is freed -> heap headroom before the next layer.
-    const onProgress = (done, total) => self.postMessage({ type: 'progress', done, total })
+    const onProgress = (done, total) => reply({ type: 'progress', done, total })
     Module.set_layer_sink((z, idx, gcode, paths, widths) => {
       const transfer = []
       if (paths && paths.buffer) transfer.push(paths.buffer)     // economy mode yields empty arrays (no .buffer) -> nothing to transfer
       if (widths && widths.buffer) transfer.push(widths.buffer)
-      self.postMessage({ type: 'layer', z, idx, gcode, paths, widths }, transfer)
+      reply({ type: 'layer', z, idx, gcode, paths, widths }, transfer)
     })
     let r
     // Timed around the kernel call INCLUDING the layer sink, which posts each layer to the main thread from inside
@@ -370,14 +377,16 @@ self.onmessage = async (e) => {
     const started = performance.now()
     try { r = Module.slice(new Uint8Array(d.stl), paramsText(d.params), onProgress) }
     finally { Module.clear_layer_sink() }
-    if (r && r.error) { self.postMessage({ type: 'error', error: String(r.error) }); return }
+    if (r && r.error) { reply({ type: 'error', error: String(r.error) }); return }
     // streamed=true -> g-code/layers were already emitted as 'layer' (result holds stats only). batch/MM keep them in result.
     // withSliceWarnings names what the slice got away with (an off-bed model) on the result itself, and
     //  withSliceThroughput how fast it ran — the raw protocol carries both, so createSlicerClient's callers get
     //  them without the client having to re-derive anything.
-    self.postMessage({ type: 'done', result: withSliceThroughput(withSliceWarnings(r), performance.now() - started) })
+    reply({ type: 'done', result: withSliceThroughput(withSliceWarnings(r), performance.now() - started) })
   } catch (err) {
     // Includes the WASM abort("memory access out of bounds") — the main thread's OOM ladder decides on re-creation / economy retry.
-    self.postMessage({ type: 'error', error: String((err && err.message) || err), ...(err?.code ? { code: err.code } : {}) })
+    const errorReply = { type: 'error', error: String((err && err.message) || err) }
+    if (err?.code) errorReply.code = err.code
+    reply(errorReply)
   }
 }

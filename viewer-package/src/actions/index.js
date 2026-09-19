@@ -3,7 +3,7 @@
 // export_actions) and must keep doing so: importing your own folder's barrel is how cycles start.
 export { makeToolpathView } from './toolpath_view.js'
 export { useNoopSlicer } from './use_noop_slicer.js'
-export { makeSupportPaint, MAX_PAINT_EXTRUDERS } from './support_paint.js'
+export { makeSupportPaint, paintKindOfMode, MAX_PAINT_EXTRUDERS } from './support_paint.js'
 export { makePlateActions } from './plate_actions.js'
 export { makeModelLoad } from './model_load.js'
 export { makeExportActions } from './export_actions.js'

@@ -4,6 +4,7 @@
 // this string, so "our writer agrees with our reader" is not enough — the SPELLING has to be upstream's.
 // (get_triangle_as_string, slicer/src/libslic3r/Model.cpp:3542: four bits per digit, most significant nibble first.)
 import createSlicer from '../../engine/src/slicer_core.js'
+import { decodePaintStates, splitPaintByObject, mergedPaint, paintTriangles } from '../../../viewer-package/src/core/paint_store.js'
 
 function boxTris(ox, oy, oz, sx, sy, sz) {
   const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v => [v[0]+ox, v[1]+oy, v[2]+oz])
@@ -115,6 +116,102 @@ const beforeMove = exportPaint()
 const movedSTL = trisToSTL(boxTris(30, 15, 0, 20, 20, 20))   // same topology, elsewhere
 ok(M.selector_reprepare(new Uint8Array(movedSTL)) === true, 'the move keeps the paint')
 ok(JSON.stringify(exportPaint().pairs) === JSON.stringify(beforeMove.pairs), 'and the export is unchanged by it')
+
+// The viewer's per-object store (viewer-package/src/core/paint_store.js) reads these strings without a kernel: it
+//  decodes which states a stored mark uses (a plate the selector does not hold still has to say whether it changes
+//  tools), and it splits an export per object and rebuilds the merge's import from it. Checked here against the
+//  kernel's own strings, because a decoder that only agrees with itself is the failure this file exists to catch.
+console.log('\n[the viewer store decodes and round-trips the kernel strings]')
+for (const [state, hex] of Object.entries(HEX)) {
+  const decoded = decodePaintStates(hex)
+  ok(decoded.has(Number(state)) && decoded.size === 1, `state ${state} decodes from "${hex}"`)
+}
+// Two sphere-brush strokes on the 20mm cube's bottom face, one per state, at opposite corners — enough to split
+//  facets into trees. selector_paint_state(facet, hit x/y/z, camera x/y/z, radius, state).
+const STORE_STATES = [2, 3]
+const BRUSH_FACET = 0, BRUSH_RADIUS_MM = 6, CAMERA_ABOVE = [0, 0, 100]
+const STROKE_HITS = { 2: [3, 3, 0], 3: [17, 17, 0] }
+const ONE_NIBBLE_HEX_LENGTH = 2                  // "0C": the longest unsplit (leaf-only) facet string
+prepare()
+for (const state of STORE_STATES) M.selector_paint_state(BRUSH_FACET, ...STROKE_HITS[state], ...CAMERA_ABOVE, BRUSH_RADIUS_MM, state)
+{
+  const painted = exportPaint()
+  const decoded = new Set(); for (const hex of painted.hex) decodePaintStates(hex, decoded)
+  ok(painted.hex.some(hex => hex.length > ONE_NIBBLE_HEX_LENGTH), 'the strokes produced split trees (more than one nibble)')
+  ok([...decoded].sort().join() === STORE_STATES.join() && STORE_STATES.every(state => counts(state)[0] > 0),
+     `the decoder finds the states the kernel painted (${[...decoded].sort()})`)
+  // The cube's 12 facets as two objects of 6, the way a merge would list them: split, rebuild, re-import -> the same export.
+  const CUBE_FACETS = 12, FACETS_PER_OBJECT = CUBE_FACETS / 2
+  const members = [{ id: 7, faceCount: FACETS_PER_OBJECT }, { id: 9, faceCount: FACETS_PER_OBJECT }]
+  const byObject = splitPaintByObject({ facets: painted.facets, hex: painted.hex.join('\n') }, members)
+  const objects = new Map(members.map(member => [member.id, { paint: { color: byObject.get(member.id) } }]))
+  const rebuilt = mergedPaint(objects, members, 'color')
+  prepare()
+  M.selector_import_paint(rebuilt.facets, rebuilt.hex)
+  const again = exportPaint()
+  ok(JSON.stringify(again.pairs) === JSON.stringify(painted.pairs), 'split per object -> rebuilt merge -> kernel export is the identity')
+  // The store also DRAWS a plate the selector does not hold, by replaying the split rule in JS. Same triangles as the
+  //  kernel's own overlay of the same marks: count and total area per state.
+  const STL_FACETS_OFFSET = 84, STL_FACET_BYTES = 50, STL_NORMAL_BYTES = 12, STL_FLOAT_BYTES = 4
+  const FLOATS_PER_FACET = 9                        // three vertices of x, y, z
+  const AREA_RELATIVE_TOLERANCE = 1e-6
+  const localPos = new Float32Array(CUBE_FACETS * FLOATS_PER_FACET)
+  for (let facet = 0; facet < CUBE_FACETS; facet++) for (let component = 0; component < FLOATS_PER_FACET; component++) {
+    const readAt = STL_FACETS_OFFSET + facet * STL_FACET_BYTES + STL_NORMAL_BYTES + component * STL_FLOAT_BYTES
+    localPos[facet * FLOATS_PER_FACET + component] = cubeSTL.readFloatLE(readAt)
+  }
+  const drawn = paintTriangles(localPos, new Map(painted.pairs))
+  const totalArea = (triangles) => {
+    let sum = 0
+    for (let start = 0; start < triangles.length; start += FLOATS_PER_FACET) {
+      const firstEdge = [0, 1, 2].map(axis => triangles[start + 3 + axis] - triangles[start + axis])
+      const secondEdge = [0, 1, 2].map(axis => triangles[start + 6 + axis] - triangles[start + axis])
+      const cross = [firstEdge[1] * secondEdge[2] - firstEdge[2] * secondEdge[1],
+                     firstEdge[2] * secondEdge[0] - firstEdge[0] * secondEdge[2],
+                     firstEdge[0] * secondEdge[1] - firstEdge[1] * secondEdge[0]]
+      sum += Math.hypot(...cross) / 2
+    }
+    return sum
+  }
+  for (const state of STORE_STATES) {
+    const kernelTriangles = M.selector_overlay_state(state), storeTriangles = drawn.get(state) ?? new Float32Array(0)
+    const kernelArea = totalArea(kernelTriangles), storeArea = totalArea(storeTriangles)
+    ok(storeTriangles.length === kernelTriangles.length && Math.abs(storeArea - kernelArea) < AREA_RELATIVE_TOLERANCE * Math.max(1, kernelArea),
+       `state ${state}: the store draws the kernel's triangles (${storeTriangles.length / FLOATS_PER_FACET} vs ${kernelTriangles.length / FLOATS_PER_FACET}, area ${storeArea.toFixed(3)} vs ${kernelArea.toFixed(3)})`)
+  }
+}
+
+// A kernel instance reused for several plates (a slice-all pool worker) keeps its selector across slices — slicing
+//  never resets it. So a plate with no paint, sliced after a painted one, prints the painted plate's marks unless the
+//  worker clears them first (use_slicer.js ctx.syncPaint -> 'clear'). Measured on a benchy before that: T2 314 ->
+//  1215 mm. Here on cubes: plate X is a cube painted T2; plate Y is the same cube on T1 plus a second cube on T2.
+console.log('\n[a reused kernel: leftover paint, and clearing it]')
+{
+  const CUBE_FACETS = 12, STL_COUNT_OFFSET = 80, STL_FACETS_OFFSET = 84, STL_FACET_BYTES = 50
+  const SECOND_CUBE_OFFSET_MM = 40
+  const secondCube = trisToSTL(boxTris(SECOND_CUBE_OFFSET_MM, 0, 0, 20, 20, 20))
+  const plateY = Buffer.alloc(STL_FACETS_OFFSET + 2 * CUBE_FACETS * STL_FACET_BYTES)
+  plateY.writeUInt32LE(2 * CUBE_FACETS, STL_COUNT_OFFSET)
+  cubeSTL.copy(plateY, STL_FACETS_OFFSET, STL_FACETS_OFFSET)
+  secondCube.copy(plateY, STL_FACETS_OFFSET + CUBE_FACETS * STL_FACET_BYTES, STL_FACETS_OFFSET)
+  const sliceParams = (extra) => JSON.stringify({ layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2,
+    infill_density: 0.15, bed_width: 400, bed_depth: 400, gcode_stats_block: true, extruder_count: 2, ...extra })
+  const yParams = sliceParams({ mm_group_split: CUBE_FACETS })
+  const usageOf = (result) => result.gcode.match(/; filament used \[mm\] = [^\n]*/)?.[0] ?? ''
+  const fresh = await createSlicer()
+  const clean = usageOf(fresh.slice(new Uint8Array(plateY), yParams, () => {}))
+  // Plate X on the reused instance: its paint loaded, then sliced.
+  prepare()
+  const T2 = 2
+  for (let facet = 0; facet < CUBE_FACETS; facet++) M.selector_paint_state(facet, 10, 10, 20, 10, 10, 100, 30, T2)
+  ok(M.selector_painted_count_state(T2) > 0, 'plate X carries T2 paint')
+  M.slice(new Uint8Array(cubeSTL), sliceParams({}), () => {})
+  const leftover = usageOf(M.slice(new Uint8Array(plateY), yParams, () => {}))
+  ok(leftover !== clean, `without clearing, plate Y prints plate X's paint (${leftover} vs ${clean})`)
+  M.selector_clear()
+  const cleared = usageOf(M.slice(new Uint8Array(plateY), yParams, () => {}))
+  ok(cleared === clean, `after selector_clear, plate Y slices as on a fresh kernel (${cleared})`)
+}
 
 console.log(fail ? `\n${fail} FAILED` : '\npaint export passed')
 process.exit(fail ? 1 : 0)

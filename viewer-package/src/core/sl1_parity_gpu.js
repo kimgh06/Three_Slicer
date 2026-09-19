@@ -1,5 +1,8 @@
-// Slice-by-rendering for SLA masks: the raw MESH is drawn once per layer with stencil INVERT on the
-//  fragments above the slicing plane — the surviving even-odd parity IS the layer mask. No plane
+// Slice-by-rendering for SLA masks: the raw MESH is drawn once per layer, and the fragments above the slicing
+//  plane count into the stencil signed by facing (front +1, back -1, wrapping) — a non-zero count IS the layer
+//  mask, the NonZero rule the kernel's contours use (slice_planes.h). It was an INVERT parity (even-odd), which
+//  left two coincident objects EMPTY in the mask while the slice and its supports treated them as solid. A
+//  mirrored transform flips every facing at once, so it changes the sign of the count and never its zero. No plane
 //  sweep, no chaining, no contours: the mask comes straight from the triangles, so it cannot lose
 //  what contour stitching drops (measured on a 775k-facet scan model: 0.007% avg / 0.047% worst
 //  pixel diff against the kernel-contour reference, 0.7 ms/layer for all 658 layers).
@@ -26,7 +29,7 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) wz: f32 };
   o.wz = p.z;
   return o;
 }
-// only surfaces ABOVE the plane count: the per-pixel parity of them says inside/outside at (x,y,z)
+// only surfaces ABOVE the plane count: their signed per-pixel count says inside/outside at (x,y,z)
 @fragment fn fsParity(v: VOut) -> @location(0) vec4<f32> {
   if (v.wz < u.layerZ) { discard; }
   return vec4<f32>(0.0);
@@ -66,14 +69,15 @@ export function makeSl1ParityGpu(device) {
   const pipelinesFor = (samples) => {
     let p = pipelines.get(samples)
     if (p) return p
-    const inv = { compare: 'always', passOp: 'invert', failOp: 'keep', depthFailOp: 'keep' }
+    const up = { compare: 'always', passOp: 'increment-wrap', failOp: 'keep', depthFailOp: 'keep' }
+    const down = { compare: 'always', passOp: 'decrement-wrap', failOp: 'keep', depthFailOp: 'keep' }
     const keep = { compare: 'not-equal', passOp: 'keep', failOp: 'keep', depthFailOp: 'keep' }
     const parity = device.createRenderPipeline({ layout: 'auto',
       vertex: { module, entryPoint: 'vs', buffers: vertexLayout },
       fragment: { module, entryPoint: 'fsParity', targets: [{ format: 'r8unorm', writeMask: 0 }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth24plus-stencil8', depthWriteEnabled: false, depthCompare: 'always',
-        stencilFront: inv, stencilBack: inv },
+        stencilFront: up, stencilBack: down },
       multisample: { count: samples } })
     // the cover pipeline reads no uniform, so its 'auto' layout is EMPTY — never give it a bind group
     const cover = device.createRenderPipeline({ layout: 'auto',

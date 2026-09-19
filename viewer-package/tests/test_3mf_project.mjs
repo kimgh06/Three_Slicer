@@ -2,12 +2,12 @@
 // this covers everything a slicer-written 3mf carries next to the mesh.
 // The fixture is built here rather than committed because the painting encoding is the point of the test — a
 // checked-in binary would prove the parser agrees with itself, not that it agrees with upstream's format.
-import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
+import { zipSync, unzipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
 import { parse3MFProject } from '../src/core/parse_3mf.js'
 import { normalizeProjectSettings, deriveKernelParams } from '../src/settings/index.js'
 import { leanSchema as schema } from '../src/settings/data.js'
 import { platePlacements, makeModelLoad } from '../src/actions/model_load.js'
-import { write3MFProject } from '../src/core/write_3mf.js'
+import { write3MFProject, VIEWER_SETTINGS_MEMBER } from '../src/core/write_3mf.js'
 import { plateStep, plateCols } from '../src/core/plate_layout.js'
 
 let failures = 0
@@ -278,6 +278,75 @@ check('unparsable project_settings yields null settings', broken.project.setting
   eq('the grid grows to the project\'s plates, on the project\'s bed', plateCalls[0], [PLATES, BED, BED])
   check('each object lands on the plate the file names', placed.some(([, index]) => index === 1), JSON.stringify(placed))
   check('the plate an object lands on drops its stale slice', !(1 in deps.plateResultsRef.current), JSON.stringify(deps.plateResultsRef.current))
+}
+
+// ---- our member (three_slicer_settings.json) through the same loader: overrides, knobs, the plate count ----
+{
+  const BED_MM = 200
+  const TETRA_EDGE_MM = 20, TETRA_FACETS = 4
+  const TETRA_CENTRE_OFFSET_MM = TETRA_EDGE_MM / 2     // place the tetrahedron's corner so its box sits on the plate centre
+  const tetra = (atX, atY) => {
+    const corners = [[0, 0, 0], [TETRA_EDGE_MM, 0, 0], [0, TETRA_EDGE_MM, 0], [0, 0, TETRA_EDGE_MM]].map(([x, y, z]) => [x + atX, y + atY, z])
+    return Float32Array.from([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]].flatMap(face => face.flatMap(corner => corners[corner])))
+  }
+  // Objects on the first two plates of a THREE-plate session; the last plate is empty but carries an override.
+  const SESSION_PLATES = 3, OCCUPIED_PLATES = [0, 1], EMPTY_LAST_PLATE = SESSION_PLATES - 1
+  const objects = OCCUPIED_PLATES.map(plate => {
+    const x = (plate % plateCols(SESSION_PLATES)) * plateStep(BED_MM), y = -(Math.floor(plate / plateCols(SESSION_PLATES)) * plateStep(BED_MM))
+    return { id: plate + 1, name: `p${plate}`, extruder: 1, plate, plateOriginX: x, plateOriginY: y,
+             tris: tetra(x - TETRA_CENTRE_OFFSET_MM, y - TETRA_CENTRE_OFFSET_MM), faceCount: TETRA_FACETS, paint: null }
+  })
+  // What the session held before the import: settings the member's knobs go over, and an override it must replace.
+  const PREVIOUS_SETTINGS = { layer_height: 0.3 }, PREVIOUS_PLATE_SETTINGS = { 7: { stale: true } }
+  const load = async (bytes) => {
+    const settingsCalls = [], plateSettingsCalls = [], plateCalls = []
+    let nextId = 1
+    const api = {
+      addObject: (name) => ({ id: nextId++, name }), placeObjectOnPlate: () => {},
+      setPlates: (count) => { plateCalls.push(count); return false }, showObjects: () => {}, setObjectExtruder: () => {},
+    }
+    // Every other ref the loader reads starts as this, and anything else it calls is a no-op.
+    const refStartValues = { plateResultsRef: {}, plateOffsetsRef: {}, bedRef: { bedW: BED_MM, bedD: BED_MM }, plateCountRef: 1, selectedPlateRef: 0 }
+    const refs = name => ({ current: refStartValues[name] ?? null })
+    const deps = new Proxy({ apiRef: { current: api }, objectsRef: { current: [] }, setError: () => {},
+      setSettings: (value) => settingsCalls.push(value), setPlateSettings: (value) => plateSettingsCalls.push(value) }, {
+      get: (target, key) => {
+        if (key in target) return target[key]
+        if (String(key).endsWith('Ref')) return (target[key] = refs(key))
+        return () => {}
+      },
+      has: () => true,
+    })
+    await makeModelLoad(deps).loadFiles([new File([bytes], 'project.3mf')])
+    const applyCalls = (calls, start) => calls.reduce((map, call) => {
+      if (typeof call === 'function') return call(map)
+      return call
+    }, start)
+    return { settingsAfter: applyCalls(settingsCalls, PREVIOUS_SETTINGS), plateSettingsAfter: applyCalls(plateSettingsCalls, PREVIOUS_PLATE_SETTINGS),
+             plateCount: plateCalls.at(-1) }
+  }
+
+  // No schema key in the global map -> no project_settings.config, only our member. It used to be ignored then.
+  const emptyPlateOverride = { enable_prime_tower: false }
+  const noSchema = await load(await write3MFProject(objects, { wipe_tower_real: true },
+    { bedWidth: BED_MM, bedDepth: BED_MM, plateCount: SESSION_PLATES, plateSettings: { [EMPTY_LAST_PLATE]: emptyPlateOverride } }))
+  eq('a save with no schema settings still restores the viewer knobs, over the settings already loaded',
+     noSchema.settingsAfter, { ...PREVIOUS_SETTINGS, wipe_tower_real: true })
+  eq('...and the plate overrides, replacing the previous session\'s', noSchema.plateSettingsAfter, { [EMPTY_LAST_PLATE]: emptyPlateOverride })
+  eq('the empty plate that carries an override is recreated', noSchema.plateCount, SESSION_PLATES)
+
+  // An override for a plate index the import does not create (a sidecar with no plate count, or past MAX_PLATES)
+  //  is dropped rather than left to attach itself to the next plate added.
+  const base = await write3MFProject(objects, { layer_height: 0.2 }, { bedWidth: BED_MM, bedDepth: BED_MM, plateCount: OCCUPIED_PLATES.length })
+  const KEPT_PLATE = 1, ORPHAN_PLATE = 5, keptOverride = { layer_height: 0.1 }
+  const files = unzipSync(base)
+  files[VIEWER_SETTINGS_MEMBER] = strToU8(JSON.stringify({ version: 1, viewer: {}, plates: { [KEPT_PLATE]: keptOverride, [ORPHAN_PLATE]: { layer_height: 0.3 } } }))
+  const orphan = await load(zipSync(files))
+  eq('only overrides for plates that exist after the import are kept', orphan.plateSettingsAfter, { [KEPT_PLATE]: keptOverride })
+
+  // A project with settings but no member still clears the previous session's overrides (replace, not merge).
+  const plain = await load(base)
+  eq('a plain project replaces the overrides with none', plain.plateSettingsAfter, {})
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\n3MF project import passed')

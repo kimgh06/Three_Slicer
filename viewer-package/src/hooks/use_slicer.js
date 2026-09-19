@@ -3,7 +3,13 @@ import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
-import { DEFAULT_BED } from '../core/viewer_defaults.js'
+import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
+import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
+import { makeTerminationObservable, request } from '../core/worker_reply.js'
+import { poolPaintAction, paintedExtruderCount, paintBeyondFilaments } from '../core/paint_store.js'
+
+// Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
+const PAINT_STATES_ALL = Array.from({ length: MAX_PAINT_EXTRUDERS }, (_, index) => index + 1)
 
 
 // Worker lifecycle + progress mapping (SAB polling) + the stage-30 streaming/watchdog/OOM retry ladder.
@@ -17,8 +23,8 @@ export function useSlicer(deps) {
   const { makeWorker } = deps
   if (typeof makeWorker !== 'function') throw new Error('useSlicer: deps.makeWorker (a slicer worker factory) is required')
   const {
-    settings, plateSettings, wipeTowerReal, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
-    paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay,
+    settings, plateSettings, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
+    paintStateCountsRef, extruderColorsRef, rebuildToolpaths, rebuildPaintOverlay,
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount,
     setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
     // Which kernel the selector worker loaded ('mt'|'st'), for the UI badge and the pool size. Optional.
@@ -118,7 +124,9 @@ export function useSlicer(deps) {
   }
   function getWorker() {
     if (!workerRef.current) {
-      const wk = makeWorker()   // the static worker pattern is isolated in make_worker.js (shipped unbundled, verbatim)
+      // Its end is observable (worker_reply.js): the paint store's waits on it must end when the watchdog or the
+      //  memory ladder terminates it, not hang.
+      const wk = makeTerminationObservable(makeWorker())   // the static worker pattern is isolated in make_worker.js (shipped unbundled, verbatim)
       wk.onmessage = (e) => {
         const d = e.data
         const pnd = pendingSliceRef.current
@@ -143,6 +151,9 @@ export function useSlicer(deps) {
           if (a) { a.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) a.gcode.push(d.gcode); noteLayers(a.layers.length) }
         }
         else if (d.type === 'done') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
+        // An error that names a request belongs to that request's own wait (worker_reply.js) — a paint command's,
+        //  never the slice's: read here too, it showed "Slice failed" and killed a running slice over a paint load.
+        else if (d.type === 'error' && d.requestId !== undefined) { /* answered by request() */ }
         else if (d.type === 'error') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.reject(new Error(d.error)) } else { setError('Slice failed: ' + d.error); setSlicing(false) } }
         else if (d.type === 'warm') { kernelKindRef.current = d.kernel ?? null; setKernelKind?.(kernelKindRef.current) }
         else if (d.type === 'prepared') { /* selector mesh registered */ }
@@ -281,7 +292,8 @@ export function useSlicer(deps) {
       watchdog = setTimeout(() => fail(`watchdog: no progress for ${ms}ms — assuming memory pressure`), ms)
     }
     const spawn = () => {
-      wk = makeWorker()
+      wk = makeTerminationObservable(makeWorker())
+      ctx.holdsPaint = false   // a fresh worker's selector is empty
       wk.onmessage = (e) => {
         const d = e.data
         if (d.type === 'warm') { loaded = true; ctx.kernel = d.kernel ?? null; readyResolve?.(ctx.kernel); readyResolve = null }
@@ -306,6 +318,26 @@ export function useSlicer(deps) {
         : 'Worker failed to load its script (server unreachable?): ' + (ev.message || 'worker error'))
       wk.onmessageerror = () => fail('Worker message error (structured clone failed)')
       wk.postMessage({ cmd: 'warmup', quiet })
+    }
+    // A pool worker's kernel reads painting from its OWN selector, and slicing does not reset it — so the selector
+    //  has to hold exactly THIS plate's paint before the slice: loaded from the plate's store when it has some,
+    //  cleared when it has none but the previous plate left some (measured before this: an unpainted plate sliced
+    //  after a painted one printed the other plate's paint, T2 314 -> 1215 mm, 51 -> 85 tool changes). Resolves
+    //  with the painted facet count per state (null: nothing painted), which decides the extruder count.
+    ctx.holdsPaint = false
+    ctx.syncPaint = async (buf, paint) => {
+      if (!wk) spawn()
+      const action = poolPaintAction(paint, ctx.holdsPaint)
+      if (action === 'clear') { wk.postMessage({ cmd: 'clear' }); ctx.holdsPaint = false }
+      if (action !== 'load') return null
+      wk.postMessage({ cmd: 'prepare', stl: buf })
+      ctx.holdsPaint = true
+      const reply = await request(wk, { cmd: 'importPaint', facets: paint.facets, hex: paint.hex, states: PAINT_STATES_ALL }, { types: ['painted'] })
+      // A plate whose paint did not load must not be sliced as if it had none (single-material, and nothing said).
+      //  "failed to load" is what the run already treats as this worker's failure: it re-queues the plate onto the
+      //  selector worker (plate_actions.js), which loads the paint its own way.
+      if (!reply) throw new Error('Worker failed to load the plate paint')
+      return reply.counts ?? {}
     }
     ctx.sliceOne = (buf, paramsStr, cmd) => new Promise((resolve, reject) => {
       // dev/test hook (not set in production): __vpPoolFail = n fails the next n pool slices as a worker death,
@@ -343,7 +375,10 @@ export function useSlicer(deps) {
   //  "memory access out of bounds" (an assert at Voronoi.cpp:334 in upstream debug builds).
   //  The same model finishes fine with wall_generator=classic -> this rung comes before economy mode
   //  (economy only reduces infill, which does nothing for an Arachne crash).
-  async function sliceLadder(buf, params, ctx = selectorCtx) {
+  // `afterRecreate` runs after each ctx.recreate(): a recreated worker's selector is EMPTY, and a painted plate
+  //  retried on it came out single-material with "G-code is fine" (measured: T2 646.59 mm / 75 tool changes on the
+  //  first try, 0 / 0 on the classic-walls retry). It puts the plate's paint back before the retry is posted.
+  async function sliceLadder(buf, params, ctx = selectorCtx, afterRecreate = null) {
     const isCancel = (e) => String(e?.message || e).includes('canceled')
     try { const r = await ctx.sliceOne(buf, JSON.stringify(params)); return { r, economy: !!(r.stats && r.stats.economy) } }
     catch (e1) {
@@ -354,12 +389,14 @@ export function useSlicer(deps) {
       if (ctx !== selectorCtx && isWorkerDeath(e1)) throw e1
       if (params.wall_generator !== 'classic') {
         ctx.recreate()
+        await afterRecreate?.()
         try {
           const r = await ctx.sliceOne(buf, JSON.stringify({ ...params, wall_generator: 'classic', keep_stages: false, reuse_stages: 0 }))
           return { r, economy: !!(r.stats && r.stats.economy), classicWalls: true }
         } catch (e2) { if (isCancel(e2)) throw e2 }
       }
       ctx.recreate()
+      await afterRecreate?.()
       // Economy retry: do not keep the stage cache (minimize the heap) and disable reuse (a new worker has no cache anyway)
       const r = await ctx.sliceOne(buf, JSON.stringify({ ...params, economy: true, keep_stages: false, reuse_stages: 0 }))   // a failure propagates as a throw
       return { r, economy: true, recovered: true }
@@ -376,17 +413,20 @@ export function useSlicer(deps) {
     params.keep_stages = true
     params.reuse_stages = dig && dig === lastGeomRef.current ? 2 : 0
   }
-  function buildParams(merged, { painted = true } = {}) {
+  function buildParams(merged, { painted = true, paintCounts = null, paintKind = null } = {}) {
     // The plate this merge cut — the per-plate override merges over the global map for it, and the wipe_tower_x/y
     //  arrays index by it. With no override `effective` IS `settings` (same reference), so the pre-feature
     //  behaviour is preserved byte for byte.
     const effective = effectiveSettings(settings, plateSettings, merged.plate)
     const params = deriveKernelParams(effective, { plate: merged.plate })
+    // Ring or the real WipeTower: `wipe_tower_real` is a viewer knob in the settings map (not a schema key, like
+    //  sla_antialias), so it follows the plate override like every other tower setting. It used to be component
+    //  state — one mode for every plate, lost on reload.
     if (merged.extruders >= 2 && merged.split > 0) {
       params.extruder_count = merged.extruders; params.mm_group_split = merged.split
       // One group per extruder run — mm_group_split alone can only express two.
       if (merged.splits?.length) { params.mm_group_splits = merged.splits; params.mm_group_tools = merged.tools }
-      params.wipe_tower_real = wipeTowerReal
+      params.wipe_tower_real = !!effective.wipe_tower_real
     }
     // Material painting assigns tools per facet, so `merged` — which reads whole-object assignment only — cannot
     //  see it. The kernel gates its multi-tool path on `extruder_count >= 2 && (groups || painted tools)`, so a
@@ -395,12 +435,20 @@ export function useSlicer(deps) {
     //  (ENFORCER==Extruder1), so the highest painted state is the extruder count the kernel has to allow for.
     // The paint counts describe the SELECTOR worker's mesh. A pool worker slices a plate the brush never touched,
     //  so for it they are someone else's facets — reading them would widen its extruder count for nothing.
-    const paintedStates = !painted ? [] : Object.entries(paintStateCountsRef?.current ?? {})
-      .filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
-    const highestPaintedState = paintedStates.length ? Math.max(...paintedStates) : 0
+    //  A pool plate brings its own counts instead: the ones its worker reported after loading the plate's stored
+    //  paint (runSlice below).
+    let reportedCounts = paintCounts
+    if (reportedCounts == null && painted) reportedCounts = paintStateCountsRef?.current
+    // `paintKind` is the annotation the worker's selector holds: support paint is not a tool.
+    const filamentCount = extruderColorsRef?.current?.length ?? MAX_PAINT_EXTRUDERS
+    const highestPaintedState = paintedExtruderCount(reportedCounts, paintKind, filamentCount)
+    const unconfigured = paintBeyondFilaments(reportedCounts, paintKind, filamentCount)
+    if (unconfigured.length)
+      setSliceNotice?.(`Paint for ${unconfigured.map(state => 'T' + state).join(', ')} was left out: only ${filamentCount} ` +
+                       'filament(s) are configured. Add the filament to print it.')
     if (highestPaintedState >= 2) {                 // state 1 alone is the default tool — nothing to switch to
       params.extruder_count = Math.max(params.extruder_count ?? 1, highestPaintedState)
-      params.wipe_tower_real = wipeTowerReal
+      params.wipe_tower_real = !!effective.wipe_tower_real
     }
     // Filament identity and physical constants, straight from the settings map the filament card writes. Upstream
     //  reports all of these in the G-code footer; without them an export says how much filament it used but not
@@ -428,13 +476,16 @@ export function useSlicer(deps) {
     //  deriveKernelParams already wrote prime_tower_x/y if the card or a drag set wipe_tower_x/y, and this used to
     //  overwrite that on every slice, so a tower dragged in Prepare sliced somewhere else.
     if ((params.extruder_count ?? 1) >= 2 && Number.isFinite(merged.minX) && params.prime_tower_x == null) {
-      const towerSide = (params.wipe_tower_real ?? true) ? (params.prime_tower_width ?? 30) : 15
-      const gap = 5
-      const bedW = params.bed_width ?? DEFAULT_BED.width, bedD = params.bed_depth ?? DEFAULT_BED.depth
+      // The same footprint and gap the scene's stand-in uses (tower_layout.js), so the two cannot drift. One known
+      //  difference stays: the slice keeps AUTO_EDGE_MARGIN_MM inside the bed edge, the stand-in clamps flush.
+      const towerSide = towerFootprint(params, params.wipe_tower_real ?? true)
+      const bedWidth = params.bed_width ?? DEFAULT_BED.width, bedDepth = params.bed_depth ?? DEFAULT_BED.depth
       // Slice frame -> bed frame is one addition (the kernel's own gw.offX), and both boxes are now in it.
-      const modelLeft = merged.minX + bedW / 2, modelMidY = (merged.minY + merged.maxY) / 2 + bedD / 2
-      params.prime_tower_x = Math.min(Math.max(modelLeft - gap - towerSide, 1), bedW - towerSide - 1)
-      params.prime_tower_y = Math.min(Math.max(modelMidY - towerSide / 2, 1), bedD - towerSide - 1)
+      const modelLeft = merged.minX + bedWidth / 2, modelMiddleY = (merged.minY + merged.maxY) / 2 + bedDepth / 2
+      const lowestCorner = AUTO_EDGE_MARGIN_MM
+      const highestCornerX = bedWidth - towerSide - AUTO_EDGE_MARGIN_MM, highestCornerY = bedDepth - towerSide - AUTO_EDGE_MARGIN_MM
+      params.prime_tower_x = Math.min(Math.max(modelLeft - AUTO_GAP - towerSide, lowestCorner), highestCornerX)
+      params.prime_tower_y = Math.min(Math.max(modelMiddleY - towerSide / 2, lowestCorner), highestCornerY)
     }
     // Two ways a painted model slices exactly like an unpainted one, both of them by design and neither of them
     //  visible in the result — the export just comes out single-material. Said here, at the one place that knows
@@ -442,11 +493,11 @@ export function useSlicer(deps) {
     //  · support on: slicer_core.cpp keeps painted models on the single-material path (slice_multimaterial emits
     //    no support, and one selector state cannot say "blocker" and "Extruder2" apart).
     //  · only T1 painted: state 1 IS the default extruder, so there is no second tool to switch to.
-    if (paintedStates.length) {
+    if (highestPaintedState > 0) {                   // material paint only (paintedExtruderCount)
       // Support and material painting now slice together — the multi-material path runs the same support pass the
       //  single-material one does. What survives is the AMBIGUITY: one selector, and upstream's enum makes a support
       //  BLOCKER and Extruder2 the same mark, so a model carrying both reads the blocker as a material.
-      if (params.enable_support && paintedStates.includes(2))
+      if (params.enable_support && reportedCounts[2] > 0)
         setSliceNotice?.('Support is on and T2 is painted. One facet carries one mark, and a support blocker is ' +
                          'the same mark as T2 — the painted areas were sliced as T2, not as blocked support.')
       else if (highestPaintedState < 2)
@@ -461,7 +512,9 @@ export function useSlicer(deps) {
   // One merged STL through the whole ladder: parameters + incremental digest + the last-successful-geometry bookkeeping.
   //  Finishing via economy/classic used different parameters, so the cache cannot be reused (lastGeom is cleared).
   // `ctx` is a pool context for a plate sliced beside the selected one; null is the selector worker itself.
-  async function runSlice(merged, ctx = null) {
+  // `resyncPaint` (selector worker only): puts the plate's paint back into a recreated selector worker — the caller
+  //  owns the selector (support_paint.js); a pool context re-syncs itself (ctx.syncPaint).
+  async function runSlice(merged, ctx = null, { syncPaint = null, resyncPaint = null } = {}) {
     // SLA routing: the technology key sends the merge to the pure-JS contour slicer instead of the kernel. No
     //  retry ladder and no incremental cache — there is no Arachne to crash and no stage cache to reuse — and the
     //  derived params ride on the result so the SL1 writer rasterizes with the values this slice actually used.
@@ -475,21 +528,49 @@ export function useSlicer(deps) {
       //  as a solid mesh, lifted by the elevation, beside the kernel's support/pad meshes.
       return { r: { ...r, gcode: '', slaParams, modelSTL: merged.buf }, params: slaParams }
     }
-    const params = buildParams(merged, { painted: !ctx })
+    // A pool worker's selector must hold this plate's paint, or none (ctx.syncPaint above).
+    const storedPaint = merged.paint?.color ?? merged.paint?.supports
+    let paintCounts = null, dig = null, paintKind = null, releaseSelector = () => {}
     if (ctx) {
-      // A pool worker is thrown away after the run, so a stage cache in it is heap for nothing — and the digest
-      //  bookkeeping belongs to the selector worker, which is the only one that ever slices the same plate twice.
-      params.keep_stages = false; params.reuse_stages = 0
-      const out = await sliceLadder(merged.buf, params, ctx)
-      return { ...out, params }
+      paintCounts = await ctx.syncPaint(merged.buf, storedPaint)
+      if (merged.paint?.color) paintKind = 'color'
+    } else {
+      // The selector worker's selector is loaded LAST, with nothing awaited between the load and the post: a drag
+      //  commit re-registers the selector, and one that landed in a gap (the digest used to sit there) swapped it
+      //  back to the selected plate, so another plate of a slice-all was cut with that plate's facets and paint.
+      dig = await geomDigest(merged.buf)
+      const synced = await syncPaint?.()   // the annotation the selector now holds, and the hold on it
+      paintKind = synced?.kind ?? null
+      releaseSelector = synced?.release ?? releaseSelector
     }
-    treeSupportRef.current = params.support_style === 'tree'
-    const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
+    // Everything below up to the post is synchronous; the hold is released right after it (or if it throws first).
     try {
-      const out = await sliceLadder(merged.buf, params)   // on a normal failure: classic walls -> economy retry
-      lastGeomRef.current = (out.economy || out.classicWalls) ? null : dig
-      return { ...out, params }
-    } catch (e) { lastGeomRef.current = null; throw e }
+      const params = buildParams(merged, { painted: !ctx, paintCounts, paintKind })
+      // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
+      //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a
+      //  pool run was another plate's coordinates.
+      const withTower = (out) => {
+        if (out?.r) out.r.towerParams = { prime_tower_x: params.prime_tower_x, prime_tower_y: params.prime_tower_y }
+        return { ...out, params }
+      }
+      if (ctx) {
+        // A pool worker is thrown away after the run, so a stage cache in it is heap for nothing — and the digest
+        //  bookkeeping belongs to the selector worker, which is the only one that ever slices the same plate twice.
+        params.keep_stages = false; params.reuse_stages = 0
+        return withTower(await sliceLadder(merged.buf, params, ctx, () => ctx.syncPaint(merged.buf, storedPaint)))
+      }
+      treeSupportRef.current = params.support_style === 'tree'
+      applyIncremental(params, dig)
+      // sliceLadder posts the slice before its first await, so the hold is released once the call returns.
+      const slicing = sliceLadder(merged.buf, params, selectorCtx, resyncPaint)   // on a normal failure: classic walls -> economy retry
+      releaseSelector()
+      try {
+        const out = await slicing
+        lastGeomRef.current = dig
+        if (out.economy || out.classicWalls) lastGeomRef.current = null
+        return withTower(out)
+      } catch (e) { lastGeomRef.current = null; throw e }
+    } finally { releaseSelector() }
   }
 
   return { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef }

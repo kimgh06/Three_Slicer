@@ -18,14 +18,15 @@ import { useMoveScrub } from './hooks/use_move_scrub.js'
 import { useViewportHistory, undoRedoDirection } from './hooks/use_viewport_history.js'
 import { useThreeScene } from './scene/use_three_scene.js'
 import {
-  makeToolpathView, useNoopSlicer, makeSupportPaint, MAX_PAINT_EXTRUDERS,
+  makeToolpathView, useNoopSlicer, makeSupportPaint, paintKindOfMode, MAX_PAINT_EXTRUDERS,
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
   makeFilamentColors, DEFAULT_FILAMENT_COLORS, makePreviewControls,
 } from './actions/index.js'
 import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
 import { withToolBreakdown } from './core/stats_view.js'
-import { towerBoxes, usesMultipleTools, towerResultStats } from './core/tower_layout.js'
+import { towerBoxes, usesMultipleTools, towerResultStats, towerFootprint, clampTowerPosition } from './core/tower_layout.js'
+import { storedPaintStates } from './core/paint_store.js'
 import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } from './core/plate_settings.js'
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
@@ -126,6 +127,10 @@ export default function Viewport({
   const paintOverlayRef = useRef(null)  // Mesh[] — one per painted selector state (1..16)
   const selectorGeomRef = useRef(null)  // {identity, topology} of the mesh the kernel's selector holds (null = none)
   const registerSelectorRef = useRef(null)  // set below, from makeSupportPaint — the scene hook is built first
+  const flushPaintRef = useRef(null)        // same factory: the selector's strokes back onto the objects (paint_store.js)
+  const paintDragRef = useRef(false)        // a transform drag is in progress (support_paint.js beginPaintDrag)
+  const paintDragHandlersRef = useRef(null) // same factory: begin/end of that drag, for the scene's handlers
+  const holdSelectorRef = useRef(null)      // same factory: holds the selector between a slice's paint load and its post
   const selectPlateRef = useRef(null)       // set below, from makePlateActions — same reason
   const recordHistoryRef = useRef(null)     // set below, from the undo history — the scene hook is installed first
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
@@ -194,11 +199,11 @@ export default function Viewport({
   const [extruderColors, setExtruderColors, extruderColorsRef] = useStateRef(initialColors)
   const [gcodeUrl, setGcodeUrl] = useState('')
   const [showTravel, setShowTravel, showTravelRef] = useStateRef(false)
-  // Off until the ported WipeTower is deterministic. It was briefly the default here on the grounds that the
-  //  fallback ring purges nothing — true, but the real tower emits F0 feedrates and produces a different file on
-  //  every run of the same input (see params.h), and shipping unreproducible G-code by default is the worse of the
-  //  two. The checkbox still offers it.
-  const [wipeTowerReal, setWipeTowerReal] = useState(false)   // stage 12: real WipeTower.generate() (MM only)
+  // Ring or real WipeTower, per plate: the settings key `wipe_tower_real` (a viewer knob, not a schema key). Off
+  //  until the ported WipeTower is deterministic. It was briefly the default here on the grounds that the fallback
+  //  ring purges nothing — true, but the real tower emits F0 feedrates and produces a different file on every run
+  //  of the same input (see params.h), and shipping unreproducible G-code by default is the worse of the two.
+  //  The card still offers it. This is the SELECTED plate's value, for the card; the boxes read each plate's own.
   const [paintMode, setPaintModeState] = useState('off')      // stage 20: painting mode (support brush or material brush)
   const [materialExtruder, setMaterialExtruder, materialExtruderRef] = useStateRef(0)   // 0-based extruder the material brush writes (null = eraser)
   // "Which filament am I working on" is ONE choice with two places to make it — the card's rows and the brush's
@@ -248,7 +253,7 @@ export default function Viewport({
   //  further down, which cannot exist yet.
   const wiring = {
     catalog: catalogProp, settings, setSettings, plateSettings, setPlateSettings,
-    apiRef, workerRef, objectsRef, keyRef, clipboardRef, onSlicedRef,
+    apiRef, workerRef, objectsRef, keyRef, clipboardRef, onSlicedRef, flushPaintRef,
     layersDataRef, toolpathRef, segDataRef, plateTpRef, lineWidthRef, plateResultsRef, plateOffsetsRef,
     selectedPlateRef, plateCountRef, placeXRef, canvasModeRef, selectorGeomRef, registerSelectorRef,
     paintXformRef, paintOverlayRef, paintModeRef, paintToolRef,
@@ -277,9 +282,19 @@ export default function Viewport({
     // A gizmo/corner drag reports only that it ENDED, and by then the mesh already holds the new pose — so the
     //  undo entry is taken at the start of the drag, where the old one is still readable.
     onTransformStarted: () => recordHistoryRef.current?.('drag'),
+    // Each object's paint follows that object alone during a drag (support_paint.js beginPaintDrag).
+    onPaintDragStart: () => paintDragHandlersRef.current?.begin(),
+    onPaintDragEnd: () => paintDragHandlersRef.current?.end(),
     // Clicking a plate in the viewport selects it, so the tab bar is no longer the only way to switch. Through a
     //  ref because the scene installs its handlers once and makePlateActions is built further down.
     onPlateClicked: (i) => { if (i !== selectedPlateRef.current) selectPlateRef.current?.(i) },
+    // A brush stroke that reaches an object on another plate: that plate becomes the selected one, and the selector
+    //  swaps to it holding the open brush's annotation (paint_input.js carries the stroke on once it resolves).
+    onPaintPlateNeeded: (plate) => {
+      if (paintModeRef.current === 'off') return null
+      if (plate !== selectedPlateRef.current) selectPlateRef.current?.(plate)
+      return registerSelectorRef.current?.(null, { kind: paintKindOfMode(paintModeRef.current) })
+    },
     onSelectionChanged: () => setSelectedIds(apiRef.current?.selectedObjectIds?.() ?? []),
     //  The drag can land on any plate's box, and each plate's position is its own array entry — the origin
     //  subtracted is the dragged box's own plate, and only that plate's entry is written, so the other plates'
@@ -287,9 +302,12 @@ export default function Viewport({
     onTowerMoved: (x, y, plate) => {
       const idx = plate ?? selectedPlateRef.current
       const o = apiRef.current?.platePos?.(idx) ?? { x: 0, z: 0 }
+      const frame = frameOf(idx)
+      // Kept on the plate's bed: a drop past the edge lands at the edge instead of slicing a tower off the bed.
+      const [bedX, bedY] = clampTowerPosition(x - o.x + frame.bedW / 2, y + o.z + frame.bedD / 2,
+        { bedW: frame.bedW, bedD: frame.bedD, size: towerFootprint(frame.params, !!frame.effective.wipe_tower_real) })
       setSettings(s => writeTowerPosition(s, idx, plateCountRef.current,
-        Math.round((x - o.x + frameOf(idx).bedW / 2) * 10) / 10,
-        Math.round((y + o.z + frameOf(idx).bedD / 2) * 10) / 10))
+        Math.round(bedX * 10) / 10, Math.round(bedY * 10) / 10))
     },
   })
 
@@ -318,25 +336,40 @@ export default function Viewport({
   }
   useEffect(checkBed, [objects.length, selectedPlate, plateSettings, globalFrame.bedW, globalFrame.bedD, globalFrame.bedH])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The tower stand-in follows the same rules the slicer applies: a tower exists with two filaments, its footprint
-  //  is the real tower's width or the ring's 15mm, and an unset position means "beside the model". Recomputed here
-  //  rather than in the scene so both the box and the slice read one source.
+  // The tower stand-in follows the same rules the slicer applies, PER PLATE: a plate gets a tower when it changes
+  //  tools itself, its effective settings leave the tower on, and it is not resin; its footprint is its own derived
+  //  width (or the ring's 15mm), and an unset position means "beside the model". Before this the whole scene was
+  //  asked once — a plate printing on T1 alone got a box because another plate switched tools, one plate's Off hid
+  //  every box, and a per-plate width drew the global one. Recomputed here so the box and the slice read one source.
   useEffect(() => {
     const api = apiRef.current; if (!api) return
-    // Two filaments LOADED is not a tower — a tool change is (usesMultipleTools, core/tower_layout.js).
-    const multi = extruderColors.length > 1 && usesMultipleTools(objects, paintStateCounts)
-    // No box when there is no tower: nothing switching tools, the preview, an empty plate, the tower switched off —
-    //  or a resin printer, which has no extruders to purge between.
-    const towerOff = ctx.effective?.enable_prime_tower === false
-    if (!multi || towerOff || tech === 'SLA' || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
-    // The map, not the schema — same reason deriveKernelParams reads it directly (the schema default is off-bed).
+    if (extruderColors.length < 2 || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
+    const frames = Array.from({ length: plateCount }, (_, plate) => plateContext(settings, plateSettings, plate, DIMS))
+    // Two filaments LOADED is not a tower — a tool change is (usesMultipleTools). The live paint counts are the
+    //  selector's and speak for the plate it holds; every other plate's paint is on its objects (paint_store.js).
+    const selectorPlate = selectorGeomRef.current?.plate
+    const changesTools = (plate) => {
+      const onPlate = objects.filter(o => o.plate === plate)
+      const stored = () => storedPaintStates(onPlate.map(row => objectsRef.current.find(o => o.id === row.id)).filter(o => o && o.visible !== false))
+      // The live counts describe the plate the selector holds only while it holds the MATERIAL annotation; with the
+      //  support annotation held (a support brush was opened) they count support marks, and the plate's material
+      //  paint — which the slice will load again ('auto') — is in the store.
+      if (plate === selectorPlate && selectorGeomRef.current?.kind === 'color') return usesMultipleTools(onPlate, paintStateCounts, extruderColors.length)
+      return usesMultipleTools(onPlate, stored(), extruderColors.length)
+    }
+    // enable_prime_tower is read the way deriveKernelParams reads it: absent leaves the kernel's tower on.
+    const towerOn = (effective) => !('enable_prime_tower' in effective) || !!effective.enable_prime_tower
     api.setPrimeTower?.(towerBoxes({
-      plateCount, settings, bedOf: (plate) => { const f = plateContext(settings, plateSettings, plate, DIMS); return { w: f.bedW, d: f.bedD } },
-      size: wipeTowerReal ? (Number(settingRaw(settings, 'prime_tower_width')) || 30) : 15,
+      plateCount, settings,
+      bedOf: (plate) => ({ w: frames[plate].bedW, d: frames[plate].bedD }),
+      towerOf: (plate) => ({
+        on: frames[plate].tech !== 'SLA' && towerOn(frames[plate].effective) && changesTools(plate),
+        size: towerFootprint(frames[plate].params, !!frames[plate].effective.wipe_tower_real),
+      }),
       modelBounds: (plate) => api.modelBounds?.(plate),
       plateOrigin: (plate) => api.platePos?.(plate),
     }))
-  }, [extruderColors.length, canvasMode, objects, paintStateCounts, wipeTowerReal, settings, plateSettings, selectedPlate, plateCount])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [extruderColors.length, canvasMode, objects, paintStateCounts, settings, plateSettings, selectedPlate, plateCount])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // S2: Prepare|Preview modes — group visibility + interaction gating
   useEffect(() => {
@@ -359,17 +392,21 @@ export default function Viewport({
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
   const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef } = useSlicer({
-    ...wiring, paintStateCountsRef, setKernelKind, wipeTowerReal, rebuildToolpaths,
+    ...wiring, paintStateCountsRef, setKernelKind, rebuildToolpaths,
     // Deferred through a lambda: makeSupportPaint is built below and cannot be in `wiring` yet.
     rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
     warmup: feature('warmup'), quiet: !feature('logs'),
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
-  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector } = makeSupportPaint({
-    ...wiring, three, getWorker,
+  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, beginPaintDrag, endPaintDrag, holdSelectorForSlice } = makeSupportPaint({
+    ...wiring, three, getWorker, paintStateCountsRef, paintDragRef,
+    isSelectorSlicing: () => !!pendingSliceRef.current,
   })
+  paintDragHandlersRef.current = { begin: beginPaintDrag, end: endPaintDrag }
+  holdSelectorRef.current = holdSelectorForSlice
   registerSelectorRef.current = registerSelector
+  flushPaintRef.current = flushPaint
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
@@ -378,10 +415,37 @@ export default function Viewport({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
     runSlice, createPoolContext, kernelKindRef, progressSinkRef,
     ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
-    // Belt to the commit hook's braces: a move can reach a slice without a gizmo commit (keyboard nudge, plate
-    //  re-arrange), so the slice itself hands the selector the mesh it is about to cut. Only for the selected
-    //  plate — that is the mesh the brush painted — and only when a selector exists at all.
-    syncPaintSelector: (merged) => { if (selectorGeomRef.current) registerSelectorRef.current?.(merged) },
+    // The selector worker's kernel reads its painting from the selector, so before it cuts ANY plate the selector
+    //  must hold that plate's mesh — loaded from the per-object store when it is another one. A move can also reach
+    //  a slice without a gizmo commit (keyboard nudge, plate re-arrange). Needed when a selector exists (it may hold
+    //  another plate) or the plate carries stored paint; the caller awaits it before posting the slice.
+    //  The held marks go to the store first: if the retry ladder has to recreate the worker, the strokes that lived
+    //  only in its selector would go with it, and the resync after the recreate loads the plate from the store.
+    // Resolves { kind, release }: the annotation the selector holds (use_slicer.js buildParams reads its counts as
+    //  tools only for material paint) and, with `holdForSlice`, the release of the hold that keeps every other
+    //  selector job queued until the slice is posted (support_paint.js holdSelectorForSlice).
+    syncPaintSelector: async (merged, { holdForSlice = false } = {}) => {
+      const nothing = { kind: null, release: () => {} }
+      // A resin slice reads no paint (slice_sla has no selector), so it neither closes the brush nor waits on a load.
+      if (frameOf(merged?.plate ?? selectedPlateRef.current).tech === 'SLA') return nothing
+      // No stroke may reach the selector while it slices: the slice below may swap it to another annotation ('auto'),
+      //  and a stroke of the open brush would then be filed under the wrong kind. The preview a finished slice
+      //  switches to closes the brush anyway.
+      if (paintModeRef.current !== 'off') setPaintMode('off')
+      const needsSelector = selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports
+      if (!needsSelector) return nothing
+      await flushPaintRef.current?.()
+      // 'auto': the kernel slices with the annotation the store says wins (material first), whichever brush was open.
+      const loading = registerSelectorRef.current?.(merged, { kind: 'auto' })
+      let release = () => {}
+      if (holdForSlice) release = holdSelectorRef.current?.() ?? release
+      let result
+      try { result = await loading } catch (error) { release(); throw error }
+      // A plate whose paint did not load is not sliced bare (the pool path does the same, ctx.syncPaint).
+      if (result === 'load-failed') { release(); throw new Error('Worker failed to load the plate paint') }
+      if (result === 'export-failed') { release(); throw new Error('Worker failed to hand back the plate paint') }
+      return { kind: selectorGeomRef.current?.kind ?? null, release }
+    },
   })
   selectPlateRef.current = selectPlate
 
@@ -534,7 +598,7 @@ export default function Viewport({
 
   // Object actions (duplicate/copy/paste/delete/split + gizmo mode) — the bodies live in object_actions.js.
   const {
-    duplicateSelected, copySelected, pasteClipboard, deleteSelected, deleteAllObjects, splitSelected, setGizmo,
+    duplicateSelected, copySelected, pasteClipboard, deleteSelected, deleteObject, deleteAllObjects, splitSelected, setGizmo,
   } = makeObjectActions({ ...wiring, setPaintMode, removeObject, refreshObjects, recordHistory })
 
   // Object toolbar — the button list lives in toolbar_items.js; only the actions are bound here.
@@ -604,7 +668,7 @@ export default function Viewport({
   // The material each filament is, read from the same settings map the filament card writes — so the legend says
   //  "T2 ABS 203.6 mm" rather than leaving the colour swatch to carry the whole identity.
   const asList = (key) => { const raw = settingRaw(settings, key); return Array.isArray(raw) ? raw : (raw ? [raw] : []) }
-  const towerStats = towerResultStats(plateResultsRef.current[selectedPlateRef.current], window.__vpParams)
+  const towerStats = towerResultStats(plateResultsRef.current[selectedPlateRef.current], plateResultsRef.current[selectedPlateRef.current]?.towerParams)
   // Once a slice exists the kernel's measurement is the better one — it was taken on the toolpaths that were
   //  actually emitted, so it counts support/skirt/brim, which the viewer's model-bbox check cannot see. Before the
   //  first slice there is nothing to read, and the viewer's own pre-slice measure is all there is.
@@ -763,7 +827,7 @@ export default function Viewport({
                   onSelect={(id, additive) => apiRef.current?.selectObjects([id], additive)}
                   onToggleVisible={toggleObjVisible} onExtruder={setObjExtruder}
                   onSplit={id => { apiRef.current?.selectObject(id); splitSelected() }}
-                  onRemove={id => { recordHistory(); removeObject(id) }}
+                  onRemove={deleteObject}
                   supportOn={supportOn} onToggleSupport={onToggleSupport} fffSupport={tech !== 'SLA'}
                   supportOnOf={supportOnOf} onPlateSupport={(p, on) => writePlateKey(p, 'enable_support', on)}
                   overhangOn={overhangOn} onToggleOverhang={e => setOverhangOn(e.target.checked)}
@@ -780,9 +844,9 @@ export default function Viewport({
               {/* A prime tower only exists with a second filament, so the card appears with one. */}
               {extruderColors.length > 1 && showPanel('towerCard') && (
                 <Panel panels={panels} name="towerCard">
-                <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors}
-                  wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)}
-                  towerStats={towerStats} selectedPlate={selectedPlate} plateCount={plateCount} />
+                <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors} {...scopeProps}
+                  towerStats={towerStats}
+                  towerFrame={{ bedW: ctx.bedW, bedD: ctx.bedD, size: towerFootprint(ctx.params, !!ctx.effective.wipe_tower_real) }} />
                 </Panel>
 )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
