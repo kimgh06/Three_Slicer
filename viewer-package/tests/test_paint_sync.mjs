@@ -64,6 +64,19 @@ const lastRequestId = (worker) => worker.sent.at(-1).requestId
   assert.equal((await waiting).type, 'paintExport')
 }
 
+// ---- a worker that echoes ids: an id-less reply is another command's (a Clear), not this load's answer ----
+{
+  const worker = new FakeWorker()
+  const first = request(worker, { cmd: 'exportPaint' }, { types: ['paintExport'] })
+  worker.reply({ type: 'paintExport', supported: true, facets: [], hex: '', requestId: lastRequestId(worker) })
+  await first
+  const load = request(worker, { cmd: 'importPaint' }, { types: ['painted'] })
+  worker.reply({ type: 'painted', counts: {} })                                     // the Clear's reply
+  assert.equal(await settledWithin(load), NEVER, "another command's id-less reply does not end this wait")
+  worker.reply({ type: 'painted', counts: { 2: 5 }, requestId: lastRequestId(worker) })
+  assert.deepEqual((await load).counts, { 2: 5 })
+}
+
 // ---- a bounded wait gives up ----
 {
   const TIMEOUT_MS = 10

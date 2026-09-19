@@ -151,6 +151,9 @@ export function useSlicer(deps) {
           if (a) { a.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) a.gcode.push(d.gcode); noteLayers(a.layers.length) }
         }
         else if (d.type === 'done') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
+        // An error that names a request belongs to that request's own wait (worker_reply.js) — a paint command's,
+        //  never the slice's: read here too, it showed "Slice failed" and killed a running slice over a paint load.
+        else if (d.type === 'error' && d.requestId !== undefined) { /* answered by request() */ }
         else if (d.type === 'error') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.reject(new Error(d.error)) } else { setError('Slice failed: ' + d.error); setSlicing(false) } }
         else if (d.type === 'warm') { kernelKindRef.current = d.kernel ?? null; setKernelKind?.(kernelKindRef.current) }
         else if (d.type === 'prepared') { /* selector mesh registered */ }

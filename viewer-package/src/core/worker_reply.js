@@ -31,7 +31,9 @@ export function makeTerminationObservable(worker) {
  * Resolves `null` — never hangs — when the reply is the worker's error reply, when the worker errors or is
  * terminated, or when `timeoutMs` passes (Infinity: no timeout, for a reply that may legitimately queue behind a
  * long slice). A worker that predates the `requestId` echo still answers: a reply WITHOUT an id is accepted by its
- * type, but an error reply must carry this request's id — an earlier command's error must not end this wait.
+ * type, but an error reply must carry this request's id — an earlier command's error must not end this wait. Once
+ * a worker has echoed an id, an id-less reply is another command's (a Clear's 'painted' ended a paint load early,
+ * and the slice then read that load's counts as empty).
  */
 export function request(worker, message, { types, timeoutMs = Infinity, transfer } = {}) {
   if (!worker || worker.__terminated) return Promise.resolve(null)
@@ -50,7 +52,8 @@ export function request(worker, message, { types, timeoutMs = Infinity, transfer
     const onMessage = (event) => {
       const data = event.data
       const ours = data?.requestId === requestId
-      const unnumbered = data?.requestId === undefined
+      if (data?.requestId !== undefined) worker.__echoesRequestIds = true
+      const unnumbered = data?.requestId === undefined && !worker.__echoesRequestIds
       if (ours && data.type === 'error') { finish(null); return }
       if ((ours || unnumbered) && types.includes(data?.type)) finish(data)
     }
