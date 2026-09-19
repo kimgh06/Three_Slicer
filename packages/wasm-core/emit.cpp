@@ -63,7 +63,7 @@ void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float typ
   bool anyRun=false;
   for (Path wp : loops) {
     if (wp.size() < 2) continue;
-    if (!anyRun) { gw.pe_begin_run(pe_role_of(type), fPrint); anyRun=true; }
+    if (!anyRun) { gw.role_tag((int)type); gw.pe_begin_run(pe_role_of(type), fPrint); anyRun=true; }
     rotate_seam(wp, seamMode, sc, gw.px, gw.py);
     std::vector<DPt> pts; pts.reserve(wp.size()+1);
     for (auto& q:wp) pts.push_back({q.x()*INV, q.y()*INV});
@@ -85,7 +85,7 @@ void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, fl
   bool anyRun=false;
   for (const Path& ln : lines) {
     if (ln.size() < 2) continue;
-    if (!anyRun) { gw.pe_begin_run(pe_role_of(type), fPrint); anyRun=true; }
+    if (!anyRun) { gw.role_tag((int)type); gw.pe_begin_run(pe_role_of(type), fPrint); anyRun=true; }
     std::vector<DPt> pts; pts.reserve(ln.size());
     for (auto& q:ln) pts.push_back({q.x()*INV, q.y()*INV});
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
@@ -109,6 +109,7 @@ void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<TreePath>& 
     const Path& ln = lw.pl;
     if (ln.size() < 2) continue;
     const int role = (lw.role > 0) ? lw.role : pe_role_of(type);
+    gw.role_tag((int)type);
     if (role != curRole) { if (curRole >= 0) gw.pe_end_run(); gw.pe_begin_run(role, fPrint); curRole = role; }
     const double ph = (lw.h > 1e-6) ? lw.h : h;
     if (lw.mm3 > 1e-9) gw.set_e_per_mm_vol(lw.mm3, p);
@@ -130,7 +131,7 @@ void emit_arachne_walls(GW& gw, std::vector<float>& tp, const std::vector<arachn
   bool anyRun=false;
   for (const auto& wl : walls) {
     if (wl.pts.size() < 2) continue;
-    if (!anyRun) { gw.pe_begin_run(2 /*erExternalPerimeter*/, fPrint); anyRun=true; }
+    if (!anyRun) { gw.role_tag(1); gw.pe_begin_run(2 /*erExternalPerimeter*/, fPrint); anyRun=true; }
     push_seg(tp, gw.px, gw.py, wl.pts[0].x, wl.pts[0].y, z, 0.0f);
     gw.travel(wl.pts[0].x, wl.pts[0].y, fTravel);
     size_t n = wl.pts.size();
@@ -157,6 +158,7 @@ void emit_spiral(GW& gw, std::vector<float>& tp, const Paths& outerWall, double 
   std::vector<DPt> pts; for (auto& q:wp) pts.push_back({q.x()*INV, q.y()*INV}); pts.push_back(pts.front());
   push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z0, 0.0f);
   gw.travel(pts[0].x, pts[0].y, fTravel);
+  gw.role_tag(1);
   double total=0; for (size_t i=1;i<pts.size();++i) total+=std::hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
   double acc=0;
   for (size_t i=1;i<pts.size();++i){
@@ -180,6 +182,7 @@ void emit_scarf_loop(GW& gw, std::vector<float>& tp, Path wp, double z, double h
   push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
   gw.travel(pts[0].x, pts[0].y, fTravel);
   gw.raw("; scarf");
+  gw.role_tag(1);
   double startZ = z - h;
   double sub = std::max(0.2, slen/8.0);   // ramp subdivision step (so long straight walls also rise continuously in z)
   // Ramp up: over the first slen, z goes (z-h) -> z and flow 0 -> 1 (subdivided into segments)

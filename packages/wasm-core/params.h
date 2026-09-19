@@ -167,6 +167,10 @@ struct Params {
   //  while `slice()` with a bare params object still produces exactly the G-code it always did.
   bool   gcode_stats_block=false;            // ; filament used [mm]/[cm3]/[g], cost, total filament change
   bool   gcode_config_block=false;           // ; CONFIG_BLOCK_START … the parameters this slice ran with … END
+  // Upstream's ;TYPE:<role> tag on every role change (GCodeProcessor reserved tag), written from the same role the
+  //  toolpath stream records, so a G-code read back as TEXT (an opened .gcode / .gcode.3mf) colours as the slice did.
+  //  Opt-in for the same reason as the two blocks above: the default G-code is pinned by golden.mjs.
+  bool   gcode_role_tags=false;              // ;TYPE:<role> on every role change (upstream GCodeProcessor tag)
   std::string params_json;                   // the raw params object, for the config block above
   int    physicalExtruderOf(int tool) const {          // tool (0-based) -> physical extruder (0-based)
     return (tool >= 0 && tool < (int)filament_map.size()) ? std::max(0, (int)filament_map[tool] - 1) : tool;

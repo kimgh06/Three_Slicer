@@ -238,6 +238,7 @@ Params parse_params(const std::string& j) {
   p.extrusion_rate_slope_segment_length = jget(j,"extrusion_rate_slope_segment_length",p.extrusion_rate_slope_segment_length);
   p.pe_external_perimeter_only    = jbool(j,"pe_external_perimeter_only",p.pe_external_perimeter_only);
   p.emit_pe_tags                  = jbool(j,"emit_pe_tags",p.emit_pe_tags);
+  p.gcode_role_tags               = jbool(j,"gcode_role_tags",p.gcode_role_tags);
   p.pe_strip_tags                 = jbool(j,"pe_strip_tags",p.pe_strip_tags);
   p.machine_accel_print           = jget(j,"machine_accel_print",p.machine_accel_print);
   p.machine_accel_travel          = jget(j,"machine_accel_travel",p.machine_accel_travel);

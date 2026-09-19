@@ -26,6 +26,7 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
   gw.avoid_walls = p.reduce_crossing_wall;                                 // wall-avoiding travel
   bool realPE    = (!p.pe_lite && p.max_volumetric_extrusion_rate_slope > 0);
   gw.emit_pe_tags = p.emit_pe_tags || realPE;                             // tags are emitted automatically when the real PE is used
+  gw.emit_role_tags = p.gcode_role_tags;
   bool ironOn    = (p.ironing_type=="top" || p.ironing_type=="topmost" || p.ironing_type=="solid");
   bool scarfOn   = (p.seam_slope_type=="external" || p.seam_slope_type=="all");
   int seamMode = (p.seam_position=="nearest")?1 : (p.seam_position=="aligned")?2 : (p.seam_position=="random")?3 : 0; // back by default
