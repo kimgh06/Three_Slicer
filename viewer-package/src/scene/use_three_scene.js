@@ -4,7 +4,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster } from './sla_raster.js'
-import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'
+import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'; import { towerSelectionRule } from '../core/tower_layout.js'
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates } from './plate_scene.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
@@ -142,7 +142,8 @@ export function useThreeScene(deps) {
     transform.addEventListener('dragging-changed', e => {
       orbit.enabled = !e.value
       if (e.value) {
-        deps.onTransformStarted?.()   // undo records the state BEFORE the drag; the commit below only says it ended
+        // Undo records the state BEFORE the drag (the commit only says it ended); not the tower's — a host setting.
+        if (!isTower(transform.object)) deps.onTransformStarted?.()
         paintDragBase.clear()
         const overlays = deps.paintOverlayRef?.current
         paintDragging = !!(overlays && overlays.size && transform.object && !transform.object.userData?.isPrimeTower)
@@ -159,8 +160,8 @@ export function useThreeScene(deps) {
           // The kernel reads prime_tower_x/y as the tower's CORNER (ptx .. ptx+side), so the box's centre has to
           //  give up half its footprint on the way out — otherwise a dropped tower re-renders half a width away.
           const half = transform.object.scale.x / 2
-          // Which plate's box was dragged decides which origin comes back off the world coordinates — the
-          //  setting itself is one shared scalar, so a drag on any plate moves every plate's tower alike.
+          // Which plate's box was dragged decides which origin comes back off the world coordinates, and which
+          //  plate's wipe_tower_x/y entry is written — the other plates' towers stay where they are.
           deps.onTowerMoved?.(transform.object.position.x - half, -transform.object.position.z - half,
                               transform.object.userData.plate)
         } else if (transform.object === pivot) {
@@ -202,7 +203,7 @@ export function useThreeScene(deps) {
     //  selected removes it, and clicking empty space clears — but a plain click on something ALREADY selected
     //  keeps the set, which is what makes dragging several objects at once possible.
     const selection = new Set()
-    let selected = null
+    let selected = null; const isTower = (mesh) => !!mesh?.userData?.isPrimeTower
     // The selection bounding box + its uniform-scale corner handles. It is fed the current selection once per
     //  rendered frame instead of being attached and detached, so the eight places that change `selected` do not
     //  each need a second call to keep in step. The prime tower is excluded: its size is a setting, not a drag.
@@ -227,8 +228,11 @@ export function useThreeScene(deps) {
     }
     // Point the gizmo at whatever the selection currently is. Always releases the pivot first, so the meshes are
     //  back under objectsGroup with their world transforms baked before anything reads them.
+    //  Every selection path ends here, so this is where the tower is kept alone and translate-only (towerSelectionRule).
     const refreshGizmo = () => {
       releasePivot()
+      const mode = towerSelectionRule(selection, selected, isTower) ? 'translate' : gizmoMode
+      if (transform.mode !== mode) { transform.setMode(mode); transform.showY = (mode !== 'translate') }
       if (selection.size === 0) { transform.detach(); return }
       if (selection.size === 1) { transform.attach([...selection][0]); return }
       const box = new THREE.Box3()
@@ -297,8 +301,7 @@ export function useThreeScene(deps) {
     //  the tower existed only in the sliced result, so "does it collide with the model?" could not be answered
     //  until after slicing. It is pickable and moves on the same TransformControls the objects use; dragging it
     //  writes wipe_tower_x/y, which is what turns the placement from automatic into chosen.
-    //  One mesh per plate: the position setting is a single shared scalar (plate-local), so every plate's tower
-    //  sits at the same local spot, but each stand-in must still be drawn at its own plate's world offset.
+    //  One mesh per plate, drawn at its plate's world offset; wipe_tower_x/y hold one plate-local entry per plate.
     let towerMeshes = []
     const activeMeshes = () => {
       const list = objectsRef.current.map(o => o.mesh)
@@ -490,7 +493,7 @@ export function useThreeScene(deps) {
     // Leaving scale mode with the pointer parked on a handle would otherwise keep the gizmo switched off until the
     //  next pointermove — which never comes if the next thing the user does is click without moving.
     const setMode = m => {
-      transform.setMode(m); transform.showY = (m !== 'translate'); gizmoMode = m
+      gizmoMode = m; refreshGizmo()   // applies the mode — unless the tower is selected, which only moves
       overScaleHandle = false; transform.enabled = true; applyCursor(); setGmode(m)
     }
     const frameObjects = () => {
