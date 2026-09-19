@@ -41,6 +41,12 @@
   mesh and loaded from it after; slice-all pool workers load their plate's paint; a 3mf save writes every plate's
   brush strokes (it used to save them only for a single-plate project); copy, duplicate and paste carry the paint.
   Every plate's paint stays drawn, not only the plate being painted.
+- Review fixes to the paint store, each reproduced before the fix: a slice-all pool worker printed the previous
+  plate's paint on an unpainted plate; opening the support brush filed another plate's material paint as support
+  paint; a 3mf save wrote every object under one paint attribute and let an empty support map hide material paint;
+  a worker replaced by the watchdog wiped the stored paint of the plate it held; and a save waiting on a worker
+  that was then terminated stayed on "Saving…" with the viewport blank. Worker replies now echo a `requestId`, so
+  an error reply ends only the request it belongs to.
 
 ## 0.3.1 — 2026-09-16
 

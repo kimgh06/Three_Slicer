@@ -102,7 +102,18 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   has a kernel overlay, so every other object draws its stored paint itself (`refreshStoredOverlays`, run after each
   selector job): `paintTriangles` replays upstream's split rule in JS — exact midpoints, the special-side rotation,
   children in reverse stream order — and the result is pinned against the kernel overlay's triangle count and area.
-  Without it a plate's paint looked erased the moment another plate was painted.
+  Without it a plate's paint looked erased the moment another plate was painted. **(6)** Every wait on a worker ends
+  (`core/worker_reply.js` `request`): on its reply, on its own `{type:'error'}` (the worker echoes `requestId` on
+  every reply, so another command's error cannot end it), on an error event, or on `terminate()` — which
+  `makeTerminationObservable` turns into an event. A hung write-back once left "Saving…" and a blank viewport
+  (rendering stays suspended until the export ends). **(7)** The selector record belongs to one worker
+  (`record.worker`): after the watchdog or the memory ladder replaces it, nothing is written back from the new, empty
+  selector (that wiped the store: 208 -> 0) and the next registration reloads the store. **(8)** The record carries
+  the KIND of its marks — set when paint is loaded and when a stroke lands — and the write-back files them under it;
+  reading the brush mode at write time filed material paint as support paint. **(9)** A pool worker's selector must
+  hold exactly its plate's paint: slicing never resets it, so an unpainted plate after a painted one is sliced after
+  a `clear` (`poolPaintAction`; measured without it: T2 314 -> 1215 mm). **(10)** The 3mf writes each object's
+  `color` and `supports` marks under their own attribute; an empty map is no paint.
 - **A `.3mf` is a project, not a mesh format.** Anything off MakerWorld, and every OrcaSlicer/BambuStudio "save
   project", is a zip whose `3D/3dmodel.model` is only one member; `Metadata/project_settings.config` holds the
   flattened preset the author sliced with, `Metadata/model_settings.config` the per-object state and plate layout.
