@@ -418,6 +418,22 @@ export function makePlateActions(deps) {
     setSliceNotice(`Exported ${done.length} plate(s)`
       + (skipped ? ` — skipped ${skipped} that extend beyond the bed` : ''))
   }
+  // The focused plate alone as a .gcode.3mf — upstream's "Export plate sliced file", and what the sidebar's Export
+  //  button saves; the plain .gcode stays one click away in its menu for printers that take nothing else. Built on
+  //  click rather than prefilled like the plain link, because the zip is compressed work the user may never want.
+  async function exportPlateGcode3mf(idx = selectedPlateRef.current) {
+    const r = plateResultsRef.current[idx]
+    if (!r || r.error || !r.gcode || r.stats?.over_bed) return
+    setExporting?.('Writing…')
+    try {
+      const bytes = await writeGcode3MF([{ index: idx, gcode: r.gcode, stats: r.stats }], settings, { plateCount: plateCountRef.current })
+      await download(bytes, `plate_${idx + 1}.gcode.3mf`, 'model/3mf', onExport)
+    } catch (e) {
+      setError('G-code export failed: ' + (e?.message || e))
+    } finally {
+      setExporting?.(null)
+    }
+  }
   async function onSlice(scope = 'current') {
     setSliceMenu(false); setError(''); setSliceNotice(''); setDowngradeOffer(null)
     const idx0 = selectedPlateRef.current
@@ -589,5 +605,5 @@ export function makePlateActions(deps) {
     showPlateResult(i)
   }
 
-  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
+  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
 }
