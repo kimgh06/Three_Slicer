@@ -25,7 +25,7 @@ import {
 import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
 import { withToolBreakdown } from './core/stats_view.js'
-import { towerBoxes, usesMultipleTools, towerResultStats } from './core/tower_layout.js'
+import { towerBoxes, usesMultipleTools, towerResultStats, towerFootprint, clampTowerPosition } from './core/tower_layout.js'
 import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } from './core/plate_settings.js'
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
@@ -194,11 +194,11 @@ export default function Viewport({
   const [extruderColors, setExtruderColors, extruderColorsRef] = useStateRef(initialColors)
   const [gcodeUrl, setGcodeUrl] = useState('')
   const [showTravel, setShowTravel, showTravelRef] = useStateRef(false)
-  // Off until the ported WipeTower is deterministic. It was briefly the default here on the grounds that the
-  //  fallback ring purges nothing — true, but the real tower emits F0 feedrates and produces a different file on
-  //  every run of the same input (see params.h), and shipping unreproducible G-code by default is the worse of the
-  //  two. The checkbox still offers it.
-  const [wipeTowerReal, setWipeTowerReal] = useState(false)   // stage 12: real WipeTower.generate() (MM only)
+  // Ring or real WipeTower, per plate: the settings key `wipe_tower_real` (a viewer knob, not a schema key). Off
+  //  until the ported WipeTower is deterministic. It was briefly the default here on the grounds that the fallback
+  //  ring purges nothing — true, but the real tower emits F0 feedrates and produces a different file on every run
+  //  of the same input (see params.h), and shipping unreproducible G-code by default is the worse of the two.
+  //  The card still offers it. This is the SELECTED plate's value, for the card; the boxes read each plate's own.
   const [paintMode, setPaintModeState] = useState('off')      // stage 20: painting mode (support brush or material brush)
   const [materialExtruder, setMaterialExtruder, materialExtruderRef] = useStateRef(0)   // 0-based extruder the material brush writes (null = eraser)
   // "Which filament am I working on" is ONE choice with two places to make it — the card's rows and the brush's
@@ -287,9 +287,12 @@ export default function Viewport({
     onTowerMoved: (x, y, plate) => {
       const idx = plate ?? selectedPlateRef.current
       const o = apiRef.current?.platePos?.(idx) ?? { x: 0, z: 0 }
+      const frame = frameOf(idx)
+      // Kept on the plate's bed: a drop past the edge lands at the edge instead of slicing a tower off the bed.
+      const [bedX, bedY] = clampTowerPosition(x - o.x + frame.bedW / 2, y + o.z + frame.bedD / 2,
+        { bedW: frame.bedW, bedD: frame.bedD, size: towerFootprint(frame.params, !!frame.effective.wipe_tower_real) })
       setSettings(s => writeTowerPosition(s, idx, plateCountRef.current,
-        Math.round((x - o.x + frameOf(idx).bedW / 2) * 10) / 10,
-        Math.round((y + o.z + frameOf(idx).bedD / 2) * 10) / 10))
+        Math.round(bedX * 10) / 10, Math.round(bedY * 10) / 10))
     },
   })
 
@@ -318,25 +321,31 @@ export default function Viewport({
   }
   useEffect(checkBed, [objects.length, selectedPlate, plateSettings, globalFrame.bedW, globalFrame.bedD, globalFrame.bedH])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The tower stand-in follows the same rules the slicer applies: a tower exists with two filaments, its footprint
-  //  is the real tower's width or the ring's 15mm, and an unset position means "beside the model". Recomputed here
-  //  rather than in the scene so both the box and the slice read one source.
+  // The tower stand-in follows the same rules the slicer applies, PER PLATE: a plate gets a tower when it changes
+  //  tools itself, its effective settings leave the tower on, and it is not resin; its footprint is its own derived
+  //  width (or the ring's 15mm), and an unset position means "beside the model". Before this the whole scene was
+  //  asked once — a plate printing on T1 alone got a box because another plate switched tools, one plate's Off hid
+  //  every box, and a per-plate width drew the global one. Recomputed here so the box and the slice read one source.
   useEffect(() => {
     const api = apiRef.current; if (!api) return
-    // Two filaments LOADED is not a tower — a tool change is (usesMultipleTools, core/tower_layout.js).
-    const multi = extruderColors.length > 1 && usesMultipleTools(objects, paintStateCounts)
-    // No box when there is no tower: nothing switching tools, the preview, an empty plate, the tower switched off —
-    //  or a resin printer, which has no extruders to purge between.
-    const towerOff = ctx.effective?.enable_prime_tower === false
-    if (!multi || towerOff || tech === 'SLA' || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
-    // The map, not the schema — same reason deriveKernelParams reads it directly (the schema default is off-bed).
+    if (extruderColors.length < 2 || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
+    const frames = Array.from({ length: plateCount }, (_, plate) => plateContext(settings, plateSettings, plate, DIMS))
+    // Two filaments LOADED is not a tower — a tool change is (usesMultipleTools). The paint counts are the
+    //  selector's, and the selector holds the SELECTED plate's merge, so they speak for that plate only.
+    const changesTools = (plate) => usesMultipleTools(objects.filter(o => o.plate === plate), plate === selectedPlate ? paintStateCounts : null)
+    // enable_prime_tower is read the way deriveKernelParams reads it: absent leaves the kernel's tower on.
+    const towerOn = (effective) => !('enable_prime_tower' in effective) || !!effective.enable_prime_tower
     api.setPrimeTower?.(towerBoxes({
-      plateCount, settings, bedOf: (plate) => { const f = plateContext(settings, plateSettings, plate, DIMS); return { w: f.bedW, d: f.bedD } },
-      size: wipeTowerReal ? (Number(settingRaw(settings, 'prime_tower_width')) || 30) : 15,
+      plateCount, settings,
+      bedOf: (plate) => ({ w: frames[plate].bedW, d: frames[plate].bedD }),
+      towerOf: (plate) => ({
+        on: frames[plate].tech !== 'SLA' && towerOn(frames[plate].effective) && changesTools(plate),
+        size: towerFootprint(frames[plate].params, !!frames[plate].effective.wipe_tower_real),
+      }),
       modelBounds: (plate) => api.modelBounds?.(plate),
       plateOrigin: (plate) => api.platePos?.(plate),
     }))
-  }, [extruderColors.length, canvasMode, objects, paintStateCounts, wipeTowerReal, settings, plateSettings, selectedPlate, plateCount])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [extruderColors.length, canvasMode, objects, paintStateCounts, settings, plateSettings, selectedPlate, plateCount])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // S2: Prepare|Preview modes — group visibility + interaction gating
   useEffect(() => {
@@ -359,7 +368,7 @@ export default function Viewport({
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
   const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef } = useSlicer({
-    ...wiring, paintStateCountsRef, setKernelKind, wipeTowerReal, rebuildToolpaths,
+    ...wiring, paintStateCountsRef, setKernelKind, rebuildToolpaths,
     // Deferred through a lambda: makeSupportPaint is built below and cannot be in `wiring` yet.
     rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
     warmup: feature('warmup'), quiet: !feature('logs'),
@@ -604,7 +613,7 @@ export default function Viewport({
   // The material each filament is, read from the same settings map the filament card writes — so the legend says
   //  "T2 ABS 203.6 mm" rather than leaving the colour swatch to carry the whole identity.
   const asList = (key) => { const raw = settingRaw(settings, key); return Array.isArray(raw) ? raw : (raw ? [raw] : []) }
-  const towerStats = towerResultStats(plateResultsRef.current[selectedPlateRef.current], window.__vpParams)
+  const towerStats = towerResultStats(plateResultsRef.current[selectedPlateRef.current], plateResultsRef.current[selectedPlateRef.current]?.towerParams)
   // Once a slice exists the kernel's measurement is the better one — it was taken on the toolpaths that were
   //  actually emitted, so it counts support/skirt/brim, which the viewer's model-bbox check cannot see. Before the
   //  first slice there is nothing to read, and the viewer's own pre-slice measure is all there is.
@@ -780,9 +789,9 @@ export default function Viewport({
               {/* A prime tower only exists with a second filament, so the card appears with one. */}
               {extruderColors.length > 1 && showPanel('towerCard') && (
                 <Panel panels={panels} name="towerCard">
-                <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors}
-                  wipeTowerReal={wipeTowerReal} onToggleWipeTower={e => setWipeTowerReal(e.target.checked)}
-                  towerStats={towerStats} selectedPlate={selectedPlate} plateCount={plateCount} />
+                <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors} {...scopeProps}
+                  towerStats={towerStats}
+                  towerFrame={{ bedW: ctx.bedW, bedD: ctx.bedD, size: towerFootprint(ctx.params, !!ctx.effective.wipe_tower_real) }} />
                 </Panel>
 )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
