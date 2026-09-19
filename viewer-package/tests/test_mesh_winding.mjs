@@ -20,8 +20,13 @@ const stl = (triangles) => {
 const box = (x0, y0, z0, x1, y1, z1) => {
   const corners = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]]
   const faces = { bottom: [[0,2,1],[0,3,2]], top: [[4,5,6],[4,6,7]], sides: [[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]] }
+  const wound = (face, flipped) => {
+    const [first, second, third] = face
+    if (flipped) return [first, third, second]
+    return [first, second, third]
+  }
   return (flip = {}) => Object.entries(faces).flatMap(([group, list]) =>
-    list.map(([first, second, third]) => (flip[group] ? [first, third, second] : [first, second, third]).map(corner => corners[corner])))
+    list.map(face => wound(face, flip[group]).map(corner => corners[corner])))
 }
 const cube = box(0, 0, 0, 20, 20, 20)
 const EVERY_GROUP_FLIPPED = { bottom: true, top: true, sides: true }

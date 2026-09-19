@@ -21,7 +21,8 @@ const STL_FLOAT_BYTES = 4
 const VERTEX_ID_SPAN = 2 ** 26
 
 export function meshWindingConsistent(stlBytes) {
-  const bytes = stlBytes instanceof Uint8Array ? stlBytes : new Uint8Array(stlBytes)
+  let bytes = stlBytes
+  if (!(stlBytes instanceof Uint8Array)) bytes = new Uint8Array(stlBytes)
   if (bytes.byteLength < STL_FACETS_OFFSET) return false
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const facetCount = view.getUint32(STL_COUNT_OFFSET, true)
