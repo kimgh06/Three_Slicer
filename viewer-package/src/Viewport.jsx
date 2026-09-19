@@ -338,7 +338,10 @@ export default function Viewport({
     const changesTools = (plate) => {
       const onPlate = objects.filter(o => o.plate === plate)
       const stored = () => storedPaintStates(onPlate.map(row => objectsRef.current.find(o => o.id === row.id)).filter(o => o && o.visible !== false))
-      if (plate === selectorPlate) return usesMultipleTools(onPlate, paintStateCounts)
+      // The live counts describe the plate the selector holds only while it holds the MATERIAL annotation; with the
+      //  support annotation held (a support brush was opened) they count support marks, and the plate's material
+      //  paint — which the slice will load again ('auto') — is in the store.
+      if (plate === selectorPlate && selectorGeomRef.current?.kind === 'color') return usesMultipleTools(onPlate, paintStateCounts)
       return usesMultipleTools(onPlate, stored())
     }
     // enable_prime_tower is read the way deriveKernelParams reads it: absent leaves the kernel's tower on.
