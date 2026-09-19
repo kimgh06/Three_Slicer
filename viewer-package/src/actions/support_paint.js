@@ -180,10 +180,11 @@ export function makeSupportPaint(deps) {
   //  will paint has to be the colour that stroke actually produces.
   function overlayColorFor(state) {
     const mode = paintModeRef.current
-    // Importing a 3mf draws an overlay while the mode is still 'off' — nobody has entered a brush yet — so the mode
-    //  cannot say which kind of paint is on screen. The import records what it loaded for exactly this reason:
-    //  material paint drawn in the support blue/red is the one thing the overlay must never be.
-    const material = mode === 'material' || (mode !== 'enforcer' && mode !== 'blocker' && getWorker()?.__paintImportKind === 'color')
+    // With no brush open the mode cannot say which kind of paint is on screen, so the kind RECORDED on the held
+    //  selector does — set by what was loaded and by the strokes that landed, never by merely opening a brush.
+    //  (Opening the support brush without painting used to relabel it: T2 orange redrawn in the blocker red after the
+    //  next move.) Material paint drawn in the support blue/red is the one thing the overlay must never be.
+    const material = mode === 'material' || (mode !== 'enforcer' && mode !== 'blocker' && selectorGeomRef.current?.kind === 'color')
     return paintStateColor(state, material, extruderColorsRef?.current)
   }
   function disposeOverlayMesh(state) {
@@ -382,7 +383,6 @@ export function makeSupportPaint(deps) {
     const chosen = mergedPaint(objects, merged.members, kind)
     if (!chosen) return Promise.resolve()
     // Which kind was loaded: the overlay colour reads it (overlayColorFor), and the write-back files the marks under it.
-    worker.__paintImportKind = kind
     if (selectorGeomRef.current) selectorGeomRef.current.kind = kind
     if (kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
       setSliceNotice?.('These objects are painted for both material and support. One facet holds one paint state, so '
@@ -397,12 +397,6 @@ export function makeSupportPaint(deps) {
   function setPaintMode(mode) {
     if (mode !== 'off' && objectsRef.current.length === 0) { setError('Upload an STL first'); return }
     if (mode !== 'off') { apiRef.current?.detachTransform(); registerSelector() }
-    // The kind of what the selector will hold from now on — what writeBack files it under once the brush closes.
-    if (mode !== 'off') {
-      const worker = getWorker()
-      if (worker && mode === 'material') worker.__paintImportKind = 'color'
-      else if (worker) worker.__paintImportKind = 'supports'
-    }
     paintModeRef.current = mode; setPaintModeState(mode)
     apiRef.current?.refreshCursor()   // refresh the cursor hint when entering/leaving paint mode
   }
