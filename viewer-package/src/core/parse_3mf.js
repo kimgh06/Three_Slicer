@@ -194,7 +194,7 @@ function parseModelSettings(xml) {
       if (objectId) objectIds.push(objectId)
     }
     // plater_id is 1-based upstream; the viewer's plates are 0-based.
-    plates.push({ index: Math.max(0, (Number(meta.plater_id) || plates.length + 1) - 1), objectIds })
+    plates.push({ index: Math.max(0, (Number(meta.plater_id) || plates.length + 1) - 1), objectIds, gcodeFile: meta.gcode_file || null })
   }
   return { objects, plates, volumes }
 }
@@ -255,6 +255,7 @@ function readProject(files, dec) {
     viewerSettings: null,  // Metadata/three_slicer_settings.json — this package's own member (write_3mf.js)
     plateSettings: null,   //  ...its two halves: global viewer knobs, and per-plate overrides keyed by plate index
     plateCount: null,      //  ...and the plate count it was saved with (empty plates hold no <plate> record)
+    gcodePlates: null,     // a .gcode.3mf's sliced plates: [{index, gcode}] (write_3mf.js writeGcode3MF), else null
   }
   const settingsText = text('Metadata/project_settings.config')
   if (settingsText) {
@@ -285,6 +286,13 @@ function readProject(files, dec) {
     project.plates = parsed.plates
     project.volumeMeta = parsed.volumes
   }
+  // A .gcode.3mf is told apart by its CONTENT, not its name: a <plate> record naming a G-code member that exists.
+  //  Upstream decides the same way (a plate with a valid slice result, Plater.cpp) — the file name is only a
+  //  convention, and a renamed file is still a print job.
+  const gcodePlates = project.plates
+    .map(plate => ({ index: plate.index, gcode: plate.gcodeFile && text(normPath(plate.gcodeFile)) }))
+    .filter(plate => plate.gcode)
+  if (gcodePlates.length) project.gcodePlates = gcodePlates
   project.sla.supportPoints = parseSlaRecords(text('Metadata/Slic3r_PE_sla_support_points.txt'), 'support_points',
     version => version === 0 ? 3 : version === 1 ? 5 : 0, project.sla.issues, (values, version) => ({
       position: values.slice(0, 3), radius: version === 0 ? SLA_POINT_RADIUS : values[3],
@@ -335,11 +343,13 @@ export async function parse3MFProject(buffer, baseName = 'model') {
       if ((attr(r, 'Type') || '').endsWith('/3dmodel')) { rootPath = normPath(attr(r, 'Target')); break }
     }
   }
+  const project = readProject(files, dec)
   const root = getModel(rootPath)
+  // A .gcode.3mf holds no meshes (upstream writes it with SkipModel), so a missing root is its normal shape.
+  if (!root && project.gcodePlates) return { objects: [], project }
   if (!root) throw new Error(`3MF root model not found: ${rootPath}`)
 
   const out = []
-  const project = readProject(files, dec)
   // Expand objects recursively -> push triangles into the tris array. depth guards against circular references.
   // `paintSink` collects the painted facets of every mesh reached, rebased onto the OUTPUT triangle numbering:
   //  one build item may pull in several component meshes, each with its own local facet indices, and the kernel's
