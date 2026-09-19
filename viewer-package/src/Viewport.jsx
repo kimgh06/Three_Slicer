@@ -410,7 +410,7 @@ export default function Viewport({
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
-    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
+    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
   } = makePlateActions({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
     runSlice, createPoolContext, kernelKindRef, progressSinkRef,
@@ -882,7 +882,7 @@ export default function Viewport({
                 canSlice={objects.length > 0 && !gcodeOnly} onSlice={onSlice} onCancel={cancelSlice}
                 onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
                 slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla} slaTech={tech === 'SLA'}
-                onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready}
+                onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready} onExportGcode3mf={() => exportPlateGcode3mf()}
                 bedWarning={bedOver || overBed
                   ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the ${tech === 'SLA' ? 'resin display' : 'bed'}`
                     + (bedOverText ? ` by ${bedOverText}` : '')
