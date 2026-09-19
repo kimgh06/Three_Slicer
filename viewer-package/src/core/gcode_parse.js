@@ -69,9 +69,16 @@ export function parseGcode(text, opts = {}) {
   // A layer change resets the role and the width back to "unstated". They are per-run markers: this kernel writes
   //  "; skirt" once, for the skirt of layer 0, and nothing afterwards — carrying that across the whole file painted
   //  every layer as skirt. Unstated means wall(1) for the role and E-derived for the width.
-  const openLayer = (lz) => {
+  // The reset happens at the layer MARKER, not where the layer is opened: a layer opens lazily at its first
+  //  extrusion, after any ;TYPE: written between the marker and that move, and resetting there threw the tag away
+  //  (Cura's ";LAYER:n" then ";TYPE:", and this kernel's raft layers, which carry no "; LAYER" line at all). A layer
+  //  opened by a z rise alone still resets — unless the file states roles with tags, where the last tag holds.
+  let tagged = false
+  const unstate = () => { role = ROLE.WALL; width = 0 }
+  const openLayer = (lz, fromMarker = false) => {
     cur = { z: lz, p: [], w: [] }; layers.push(cur)
-    pendingLayer = false; pendingZ = NaN; role = ROLE.WALL; width = 0
+    pendingLayer = false; pendingZ = NaN
+    if (fromMarker || !tagged) unstate()
   }
   const prevLayerZ = () => (layers.length > 1 ? layers[layers.length - 2].z : 0)
 
@@ -103,13 +110,13 @@ export function parseGcode(text, opts = {}) {
 
     if (comment && !code) {
       const cl = comment.toLowerCase()
-      if (cl.startsWith('type:')) { role = ROLE_BY_NAME[cl.slice(5).trim()] ?? ROLE.WALL; continue }
-      if (cl.startsWith('_extrusion_role:')) { role = PE_ROLE[parseInt(cl.slice(16), 10)] ?? ROLE.WALL; continue }
+      if (cl.startsWith('type:')) { role = ROLE_BY_NAME[cl.slice(5).trim()] ?? ROLE.WALL; tagged = true; continue }
+      if (cl.startsWith('_extrusion_role:')) { role = PE_ROLE[parseInt(cl.slice(16), 10)] ?? ROLE.WALL; tagged = true; continue }
       if (cl.startsWith('width:')) { const v = parseFloat(cl.slice(6)); width = v > 0 ? v : 0; continue }
-      if (cl.startsWith('layer_change') || cl.startsWith('layer:')) { markerMode = true; pendingLayer = true; continue }
+      if (cl.startsWith('layer_change') || cl.startsWith('layer:')) { markerMode = true; pendingLayer = true; unstate(); continue }
       if (cl.startsWith('z:')) { const v = parseFloat(cl.slice(2)); if (pendingLayer && v > 0) { markerMode = true; openLayer(v) } continue }
       const km = /^layer \d+ z([-\d.]+)/.exec(cl)              // this kernel: "; LAYER 12 Z2.600"
-      if (km) { markerMode = true; openLayer(parseFloat(km[1])); continue }
+      if (km) { markerMode = true; openLayer(parseFloat(km[1]), true); continue }
       const feat = KERNEL_MARK.find(([k]) => markMatches(cl, k))
       if (feat) role = feat[1]
       continue
