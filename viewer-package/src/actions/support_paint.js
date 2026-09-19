@@ -264,7 +264,10 @@ export function makeSupportPaint(deps) {
       for (const [state, triangles] of paintTriangles(object.localPos, object.paint[kind])) {
         const geometry = new THREE.BufferGeometry()
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(triangles, 3))
-        const mesh = new THREE.Mesh(geometry, paintOverlayMaterial(paintStateColor(state, kind === 'color', extruderColorsRef?.current)))
+        // The section plane clips these like the kernel overlay: section_plane.js only reaches children that exist
+        //  when it is toggled, and these are rebuilt on every swap.
+        const color = paintStateColor(state, kind === 'color', extruderColorsRef?.current)
+        const mesh = new THREE.Mesh(geometry, paintOverlayMaterial(color, apiRef.current?.paintClipPlanes?.() ?? null))
         mesh.userData.storedPaint = true
         mesh.renderOrder = PAINT_OVERLAY_RENDER_ORDER
         object.mesh.add(mesh)
@@ -368,16 +371,19 @@ export function makeSupportPaint(deps) {
     if (requestedKind === 'color' || requestedKind === 'supports') wantedKind = requestedKind
     if (requestedKind === 'auto') wantedKind = paintKindFor(objectsById(), merged.members) ?? held?.kind ?? null
     const kindChanges = held != null && wantedKind !== null && wantedKind !== held.kind
+    // A selector whose load failed is empty while the store is not: it takes neither shortcut below (both turn
+    //  strokes back on), so a re-registration — a drag commit, a brush opened again — retries the load instead.
+    const reusable = held != null && !held.loadFailed && !kindChanges
     const next = { identity, topology: merged.topology, members: merged.members, plate: merged.plate, worker, kind: held?.kind ?? null }
     // Same bytes AND the same objects -> the selector already holds this mesh and every mark on it. Bytes alone
     //  are not enough: a copy on another plate, placed where the original sits on its own plate, merges to the
     //  same plate-local bytes — and was taken for the original, so its plate inherited the original's paint.
-    if (held?.identity === identity && held.topology === merged.topology && !kindChanges) {
+    if (reusable && held.identity === identity && held.topology === merged.topology) {
       selectorGeomRef.current = next; paintXformRef.current = transform; return
     }
     // Same objects with the same faces at new coordinates is a MOVE: the selector is rebuilt on the real positions
     //  (the brush and the layer projection both need them) and the marks are carried across by facet index.
-    if (held != null && held.topology === merged.topology && !kindChanges) {
+    if (reusable && held.topology === merged.topology) {
       worker.postMessage({ cmd: 'prepare', stl: merged.buf, keepPaint: true })
       selectorGeomRef.current = next; paintXformRef.current = transform
       // The marks came across; their geometry did not, and no facet count changed to ask for the redraw.
@@ -406,7 +412,7 @@ export function makeSupportPaint(deps) {
       // The worker answered the load with an error or died: the selector is empty while the store is not. Nothing may
       //  be written back from it (that would erase the store), no stroke may land on it, and a slice must not run on
       //  it as if the plate were unpainted — the caller that slices turns this into a failed slice.
-      if (selectorGeomRef.current) selectorGeomRef.current.kind = null
+      if (selectorGeomRef.current) Object.assign(selectorGeomRef.current, { kind: null, loadFailed: true })
       setSliceNotice?.('The painting could not be loaded into the slicer; the plate was not sliced with it. Try again.')
       return 'load-failed'
     }

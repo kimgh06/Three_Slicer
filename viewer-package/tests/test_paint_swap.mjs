@@ -160,6 +160,13 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(refs.paintXformRef.current, null, 'no stroke may land on the empty selector')
   await paint.flushPaint(); await settle()
   assert.deepEqual(entries(paintOf(scene, 2).color), [[2, HEX_STATE_2]], 'nothing is written back over the store from the empty selector')
+  // A drag commit re-registers with no kind. It must not turn strokes back on over the empty selector — it retries.
+  await paint.registerSelector(); await settle()
+  assert.equal(refs.paintXformRef.current, null, 'a re-registration while the load still fails keeps strokes off')
+  worker().failImport = false
+  await paint.registerSelector(); await settle()
+  assert.deepEqual(entries(worker().marks), [[2, HEX_STATE_2]], 'the next re-registration loads the store')
+  assert.notEqual(refs.paintXformRef.current, null, 'and only then turns strokes back on')
 }
 
 console.log('paint_swap: ok')
