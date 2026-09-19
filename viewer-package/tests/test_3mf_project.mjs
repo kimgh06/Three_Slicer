@@ -2,7 +2,7 @@
 // this covers everything a slicer-written 3mf carries next to the mesh.
 // The fixture is built here rather than committed because the painting encoding is the point of the test — a
 // checked-in binary would prove the parser agrees with itself, not that it agrees with upstream's format.
-import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
+import { zipSync, unzipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
 import { parse3MFProject } from '../src/core/parse_3mf.js'
 import { normalizeProjectSettings, deriveKernelParams } from '../src/settings/index.js'
 import { leanSchema as schema } from '../src/settings/data.js'
@@ -278,6 +278,58 @@ check('unparsable project_settings yields null settings', broken.project.setting
   eq('the grid grows to the project\'s plates, on the project\'s bed', plateCalls[0], [PLATES, BED, BED])
   check('each object lands on the plate the file names', placed.some(([, index]) => index === 1), JSON.stringify(placed))
   check('the plate an object lands on drops its stale slice', !(1 in deps.plateResultsRef.current), JSON.stringify(deps.plateResultsRef.current))
+}
+
+// ---- our member (three_slicer_settings.json) through the same loader: overrides, knobs, the plate count ----
+{
+  const BED = 200
+  const tetra = (atX, atY) => {
+    const v = [[0, 0, 0], [20, 0, 0], [0, 20, 0], [0, 0, 20]].map(([x, y, z]) => [x + atX, y + atY, z])
+    return Float32Array.from([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]].flatMap(f => f.flatMap(i => v[i])))
+  }
+  // Objects on plates 0 and 1 of a THREE-plate session; plate 2 is empty but carries an override.
+  const objects = [0, 1].map(plate => {
+    const x = (plate % plateCols(3)) * plateStep(BED), y = -(Math.floor(plate / plateCols(3)) * plateStep(BED))
+    return { id: plate + 1, name: `p${plate}`, extruder: 1, plate, plateOriginX: x, plateOriginY: y, tris: tetra(x - 10, y - 10), faceCount: 4, paint: null }
+  })
+  const load = async (bytes) => {
+    const settingsCalls = [], plateSettingsCalls = [], plateCalls = []
+    let nextId = 1
+    const api = {
+      addObject: (name) => ({ id: nextId++, name }), placeObjectOnPlate: () => {},
+      setPlates: (count) => { plateCalls.push(count); return false }, showObjects: () => {}, setObjectExtruder: () => {},
+    }
+    const refs = name => ({ current: name === 'plateResultsRef' || name === 'plateOffsetsRef' ? {} : name === 'bedRef' ? { bedW: BED, bedD: BED } : name === 'plateCountRef' ? 1 : name === 'selectedPlateRef' ? 0 : null })
+    const deps = new Proxy({ apiRef: { current: api }, objectsRef: { current: [] }, setError: () => {},
+      setSettings: (value) => settingsCalls.push(value), setPlateSettings: (value) => plateSettingsCalls.push(value) }, {
+      get: (target, key) => key in target ? target[key] : String(key).endsWith('Ref') ? (target[key] = refs(key)) : () => {},
+      has: () => true,
+    })
+    await makeModelLoad(deps).loadFiles([new File([bytes], 'project.3mf')])
+    const settingsAfter = settingsCalls.reduce((map, call) => (typeof call === 'function' ? call(map) : call), { layer_height: 0.3 })
+    const plateSettingsAfter = plateSettingsCalls.reduce((map, call) => (typeof call === 'function' ? call(map) : call), { 7: { stale: true } })
+    return { settingsAfter, plateSettingsAfter, plateCount: plateCalls.at(-1), plateSettingsCalls }
+  }
+
+  // No schema key in the global map -> no project_settings.config, only our member. It used to be ignored then.
+  const noSchema = await load(await write3MFProject(objects, { wipe_tower_real: true },
+    { bedWidth: BED, bedDepth: BED, plateCount: 3, plateSettings: { 2: { enable_prime_tower: false } } }))
+  eq('a save with no schema settings still restores the viewer knobs, over the settings already loaded',
+     noSchema.settingsAfter, { layer_height: 0.3, wipe_tower_real: true })
+  eq('...and the plate overrides, replacing the previous session\'s', noSchema.plateSettingsAfter, { 2: { enable_prime_tower: false } })
+  eq('the empty plate that carries an override is recreated', noSchema.plateCount, 3)
+
+  // An override for a plate index the import does not create (a sidecar with no plate count, or past MAX_PLATES)
+  //  is dropped rather than left to attach itself to the next plate added.
+  const base = await write3MFProject(objects, { layer_height: 0.2 }, { bedWidth: BED, bedDepth: BED, plateCount: 2 })
+  const files = unzipSync(base)
+  files['Metadata/three_slicer_settings.json'] = strToU8(JSON.stringify({ version: 1, viewer: {}, plates: { 1: { layer_height: 0.1 }, 5: { layer_height: 0.3 } } }))
+  const orphan = await load(zipSync(files))
+  eq('only overrides for plates that exist after the import are kept', orphan.plateSettingsAfter, { 1: { layer_height: 0.1 } })
+
+  // A project with settings but no member still clears the previous session's overrides (replace, not merge).
+  const plain = await load(base)
+  eq('a plain project replaces the overrides with none', plain.plateSettingsAfter, {})
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\n3MF project import passed')

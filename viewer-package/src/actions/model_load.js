@@ -140,11 +140,10 @@ export function makeModelLoad(deps) {
       //  previous session's "plate 2 is SLA / 330mm" surviving onto the imported project would resize its grid
       //  and reroute its slicer with nothing on screen explaining why.
       //  What does travel with it is this package's own member (write_3mf.js): the global viewer knobs the schema
-      //  cannot type (wipe_tower_real...) and the per-plate overrides, written by a save from this viewer.
+      //  cannot type (wipe_tower_real...) layered over the map here, and the per-plate overrides once the plates
+      //  exist (below).
       setSettings?.(project.viewerSettings ? { ...imported.settings, ...project.viewerSettings } : imported.settings)
-      setPlateSettings?.(() => project.plateSettings ?? {})
       notices.push(`${imported.applied} settings`)
-      if (project.plateSettings) notices.push(`${Object.keys(project.plateSettings).length} plate override(s)`)
       // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
       //  in it. `filament_colour` is the one key that always has one entry per loaded filament (the *_settings_id
       //  vector can carry blanks for a slot with no preset), so it is what the count comes from.
@@ -154,6 +153,9 @@ export function makeModelLoad(deps) {
         notices.push(`${colors.length} filaments`)
       }
     }
+    //  A save whose global map held no schema key writes no project_settings.config at all, but may still carry our
+    //  member — its knobs then go over the settings already loaded rather than being dropped with the missing file.
+    else if (project.viewerSettings) setSettings?.(settings => ({ ...settings, ...project.viewerSettings }))
     for (const entry of loaded) {
       const meta = project.objectMeta.get(entry.objectid)
       if (!meta) continue
@@ -163,10 +165,13 @@ export function makeModelLoad(deps) {
     }
     // Plates last: placing an object needs the FINAL plate count, because the plate origins are laid out against it.
     const assignments = platePlacements(project.plates, loaded, bed?.bed_width, bed?.bed_depth)
-    let beyondLastPlate = 0
+    let beyondLastPlate = 0, finalPlateCount = plateCountRef?.current ?? 1
     if (assignments.length && applyProjectPlates) {
-      const needed = Math.max(...assignments.map(([, index]) => index)) + 1
+      //  The saved plate count counts too (our member): the <plate> records name only plates holding objects, so an
+      //  empty plate the author configured would otherwise not come back.
+      const needed = Math.max(Math.max(...assignments.map(([, index]) => index)) + 1, project.plateCount ?? 0)
       applyProjectPlates(needed, bed?.bed_width, bed?.bed_depth, (plateCount) => {
+        finalPlateCount = plateCount
         for (const [id, index, offsetX, offsetY] of assignments) {
           // The bed tops out at MAX_PLATES, so a project with more of them keeps those objects where they landed
           //  rather than piling them onto the last plate — and says so, because a silently merged plate prints wrong.
@@ -175,6 +180,14 @@ export function makeModelLoad(deps) {
         }
       })
       notices.push(`${project.plates.length} plates`)
+    }
+    //  Per-plate overrides once the plate count is final, and only for plates that exist: MAX_PLATES can cut the
+    //  project short, and an override on an index past the last plate would attach itself to the next plate added.
+    //  A project with settings replaces the overrides even when it carries none (see "Replace rather than merge").
+    if (imported?.applied || project.plateSettings) {
+      const kept = Object.fromEntries(Object.entries(project.plateSettings ?? {}).filter(([plate]) => Number(plate) < finalPlateCount))
+      setPlateSettings?.(() => kept)
+      if (Object.keys(kept).length) notices.push(`${Object.keys(kept).length} plate override(s)`)
     }
     const dropped = droppedFeatures(project, loaded)
     if (beyondLastPlate) dropped.push(`${beyondLastPlate} object(s) on plates past this viewer's limit`)

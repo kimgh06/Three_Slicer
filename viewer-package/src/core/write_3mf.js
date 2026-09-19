@@ -206,8 +206,8 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
 //  types (wipe_tower_real, sla_antialias). Plain JSON, because only this package reads it — the values keep their JS
 //  types and need none of the string coercion project_settings.config does. Upstream ignores an unknown zip member,
 //  so an OrcaSlicer open of the same file sees the global preset on every plate, exactly as before this existed.
-//  Only plates that exist are written: an override left on a deleted plate's index would come back attached to
-//  whatever plate takes that index next.
+//  Only plates that exist are written, and the plate count with them: an override left on a plate index the
+//  import does not recreate would come back attached to whatever plate takes that index next.
 export const VIEWER_SETTINGS_MEMBER = 'Metadata/three_slicer_settings.json'
 
 // A hole in an array value — wipe_tower_x/y hold `null` for a plate whose tower is placed automatically — is not
@@ -240,7 +240,9 @@ function viewerSettingsSidecar(settings, projectSettings, plateSettings, plateCo
   const plates = Object.fromEntries(Object.entries(plateSettings ?? {})
     .filter(([plate, map]) => Number(plate) < plateCount && map && Object.keys(map).length))
   if (!Object.keys(viewer).length && !Object.keys(plates).length) return null
-  return { version: 1, viewer, plates }
+  // The plate count too: the <plate> records hold only plates with objects, so an EMPTY plate that carries an
+  //  override would not exist after import, and its override would attach to whatever plate took that index next.
+  return { version: 1, viewer, plates, plateCount }
 }
 
 export async function write3MFProject(objects, settings, opts = {}) {

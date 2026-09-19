@@ -254,6 +254,7 @@ function readProject(files, dec) {
     sla: { capabilities: { ...SLA_CAPABILITIES }, issues: [], supportPoints: new Map(), drainHoles: new Map() },
     viewerSettings: null,  // Metadata/three_slicer_settings.json — this package's own member (write_3mf.js)
     plateSettings: null,   //  ...its two halves: global viewer knobs, and per-plate overrides keyed by plate index
+    plateCount: null,      //  ...and the plate count it was saved with (empty plates hold no <plate> record)
   }
   const settingsText = text('Metadata/project_settings.config')
   if (settingsText) {
@@ -272,6 +273,7 @@ function readProject(files, dec) {
       const plates = Object.entries(isMap(sidecar.plates) ? sidecar.plates : {})
         .filter(([plate, map]) => /^\d+$/.test(plate) && isMap(map) && Object.keys(map).length)
       if (plates.length) project.plateSettings = Object.fromEntries(plates.map(([plate, map]) => [Number(plate), map]))
+      if (Number.isInteger(sidecar.plateCount) && sidecar.plateCount >= 1) project.plateCount = sidecar.plateCount
     }
   }
   const modelSettings = text('Metadata/model_settings.config')
