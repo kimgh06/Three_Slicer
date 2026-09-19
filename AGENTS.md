@@ -116,7 +116,16 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   reading the brush mode at write time filed material paint as support paint. **(9)** A pool worker's selector must
   hold exactly its plate's paint: slicing never resets it, so an unpainted plate after a painted one is sliced after
   a `clear` (`poolPaintAction`; measured without it: T2 314 -> 1215 mm). **(10)** The 3mf writes each object's
-  `color` and `supports` marks under their own attribute; an empty map is no paint.
+  `color` and `supports` marks under their own attribute; an empty map is no paint. **(11)** Every worker the retry
+  ladder recreates gets its plate's paint back before the retry (`sliceLadder`'s `afterRecreate`: `ctx.syncPaint`
+  for a pool worker, `syncPaintSelector` — which flushes first — for the selector worker); a retried painted plate
+  came out single-material with "G-code is fine". The overlay colour reads the recorded kind, never the last brush
+  opened.
+- **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
+  720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
+  assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not
+  when only some facets are flipped (measured: 6400 px lit under a table top whose top faces were flipped, where the
+  slice holds the 256 px leg). Any other mesh gets the contour raster of the kernel's own contours.
 - **A `.3mf` is a project, not a mesh format.** Anything off MakerWorld, and every OrcaSlicer/BambuStudio "save
   project", is a zip whose `3D/3dmodel.model` is only one member; `Metadata/project_settings.config` holds the
   flattened preset the author sliced with, `Metadata/model_settings.config` the per-object state and plate layout.
