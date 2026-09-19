@@ -3,7 +3,7 @@
 //   Run: node viewer-package/tests/test_paint_store.mjs
 // The kernel side of the same strings is packages/wasm-core/tests/test_paint_export.mjs ("the viewer store ...").
 import assert from 'node:assert'
-import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates, poolPaintAction, splitPaintByParts } from '../src/core/paint_store.js'
+import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates, poolPaintAction, splitPaintByParts, paintedExtruderCount } from '../src/core/paint_store.js'
 import { splitComponentFacets, facetPositions } from '../src/scene/model_loaders.js'
 
 // An unsplit facet's hex per state, as upstream writes it (test_paint_export.mjs pins these against the kernel).
@@ -94,6 +94,15 @@ const joined = (...hexes) => hexes.join('\n')
   assert.equal(poolPaintAction(stored, HOLDS_PAINT), 'load', 'a load replaces what was there')
   assert.equal(poolPaintAction(null, HOLDS_PAINT), 'clear', "an unpainted plate after a painted one clears the leftover")
   assert.equal(poolPaintAction(null, EMPTY), 'none')
+}
+
+// ---- only material paint widens the extruder count; a support blocker is state 2 too, and is not T2 ----
+{
+  const BLOCKER_STATE = 2, ENFORCER_STATE = 1, T3_STATE = 3, PAINTED_FACETS = 4
+  assert.equal(paintedExtruderCount({ [ENFORCER_STATE]: PAINTED_FACETS, [BLOCKER_STATE]: PAINTED_FACETS }, 'supports'), 0, 'support paint asks for no tool')
+  assert.equal(paintedExtruderCount({ [BLOCKER_STATE]: PAINTED_FACETS }, null), 0, 'an unknown annotation asks for none either')
+  assert.equal(paintedExtruderCount({ [BLOCKER_STATE]: PAINTED_FACETS, [T3_STATE]: 0 }, 'color'), BLOCKER_STATE, 'material paint asks for its highest painted tool')
+  assert.equal(paintedExtruderCount(null, 'color'), 0)
 }
 
 // ---- a split hands each mark to the part that holds its facet, at that part's own index ----

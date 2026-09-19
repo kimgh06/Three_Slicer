@@ -73,6 +73,16 @@ export function poolPaintAction(storedPaint, workerHoldsPaint) {
   return 'none'
 }
 
+/** The extruder count a slice's paint asks for: the highest painted state, since selector state s addresses
+ *  extruder s (ENFORCER==Extruder1). Only MATERIAL paint counts — a support blocker is state 2 as well, and read
+ *  as a tool it sent a single-filament plate down the multi-material path with a prime tower. 0 means "no ask". */
+export function paintedExtruderCount(counts, kind) {
+  if (kind !== 'color') return 0
+  const paintedStates = Object.entries(counts ?? {}).filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
+  if (!paintedStates.length) return 0
+  return Math.max(...paintedStates)
+}
+
 /** Write a split export back into the store under `kind`, leaving every other annotation of the object alone. */
 export function storePaint(objectsById, byObject, kind) {
   for (const [id, marks] of byObject) {

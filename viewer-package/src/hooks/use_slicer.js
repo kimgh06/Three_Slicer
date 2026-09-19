@@ -6,7 +6,7 @@ import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-vi
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
-import { poolPaintAction } from '../core/paint_store.js'
+import { poolPaintAction, paintedExtruderCount } from '../core/paint_store.js'
 
 // Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
 const PAINT_STATES_ALL = Array.from({ length: MAX_PAINT_EXTRUDERS }, (_, index) => index + 1)
@@ -410,7 +410,7 @@ export function useSlicer(deps) {
     params.keep_stages = true
     params.reuse_stages = dig && dig === lastGeomRef.current ? 2 : 0
   }
-  function buildParams(merged, { painted = true, paintCounts = null } = {}) {
+  function buildParams(merged, { painted = true, paintCounts = null, paintKind = null } = {}) {
     // The plate this merge cut — the per-plate override merges over the global map for it, and the wipe_tower_x/y
     //  arrays index by it. With no override `effective` IS `settings` (same reference), so the pre-feature
     //  behaviour is preserved byte for byte.
@@ -436,9 +436,8 @@ export function useSlicer(deps) {
     //  paint (runSlice below).
     let reportedCounts = paintCounts
     if (reportedCounts == null && painted) reportedCounts = paintStateCountsRef?.current
-    const paintedStates = Object.entries(reportedCounts ?? {})
-      .filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
-    const highestPaintedState = paintedStates.length ? Math.max(...paintedStates) : 0
+    // `paintKind` is the annotation the worker's selector holds: support paint is not a tool.
+    const highestPaintedState = paintedExtruderCount(reportedCounts, paintKind)
     if (highestPaintedState >= 2) {                 // state 1 alone is the default tool — nothing to switch to
       params.extruder_count = Math.max(params.extruder_count ?? 1, highestPaintedState)
       params.wipe_tower_real = !!effective.wipe_tower_real
@@ -486,11 +485,11 @@ export function useSlicer(deps) {
     //  · support on: slicer_core.cpp keeps painted models on the single-material path (slice_multimaterial emits
     //    no support, and one selector state cannot say "blocker" and "Extruder2" apart).
     //  · only T1 painted: state 1 IS the default extruder, so there is no second tool to switch to.
-    if (paintedStates.length) {
+    if (highestPaintedState > 0) {                   // material paint only (paintedExtruderCount)
       // Support and material painting now slice together — the multi-material path runs the same support pass the
       //  single-material one does. What survives is the AMBIGUITY: one selector, and upstream's enum makes a support
       //  BLOCKER and Extruder2 the same mark, so a model carrying both reads the blocker as a material.
-      if (params.enable_support && paintedStates.includes(2))
+      if (params.enable_support && reportedCounts[2] > 0)
         setSliceNotice?.('Support is on and T2 is painted. One facet carries one mark, and a support blocker is ' +
                          'the same mark as T2 — the painted areas were sliced as T2, not as blocked support.')
       else if (highestPaintedState < 2)
@@ -523,16 +522,18 @@ export function useSlicer(deps) {
     }
     // A pool worker's selector must hold this plate's paint, or none (ctx.syncPaint above).
     const storedPaint = merged.paint?.color ?? merged.paint?.supports
-    let paintCounts = null, dig = null
-    if (ctx) paintCounts = await ctx.syncPaint(merged.buf, storedPaint)
-    else {
+    let paintCounts = null, dig = null, paintKind = null
+    if (ctx) {
+      paintCounts = await ctx.syncPaint(merged.buf, storedPaint)
+      if (merged.paint?.color) paintKind = 'color'
+    } else {
       // The selector worker's selector is loaded LAST, with nothing awaited between the load and the post: a drag
       //  commit re-registers the selector, and one that landed in a gap (the digest used to sit there) swapped it
       //  back to the selected plate, so another plate of a slice-all was cut with that plate's facets and paint.
       dig = await geomDigest(merged.buf)
-      await syncPaint?.()
+      paintKind = await syncPaint?.() ?? null   // resolves with the annotation the selector now holds
     }
-    const params = buildParams(merged, { painted: !ctx, paintCounts })
+    const params = buildParams(merged, { painted: !ctx, paintCounts, paintKind })
     // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
     //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a
     //  pool run was another plate's coordinates.

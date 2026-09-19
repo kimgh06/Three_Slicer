@@ -408,18 +408,20 @@ export default function Viewport({
     //  only in its selector would go with it, and the resync after the recreate loads the plate from the store.
     syncPaintSelector: async (merged) => {
       // A resin slice reads no paint (slice_sla has no selector), so it neither closes the brush nor waits on a load.
-      if (frameOf(merged?.plate ?? selectedPlateRef.current).tech === 'SLA') return
+      if (frameOf(merged?.plate ?? selectedPlateRef.current).tech === 'SLA') return null
       // No stroke may reach the selector while it slices: the slice below may swap it to another annotation ('auto'),
       //  and a stroke of the open brush would then be filed under the wrong kind. The preview a finished slice
       //  switches to closes the brush anyway.
       if (paintModeRef.current !== 'off') setPaintMode('off')
       const needsSelector = selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports
-      if (!needsSelector) return
+      if (!needsSelector) return null
       await flushPaintRef.current?.()
       // 'auto': the kernel slices with the annotation the store says wins (material first), whichever brush was open.
       const result = await registerSelectorRef.current?.(merged, { kind: 'auto' })
       // A plate whose paint did not load is not sliced bare (the pool path does the same, ctx.syncPaint).
       if (result === 'load-failed') throw new Error('Worker failed to load the plate paint')
+      // Which annotation the selector holds decides whether its counts are tools (use_slicer.js buildParams).
+      return selectorGeomRef.current?.kind ?? null
     },
   })
   selectPlateRef.current = selectPlate
