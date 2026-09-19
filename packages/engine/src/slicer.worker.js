@@ -132,10 +132,10 @@ const applyFill = (Module, message, state) => {
 //  listener predating the per-state map keeps working; `counts` appears only when the message asked for states,
 //  which is what keeps a legacy paint reply byte-identical to what it was before the protocol was widened.
 const paintedReply = (Module, message, paintedState) => {
-  const reply = { type: 'painted', enf: Module.selector_painted_count(true), blk: Module.selector_painted_count(false) }
+  const answer = { type: 'painted', enf: Module.selector_painted_count(true), blk: Module.selector_painted_count(false) }
   const states = reportedPaintStates(message, paintedState)
-  if (states) reply.counts = Object.fromEntries(states.map(state => [state, Module.selector_painted_count_state(state)]))
-  return reply
+  if (states) answer.counts = Object.fromEntries(states.map(state => [state, Module.selector_painted_count_state(state)]))
+  return answer
 }
 
 self.onmessage = async (e) => {
@@ -276,9 +276,9 @@ self.onmessage = async (e) => {
     //  rather than throwing, because losing a 3mf's paint must not also lose its geometry.
     if (d.cmd === 'importPaint') {
       const applied = Module.selector_import_paint ? Module.selector_import_paint(d.facets, d.hex ?? '') : 0
-      const reply = paintedReply(Module, d, null)
-      reply.applied = applied
-      reply(reply); return
+      const importedReply = paintedReply(Module, d, null)
+      importedReply.applied = applied
+      reply(importedReply); return
     }
     // exportPaint: the reverse of importPaint — every marked facet's split tree as {facets, hex} in the CURRENT
     //  selector's numbering, the same parallel-array pairing importPaint takes (hex is one newline-joined blob).
@@ -294,10 +294,10 @@ self.onmessage = async (e) => {
     // clear wipes every state at once, so each requested count is 0 by construction — no need to ask the kernel back.
     if (d.cmd === 'clear')   {
       Module.selector_clear()
-      const reply = { type: 'painted', enf: 0, blk: 0 }
+      const clearedReply = { type: 'painted', enf: 0, blk: 0 }
       const states = reportedPaintStates(d, null)
-      if (states) reply.counts = Object.fromEntries(states.map(state => [state, 0]))
-      reply(reply); return
+      if (states) clearedReply.counts = Object.fromEntries(states.map(state => [state, 0]))
+      reply(clearedReply); return
     }
     // overlay: `enf`/`blk` (states 1/2) are always sent because the viewer's overlay rebuild consumes exactly those two;
     //  `overlays` adds the requested states, so an MMU caller can ask for 3..16 without losing the support overlays.
@@ -312,13 +312,13 @@ self.onmessage = async (e) => {
       // enf/blk stay unconditional for the listener that predates the per-state map. When the request names states,
       //  they are the ONLY ones read, so building the other two would be pure waste on the hot path.
       const wanted = states && !states.includes(PAINT_STATE_ENFORCER) && !states.includes(PAINT_STATE_BLOCKER)
-      const reply = { type: 'overlay',
+      const overlayReply = { type: 'overlay',
         enf: wanted ? EMPTY_OVERLAY : Module.selector_overlay(true),
         blk: wanted ? EMPTY_OVERLAY : Module.selector_overlay(false) }
-      if (states) reply.overlays = Object.fromEntries(states.map(state => [state, Module.selector_overlay_state(state)]))
-      const transfer = [reply.enf, reply.blk, ...Object.values(reply.overlays ?? {})]
+      if (states) overlayReply.overlays = Object.fromEntries(states.map(state => [state, Module.selector_overlay_state(state)]))
+      const transfer = [overlayReply.enf, overlayReply.blk, ...Object.values(overlayReply.overlays ?? {})]
         .filter(a => a?.buffer && a.byteLength > 0).map(a => a.buffer)
-      reply(reply, transfer); return
+      reply(overlayReply, transfer); return
     }
 
     // fillPreview: what a fill WOULD select, without applying it. Upstream runs this on every mouse move while a
