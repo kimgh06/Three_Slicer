@@ -43,7 +43,7 @@ export function makePlateActions(deps) {
     ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
-    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector,
+    setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
     onSlicedRef,
   } = deps
 
@@ -429,6 +429,9 @@ export function makePlateActions(deps) {
       // The queue holds plate INDICES; each worker builds the merge when it takes the plate and drops it after.
       //  Building all of them up front held N x 143MB of STL for the whole run in the one renderer process the
       //  workers' heaps also live in — on a five-plate scene that is 715MB before a single worker has started.
+      // Every plate's merge reads its paint from the per-object store, and the selector may hold strokes not yet
+      //  written back — so they go back first, before any worker builds a merge.
+      await flushPaintRef?.current?.()
       const plates = []; const sizes = []
       for (let i = 0; i < plateCountRef.current; i++) {
         const m = apiRef.current?.buildMergedSTL(i); if (!m) continue
@@ -453,7 +456,10 @@ export function makePlateActions(deps) {
       const slicePlate = async (i, ctx) => {
         const merged = apiRef.current?.buildMergedSTL(i)
         if (!merged) { failed.push(i + 1); patch(i, { state: PLATE_STATES.failed, error: 'plate is empty' }); return }
-        if (i === idx0) syncPaintSelector?.(merged)
+        // The selector worker's kernel reads the paint from its selector, so it must hold THIS plate's mesh before
+        //  the slice is posted — the selected plate, and a pool plate re-run here after its worker died. A pool
+        //  worker gets the plate's stored paint with the slice instead (use_slicer.js runSlice).
+        if (!ctx) await syncPaintSelector?.(merged)
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         ;(ctx ? ctx.holder : sink).plate = i   // route this worker's progress to the plate it is on
         patch(i, { state: PLATE_STATES.busy })
@@ -518,7 +524,7 @@ export function makePlateActions(deps) {
       const merged = apiRef.current?.buildMergedSTL(idx0)
       if (!merged) { setError(`Plate ${idx0 + 1} has no objects`); return }
       log.info(`[vp-prof] buildMergedSTL ${(performance.now() - __tm0).toFixed(0)}ms (${(merged.buf.byteLength / 1048576).toFixed(1)}MB)`)
-      if (idx0 === selectedPlateRef.current) syncPaintSelector?.(merged)
+      await syncPaintSelector?.(merged)   // the selector must hold the mesh being cut (see slicePlate above)
       plateOffsetsRef.current[idx0] = { offX: merged.offX, offZ: merged.offZ }
       setSlicing(true); setProgress(0)
       try {

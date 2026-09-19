@@ -3,7 +3,10 @@ import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
-import { DEFAULT_BED } from '../core/viewer_defaults.js'
+import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
+
+// Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
+const PAINT_STATES_ALL = Array.from({ length: MAX_PAINT_EXTRUDERS }, (_, index) => index + 1)
 
 
 // Worker lifecycle + progress mapping (SAB polling) + the stage-30 streaming/watchdog/OOM retry ladder.
@@ -261,7 +264,7 @@ export function useSlicer(deps) {
   //  a transferred buffer is detached (measured: a 150MB copy is tens of ms against a 2s+ slice).
   function createPoolContext({ onProgress, onRate } = {}) {
     let wk = null, pending = null, accum = null, sab = null, poll = 0, watchdog = 0, rate = null
-    let lastD = 0, lastT = 0, tSup = 0, readyResolve = null, loaded = false
+    let lastD = 0, lastT = 0, tSup = 0, readyResolve = null, loaded = false, paintLoad = null
     const ctx = { kernel: null, ready: new Promise(r => { readyResolve = r }) }
     const stopPoll = () => { if (poll) { clearInterval(poll); poll = 0 } }
     const stopWatchdog = () => { if (watchdog) { clearTimeout(watchdog); watchdog = 0 } }
@@ -295,6 +298,7 @@ export function useSlicer(deps) {
           onProgress?.(mapProgress(d.done, d.total))
         }
         else if (d.type === 'layer') { kick(); if (accum) { accum.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) accum.gcode.push(d.gcode); noteRate(accum.layers.length) } }
+        else if (d.type === 'painted') { const load = paintLoad; paintLoad = null; load?.(d.counts ?? {}) }
         else if (d.type === 'done') { const p = settle(); p?.resolve(assembleResult(d.result, accum)) }
         else if (d.type === 'error') { const p = settle(); p?.reject(new Error(d.error)) }
       }
@@ -307,6 +311,17 @@ export function useSlicer(deps) {
       wk.onmessageerror = () => fail('Worker message error (structured clone failed)')
       wk.postMessage({ cmd: 'warmup', quiet })
     }
+    // A pool worker's kernel reads painting from its OWN selector, which starts empty — so a plate whose objects
+    //  carry paint (the per-object store, core/paint_store.js) loads it here before the slice: the plate's mesh,
+    //  then its marks in that mesh's numbering. Resolves with the painted facet count per state the reply reports,
+    //  which is what decides the extruder count (buildParams); a worker that dies resolves with none.
+    ctx.loadPaint = (buf, paint) => new Promise((resolve) => {
+      if (!wk) spawn()
+      paintLoad = resolve
+      wk.addEventListener('error', () => { if (paintLoad === resolve) { paintLoad = null; resolve({}) } }, { once: true })
+      wk.postMessage({ cmd: 'prepare', stl: buf })
+      wk.postMessage({ cmd: 'importPaint', facets: paint.facets, hex: paint.hex, states: PAINT_STATES_ALL })
+    })
     ctx.sliceOne = (buf, paramsStr, cmd) => new Promise((resolve, reject) => {
       // dev/test hook (not set in production): __vpPoolFail = n fails the next n pool slices as a worker death,
       //  which is how the re-queue path is exercised without actually exhausting memory.
@@ -376,7 +391,7 @@ export function useSlicer(deps) {
     params.keep_stages = true
     params.reuse_stages = dig && dig === lastGeomRef.current ? 2 : 0
   }
-  function buildParams(merged, { painted = true } = {}) {
+  function buildParams(merged, { painted = true, paintCounts = null } = {}) {
     // The plate this merge cut — the per-plate override merges over the global map for it, and the wipe_tower_x/y
     //  arrays index by it. With no override `effective` IS `settings` (same reference), so the pre-feature
     //  behaviour is preserved byte for byte.
@@ -398,7 +413,9 @@ export function useSlicer(deps) {
     //  (ENFORCER==Extruder1), so the highest painted state is the extruder count the kernel has to allow for.
     // The paint counts describe the SELECTOR worker's mesh. A pool worker slices a plate the brush never touched,
     //  so for it they are someone else's facets — reading them would widen its extruder count for nothing.
-    const paintedStates = !painted ? [] : Object.entries(paintStateCountsRef?.current ?? {})
+    //  A pool plate brings its own counts instead: the ones its worker reported after loading the plate's stored
+    //  paint (runSlice below).
+    const paintedStates = Object.entries(paintCounts ?? (painted ? paintStateCountsRef?.current : null) ?? {})
       .filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
     const highestPaintedState = paintedStates.length ? Math.max(...paintedStates) : 0
     if (highestPaintedState >= 2) {                 // state 1 alone is the default tool — nothing to switch to
@@ -478,7 +495,10 @@ export function useSlicer(deps) {
       //  as a solid mesh, lifted by the elevation, beside the kernel's support/pad meshes.
       return { r: { ...r, gcode: '', slaParams, modelSTL: merged.buf }, params: slaParams }
     }
-    const params = buildParams(merged, { painted: !ctx })
+    // A pool worker holds no selector until the plate's stored paint is loaded into it (ctx.loadPaint above).
+    const storedPaint = merged.paint?.color ?? merged.paint?.supports
+    const paintCounts = ctx && storedPaint ? await ctx.loadPaint(merged.buf, storedPaint) : null
+    const params = buildParams(merged, { painted: !ctx, paintCounts })
     // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
     //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a
     //  pool run was another plate's coordinates.
