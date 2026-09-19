@@ -3,7 +3,7 @@
 //   Run: node viewer-package/tests/test_paint_store.mjs
 // The kernel side of the same strings is packages/wasm-core/tests/test_paint_export.mjs ("the viewer store ...").
 import assert from 'node:assert'
-import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates, poolPaintAction, splitPaintByParts, paintedExtruderCount } from '../src/core/paint_store.js'
+import { splitPaintByObject, mergedPaint, paintKindFor, storePaint, clonePaint, decodePaintStates, storedPaintStates, poolPaintAction, splitPaintByParts, paintedExtruderCount, paintBeyondFilaments } from '../src/core/paint_store.js'
 import { splitComponentFacets, facetPositions } from '../src/scene/model_loaders.js'
 
 // An unsplit facet's hex per state, as upstream writes it (test_paint_export.mjs pins these against the kernel).
@@ -103,6 +103,15 @@ const joined = (...hexes) => hexes.join('\n')
   assert.equal(paintedExtruderCount({ [BLOCKER_STATE]: PAINTED_FACETS }, null), 0, 'an unknown annotation asks for none either')
   assert.equal(paintedExtruderCount({ [BLOCKER_STATE]: PAINTED_FACETS, [T3_STATE]: 0 }, 'color'), BLOCKER_STATE, 'material paint asks for its highest painted tool')
   assert.equal(paintedExtruderCount(null, 'color'), 0)
+  // Both workers must agree: the selector worker reports only the configured states, a pool worker all of them.
+  const TWO_FILAMENTS = 2
+  const poolCounts = { [BLOCKER_STATE]: PAINTED_FACETS, [T3_STATE]: PAINTED_FACETS }
+  const selectorCounts = { [BLOCKER_STATE]: PAINTED_FACETS }
+  assert.equal(paintedExtruderCount(poolCounts, 'color', TWO_FILAMENTS), paintedExtruderCount(selectorCounts, 'color', TWO_FILAMENTS),
+    'the same plate gets the same extruder count from either worker')
+  assert.equal(paintedExtruderCount(poolCounts, 'color', TWO_FILAMENTS), BLOCKER_STATE)
+  assert.deepEqual(paintBeyondFilaments(poolCounts, 'color', TWO_FILAMENTS), [T3_STATE], 'the left-out paint is named')
+  assert.deepEqual(paintBeyondFilaments(poolCounts, 'supports', TWO_FILAMENTS), [], 'support paint is never a filament')
 }
 
 // ---- a split hands each mark to the part that holds its facet, at that part's own index ----

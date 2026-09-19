@@ -43,7 +43,10 @@
   and a split hands each part the marks on its own facets.
 - A brush stroke painted only the first object of the plate being painted: the hit facet was sent in the hit
   object's own numbering, not the plate merge's. A stroke now also carries across plates — reaching an object on
-  another plate selects that plate and keeps painting there.
+  another plate selects that plate and keeps painting there, and an object added to the plate while the brush is
+  open is painted too.
+- Paint for a filament that is not configured (T3 painted, then the list cut to two) no longer widens the extruder
+  count on a slice-all pool worker only; every path leaves it out and the slice says so.
   Every plate's paint stays drawn, not only the plate being painted.
 - Review fixes to the paint store, each reproduced before the fix: a slice-all pool worker printed the previous
   plate's paint on an unpainted plate; opening the support brush filed another plate's material paint as support

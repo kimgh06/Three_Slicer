@@ -91,13 +91,25 @@ export function poolPaintAction(storedPaint, workerHoldsPaint) {
 
 /** The extruder count a slice's paint asks for: the highest painted state, since selector state s addresses
  *  extruder s (ENFORCER==Extruder1). Only MATERIAL paint counts — a support blocker is state 2 as well, and read
- *  as a tool it sent a single-filament plate down the multi-material path with a prime tower. 0 means "no ask". */
-export function paintedExtruderCount(counts, kind) {
+ *  as a tool it sent a single-filament plate down the multi-material path with a prime tower. 0 means "no ask".
+ *  Paint for a filament that is not configured (T3 painted, then the list cut to two) is not counted: the selector
+ *  worker only ever reported the configured states and a pool worker reports all of them, so the same plate got
+ *  two extruder counts depending on which worker sliced it. */
+export function paintedExtruderCount(counts, kind, filamentCount = Infinity) {
   if (kind !== 'color') return 0
-  const paintedStates = Object.entries(counts ?? {}).filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
+  const paintedStates = paintedStatesOf(counts).filter(state => state <= filamentCount)
   if (!paintedStates.length) return 0
   return Math.max(...paintedStates)
 }
+
+/** The painted material states above the configured filaments — what paintedExtruderCount leaves out. */
+export function paintBeyondFilaments(counts, kind, filamentCount) {
+  if (kind !== 'color') return []
+  return paintedStatesOf(counts).filter(state => state > filamentCount)
+}
+
+const paintedStatesOf = (counts) =>
+  Object.entries(counts ?? {}).filter(([, facetCount]) => facetCount > 0).map(([state]) => Number(state))
 
 /** Write a split export back into the store under `kind`, leaving every other annotation of the object alone. */
 export function storePaint(objectsById, byObject, kind) {

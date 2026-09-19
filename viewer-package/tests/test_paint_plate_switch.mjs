@@ -17,6 +17,8 @@ const A = { id: 1, plate: 0, mesh: new THREE.Object3D() }
 const B = { id: 2, plate: 0, mesh: new THREE.Object3D() }
 const C = { id: 3, plate: 1, mesh: new THREE.Object3D() }
 const HIDDEN = { id: 4, plate: 0, mesh: new THREE.Object3D(), visible: false }
+const LATE = { id: 5, plate: 0, mesh: new THREE.Object3D() }   // on plate 0, added after the merge was taken
+const FACES_LATE = 4
 const TOWER = new THREE.Object3D()
 const PLATE_0 = { plate: 0, members: [{ id: A.id, faceCount: FACES_A }, { id: B.id, faceCount: FACES_B }] }
 const PLATE_1 = { plate: 1, members: [{ id: C.id, faceCount: FACES_C }] }
@@ -50,7 +52,7 @@ const setup = () => {
       materialExtruderRef: { current: 1 }, extruderColorsRef: { current: ['#111111', '#222222'] },
       setBrushRadius() {}, setFillAngle() {},
       // The scene derives an object's plate from its position; the records here carry it for the stub to read.
-      objectsRef: { current: [A, B, C, HIDDEN] }, selectorGeomRef, apiRef: { current: { plateOfObject: (object) => object.plate } },
+      objectsRef: { current: [A, B, C, HIDDEN, LATE] }, selectorGeomRef, apiRef: { current: { plateOfObject: (object) => object.plate } },
       onPaintPlateNeeded: (plate) => { switches.push(plate); return new Promise(resolve => { finishSwitch = resolve }) },
     },
   })
@@ -112,6 +114,28 @@ const strokes = (sent) => sent.filter(message => message.cmd === 'paint')
   assert.deepEqual(switches, [C.plate])
   await land(PLATE_1)
   assert.equal(strokes(sent).length, 1, 'the click lands after the switch even though the button is already up')
+}
+
+// ---- an object on the held plate that the merge predates: re-registered, then painted ----
+{
+  const { input, sent, switches, hitOn, land } = setup()
+  input.beginStroke(STROKE)
+  hitOn(LATE.mesh, 5); input.paintAt(STROKE)
+  assert.deepEqual(switches, [LATE.plate], 'the held plate is registered again to take the object in')
+  const WITH_LATE = { plate: 0, topology: 'with-late', members: [...PLATE_0.members, { id: LATE.id, faceCount: FACES_LATE }] }
+  await land(WITH_LATE)
+  assert.equal(strokes(sent).at(-1).facet, FACES_A + FACES_B + HIT_FACET, 'and the stroke lands on it')
+}
+
+// ---- one the registration still leaves out is not asked for again until the merge changes ----
+{
+  const { input, sent, switches, hitOn, land } = setup()
+  input.beginStroke(STROKE)
+  hitOn(LATE.mesh, 5); input.paintAt(STROKE)
+  await land({ ...PLATE_0, topology: 'without-late' })
+  hitOn(LATE.mesh, 6); input.paintAt(STROKE)
+  assert.deepEqual(switches.filter(entry => entry !== 'refresh'), [LATE.plate], 'no swap on every sample')
+  assert.equal(strokes(sent).length, 0)
 }
 
 console.log('paint_plate_switch: ok')

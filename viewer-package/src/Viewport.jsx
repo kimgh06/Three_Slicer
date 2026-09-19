@@ -286,7 +286,7 @@ export default function Viewport({
     //  swaps to it holding the open brush's annotation (paint_input.js carries the stroke on once it resolves).
     onPaintPlateNeeded: (plate) => {
       if (paintModeRef.current === 'off') return null
-      selectPlateRef.current?.(plate)
+      if (plate !== selectedPlateRef.current) selectPlateRef.current?.(plate)
       return registerSelectorRef.current?.(null, { kind: paintKindOfMode(paintModeRef.current) })
     },
     onSelectionChanged: () => setSelectedIds(apiRef.current?.selectedObjectIds?.() ?? []),
@@ -348,8 +348,8 @@ export default function Viewport({
       // The live counts describe the plate the selector holds only while it holds the MATERIAL annotation; with the
       //  support annotation held (a support brush was opened) they count support marks, and the plate's material
       //  paint — which the slice will load again ('auto') — is in the store.
-      if (plate === selectorPlate && selectorGeomRef.current?.kind === 'color') return usesMultipleTools(onPlate, paintStateCounts)
-      return usesMultipleTools(onPlate, stored())
+      if (plate === selectorPlate && selectorGeomRef.current?.kind === 'color') return usesMultipleTools(onPlate, paintStateCounts, extruderColors.length)
+      return usesMultipleTools(onPlate, stored(), extruderColors.length)
     }
     // enable_prime_tower is read the way deriveKernelParams reads it: absent leaves the kernel's tower on.
     const towerOn = (effective) => !('enable_prime_tower' in effective) || !!effective.enable_prime_tower

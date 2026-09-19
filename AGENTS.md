@@ -143,7 +143,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   another plate selects that plate and swaps the selector to it with the open brush's kind (`onPaintPlateNeeded`);
   the samples arriving during the swap are held (the latest one is painted once it lands, which is what makes a
   fill click on another plate work), the capsule restarts, and the section plane is re-sent in the new plate's
-  frame. A hover never swaps. `test_paint_plate_switch.mjs` drives the real `createPaintInput`.
+  frame. A hover never swaps. An object on the held plate that the merge predates (an unpainted file dropped with
+  the brush open, an object shown again) takes the same path — its strokes used to vanish — and one the
+  registration still leaves out is not asked for again until the merge changes. `test_paint_plate_switch.mjs`
+  drives the real `createPaintInput`. Paint for a filament that is not configured is left out of the extruder count
+  on every path (`paintedExtruderCount`, `usesMultipleTools`) and named in a notice: the selector worker reported
+  only the configured states and a pool worker all 16, so one plate sliced with two different counts.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not

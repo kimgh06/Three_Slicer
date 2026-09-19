@@ -45,8 +45,12 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
   }
 
   // Where a hit lands in the selector. The selector holds ONE plate's merge, numbered across its objects, so a hit
-  //  becomes { facet } in that numbering; an object of another plate becomes { plate } — the stroke has reached a
-  //  plate the selector must be switched to; anything else (the tower, a hidden object) is null and paints nothing.
+  //  becomes { facet } in that numbering. An object it does not hold becomes { plate } — the selector must be
+  //  (re)registered there: another plate, or this plate's merge taken before the object joined it (an unpainted
+  //  file dropped while the brush is open, an object shown again), whose strokes used to vanish without a word.
+  //  An object the registration still left out is not asked for again until the merge changes. The tower and a
+  //  hidden object are null and paint nothing.
+  const leftOut = new Map()   // object id -> the merge topology that left it out
   const resolveHit = (hit) => {
     const object = objectsRef?.current?.find(candidate => candidate.mesh === hit.object)
     if (!object || object.visible === false) return null
@@ -55,19 +59,22 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
     if (facet !== null) return { facet }
     // Plate membership is by position (the scene's plateOfObject), not a field on the record.
     const plate = apiRef?.current?.plateOfObject?.(object)
-    if (plate == null || (held && plate === held.plate)) return null
-    return { plate }
+    if (plate == null) return null
+    if (held && plate === held.plate && leftOut.has(object.id) && leftOut.get(object.id) === held.topology) return null
+    return { plate, objectId: object.id }
   }
   // A stroke that crosses onto another plate switches the selector there (onPaintPlateNeeded: select the plate,
   //  swap the selector, which writes this plate's marks back to the store first) and carries on. The swap is a
   //  worker round trip, so the samples that arrive meanwhile are not dropped wholesale: the latest one is kept and
   //  painted once the swap lands — for a fill that one sample IS the click. One switch at a time.
   let plateSwitch = null, heldSample = null
-  const switchPlate = (plate, sample) => {
+  const switchPlate = ({ plate, objectId }, sample) => {
     heldSample = sample
     if (plateSwitch || !onPaintPlateNeeded) return
     plateSwitch = Promise.resolve(onPaintPlateNeeded(plate)).catch(() => null).then(() => {
       plateSwitch = null
+      const held = selectorGeomRef?.current
+      if (held && !held.members?.some(member => member.id === objectId)) leftOut.set(objectId, held.topology)
       previous = null   // the capsule must not span two plates' frames
       sectionPlane?.refresh()   // the kernel's clip plane is in plate-local coordinates
       const sample = heldSample; heldSample = null
@@ -97,7 +104,7 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
     if (!hit || hit.faceIndex == null) { cursor.hide(); return }
     const target = resolveHit(hit)
     if (!target) return
-    if (target.plate !== undefined) { switchPlate(target.plate, sample); return }
+    if (target.plate !== undefined) { switchPlate(target, sample); return }
     const toK = v => [v.x - X.cx, -v.z - X.cy, v.y - X.minz]   // viewer(Y-up) -> STL(Z-up) -> kernel
     const hk = toK(hit.point), ck = toK(camera.position)
     const brush = brushOf()

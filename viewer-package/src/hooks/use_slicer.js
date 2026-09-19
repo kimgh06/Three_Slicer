@@ -6,7 +6,7 @@ import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-vi
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
-import { poolPaintAction, paintedExtruderCount } from '../core/paint_store.js'
+import { poolPaintAction, paintedExtruderCount, paintBeyondFilaments } from '../core/paint_store.js'
 
 // Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
 const PAINT_STATES_ALL = Array.from({ length: MAX_PAINT_EXTRUDERS }, (_, index) => index + 1)
@@ -24,7 +24,7 @@ export function useSlicer(deps) {
   if (typeof makeWorker !== 'function') throw new Error('useSlicer: deps.makeWorker (a slicer worker factory) is required')
   const {
     settings, plateSettings, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
-    paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay,
+    paintStateCountsRef, extruderColorsRef, rebuildToolpaths, rebuildPaintOverlay,
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount,
     setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
     // Which kernel the selector worker loaded ('mt'|'st'), for the UI badge and the pool size. Optional.
@@ -440,7 +440,12 @@ export function useSlicer(deps) {
     let reportedCounts = paintCounts
     if (reportedCounts == null && painted) reportedCounts = paintStateCountsRef?.current
     // `paintKind` is the annotation the worker's selector holds: support paint is not a tool.
-    const highestPaintedState = paintedExtruderCount(reportedCounts, paintKind)
+    const filamentCount = extruderColorsRef?.current?.length ?? MAX_PAINT_EXTRUDERS
+    const highestPaintedState = paintedExtruderCount(reportedCounts, paintKind, filamentCount)
+    const unconfigured = paintBeyondFilaments(reportedCounts, paintKind, filamentCount)
+    if (unconfigured.length)
+      setSliceNotice?.(`Paint for ${unconfigured.map(state => 'T' + state).join(', ')} was left out: only ${filamentCount} ` +
+                       'filament(s) are configured. Add the filament to print it.')
     if (highestPaintedState >= 2) {                 // state 1 alone is the default tool — nothing to switch to
       params.extruder_count = Math.max(params.extruder_count ?? 1, highestPaintedState)
       params.wipe_tower_real = !!effective.wipe_tower_real

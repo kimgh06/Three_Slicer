@@ -114,6 +114,10 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
   assert.equal(usesMultipleTools(onT1, { 1: 500 }), false, 'painting in state 1 alone is still the default tool')
   assert.equal(usesMultipleTools(onT1, { 2: 12 }), true, 'paint reaching extruder 2 does')
   assert.equal(usesMultipleTools(onT1, { 3: 0 }), false, 'a state with no painted facets does not')
+  // Paint for a filament that is not configured is left out of the slice, so it is not a switch here either.
+  const TWO_FILAMENTS = 2
+  assert.equal(usesMultipleTools(onT1, { 3: 12 }, TWO_FILAMENTS), false, 'T3 paint with two filaments switches nothing')
+  assert.equal(usesMultipleTools(onT1, { 2: 12, 3: 12 }, TWO_FILAMENTS), true, 'T2 paint still does')
   // An unassigned object defaults to T1 rather than to "unknown", which would otherwise read as a second tool.
   assert.equal(usesMultipleTools([{ visible: true }, { extruder: 1, visible: true }], {}), false,
     'an object with no extruder set counts as T1')

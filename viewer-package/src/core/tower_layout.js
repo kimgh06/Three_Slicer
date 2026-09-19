@@ -20,11 +20,13 @@
  * @param objects the object list as the component holds it (`{extruder, visible}`)
  * @param paintStateCounts painted facet count per selector state, as the paint brush reports it
  */
-export function usesMultipleTools(objects, paintStateCounts) {
+export function usesMultipleTools(objects, paintStateCounts, filamentCount = Infinity) {
   const assigned = new Set((objects ?? []).filter(o => o?.visible !== false).map(o => Number(o?.extruder) || 1))
   if (assigned.size > 1) return true
+  // Paint for a filament that is not configured is not a tool change — the slice leaves it out too
+  //  (paint_store.js paintedExtruderCount).
   return Object.entries(paintStateCounts ?? {})
-    .some(([state, facets]) => facets > 0 && Number(state) >= 2)
+    .some(([state, facets]) => facets > 0 && Number(state) >= 2 && Number(state) <= filamentCount)
 }
 
 /** Read a per-plate tower coordinate out of the settings map. `wipe_tower_x`/`_y` are upstream's per-plate
