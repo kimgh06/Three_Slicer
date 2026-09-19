@@ -17,7 +17,7 @@ export function useSlicer(deps) {
   const { makeWorker } = deps
   if (typeof makeWorker !== 'function') throw new Error('useSlicer: deps.makeWorker (a slicer worker factory) is required')
   const {
-    settings, plateSettings, wipeTowerReal, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
+    settings, plateSettings, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
     paintStateCountsRef, rebuildToolpaths, rebuildPaintOverlay,
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount,
     setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
@@ -382,11 +382,14 @@ export function useSlicer(deps) {
     //  behaviour is preserved byte for byte.
     const effective = effectiveSettings(settings, plateSettings, merged.plate)
     const params = deriveKernelParams(effective, { plate: merged.plate })
+    // Ring or the real WipeTower: `wipe_tower_real` is a viewer knob in the settings map (not a schema key, like
+    //  sla_antialias), so it follows the plate override like every other tower setting. It used to be component
+    //  state — one mode for every plate, lost on reload.
     if (merged.extruders >= 2 && merged.split > 0) {
       params.extruder_count = merged.extruders; params.mm_group_split = merged.split
       // One group per extruder run — mm_group_split alone can only express two.
       if (merged.splits?.length) { params.mm_group_splits = merged.splits; params.mm_group_tools = merged.tools }
-      params.wipe_tower_real = wipeTowerReal
+      params.wipe_tower_real = !!effective.wipe_tower_real
     }
     // Material painting assigns tools per facet, so `merged` — which reads whole-object assignment only — cannot
     //  see it. The kernel gates its multi-tool path on `extruder_count >= 2 && (groups || painted tools)`, so a
@@ -400,7 +403,7 @@ export function useSlicer(deps) {
     const highestPaintedState = paintedStates.length ? Math.max(...paintedStates) : 0
     if (highestPaintedState >= 2) {                 // state 1 alone is the default tool — nothing to switch to
       params.extruder_count = Math.max(params.extruder_count ?? 1, highestPaintedState)
-      params.wipe_tower_real = wipeTowerReal
+      params.wipe_tower_real = !!effective.wipe_tower_real
     }
     // Filament identity and physical constants, straight from the settings map the filament card writes. Upstream
     //  reports all of these in the G-code footer; without them an export says how much filament it used but not
@@ -476,19 +479,25 @@ export function useSlicer(deps) {
       return { r: { ...r, gcode: '', slaParams, modelSTL: merged.buf }, params: slaParams }
     }
     const params = buildParams(merged, { painted: !ctx })
+    // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
+    //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a
+    //  pool run was another plate's coordinates.
+    const withTower = (out) => {
+      if (out?.r) out.r.towerParams = { prime_tower_x: params.prime_tower_x, prime_tower_y: params.prime_tower_y }
+      return { ...out, params }
+    }
     if (ctx) {
       // A pool worker is thrown away after the run, so a stage cache in it is heap for nothing — and the digest
       //  bookkeeping belongs to the selector worker, which is the only one that ever slices the same plate twice.
       params.keep_stages = false; params.reuse_stages = 0
-      const out = await sliceLadder(merged.buf, params, ctx)
-      return { ...out, params }
+      return withTower(await sliceLadder(merged.buf, params, ctx))
     }
     treeSupportRef.current = params.support_style === 'tree'
     const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
     try {
       const out = await sliceLadder(merged.buf, params)   // on a normal failure: classic walls -> economy retry
       lastGeomRef.current = (out.economy || out.classicWalls) ? null : dig
-      return { ...out, params }
+      return withTower(out)
     } catch (e) { lastGeomRef.current = null; throw e }
   }
 
