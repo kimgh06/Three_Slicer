@@ -408,19 +408,23 @@ export function makePlateActions(deps) {
       return
     }
     const gcodePlates = done.filter(([, r]) => !r.stats?.sla).map(([i, r]) => ({ index: Number(i), gcode: r.gcode, stats: r.stats }))
+    setExporting?.('Writing…')
     try {
       if (gcodePlates.length) {
         const bytes = await writeGcode3MF(gcodePlates, settings, { plateCount: plateCountRef.current })
-        await download(bytes, 'plates.gcode.3mf', 'model/3mf', onExport)
+        let name = 'plates.gcode.3mf'
+        if (gcodePlates.length === 1) name = `plate_${gcodePlates[0].index + 1}.gcode.3mf`
+        await download(bytes, name, 'model/3mf', onExport)
       }
     } catch (e) { setError('G-code export failed: ' + (e?.message || e)); return }
+    finally { setExporting?.(null) }
     for (const [i, r] of done) if (r.stats?.sla) { await exportPlateSl1(Number(i)); await _sleep(350) }
     setSliceNotice(`Exported ${done.length} plate(s)`
       + (skipped ? ` — skipped ${skipped} that extend beyond the bed` : ''))
   }
-  // The focused plate alone as a .gcode.3mf — upstream's "Export plate sliced file", and what the sidebar's Export
-  //  button saves; the plain .gcode stays one click away in its menu for printers that take nothing else. Built on
-  //  click rather than prefilled like the plain link, because the zip is compressed work the user may never want.
+  // The focused plate alone as a .gcode.3mf — upstream's "Export plate sliced file", in the Export button's menu.
+  //  The button itself is "Export all sliced file" (exportAllGcode): a user who sliced two plates and pressed Export
+  //  got one of them. Built on click, not prefilled like the plain link: the zip is work the user may never want.
   async function exportPlateGcode3mf(idx = selectedPlateRef.current) {
     const r = plateResultsRef.current[idx]
     if (!r || r.error || !r.gcode || r.stats?.over_bed) return

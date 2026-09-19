@@ -882,7 +882,7 @@ export default function Viewport({
                 canSlice={objects.length > 0 && !gcodeOnly} onSlice={onSlice} onCancel={cancelSlice}
                 onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
                 slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla} slaTech={tech === 'SLA'}
-                onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready} onExportGcode3mf={() => exportPlateGcode3mf()}
+                onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready} onExportGcode3mf={exportAllGcode} onExportPlateGcode3mf={() => exportPlateGcode3mf()}
                 bedWarning={bedOver || overBed
                   ? `${stats?.overBedModel === false ? 'the toolpaths extend' : 'the model extends'} beyond the ${tech === 'SLA' ? 'resin display' : 'bed'}`
                     + (bedOverText ? ` by ${bedOverText}` : '')

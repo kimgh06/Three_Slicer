@@ -8,7 +8,7 @@ export default function SliceBar({
   // Plate-parallel slicing: the run map (core/slice_pool.js) while an all-plates run is on, the worker-count knob
   //  and what Auto resolves to, and which kernel loaded — mt and st are a measured 9.8x apart, so it is said.
   plateRun = null, kernelKind = null, workers = 0, autoWorkers = 1, maxWorkers = 1, memoryWorkers = Infinity, onWorkers = null,
-  slaResult = false, slaTech = false, onExportSl1 = null, exporting = null, sl1Ready = null, onExportGcode3mf = null,
+  slaResult = false, slaTech = false, onExportSl1 = null, exporting = null, sl1Ready = null, onExportGcode3mf = null, onExportPlateGcode3mf = null,
 }) {
   const title = slicing ? 'Click to cancel the slice'
     : plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)'
@@ -69,17 +69,21 @@ export default function SliceBar({
             {exporting || (sl1Ready ? 'Save SL1' : 'Export SL1')}
           </button>
         : gcodeUrl && !bedWarning && onExportGcode3mf
-        // The button saves a .gcode.3mf (upstream's "Export plate sliced file"); the plain .gcode a non-Bambu
-        //  printer needs sits in its ▾ menu — a native <details>, so the menu needs no state of its own.
+        // The button saves EVERY sliced plate in one .gcode.3mf (upstream's "Export all sliced file"); the viewed
+        //  plate alone, and the plain .gcode a non-Bambu printer needs, sit in its ▾ menu — a native <details>, so
+        //  the menu needs no state of its own.
         ? <div className="export-dd">
             <button className="export-btn" onClick={onExportGcode3mf} disabled={!!exporting} data-testid="gcode3mf-dl"
-              title="Save the plate you are viewing as a .gcode.3mf — reopenable here and in OrcaSlicer/Bambu Studio">
+              title={`Save ${slicedPlateCount > 1 ? `all ${slicedPlateCount} sliced plates` : 'the sliced plate'} as one .gcode.3mf — reopenable here and in OrcaSlicer/Bambu Studio`}>
               {exporting || 'Export G-code'}
             </button>
             <details className="export-more">
               <summary title="Other formats" data-testid="gcode-dl-more">▾</summary>
               <div className="slice-menu export-menu">
-                <a href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} title="Save the plain G-code of the plate you are viewing" data-testid="gcode-dl">Plain .gcode</a>
+                {onExportPlateGcode3mf && slicedPlateCount > 1 && (
+                  <button onClick={onExportPlateGcode3mf} title="Save only the plate you are viewing as a .gcode.3mf" data-testid="gcode3mf-plate-dl">This plate only (P{selectedPlate + 1})</button>
+                )}
+                <a href={gcodeUrl} download={`plate_${selectedPlate + 1}.gcode`} title="Save the plain G-code of the plate you are viewing" data-testid="gcode-dl">Plain .gcode (P{selectedPlate + 1})</a>
               </div>
             </details>
           </div>
