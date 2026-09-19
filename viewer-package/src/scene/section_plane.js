@@ -74,9 +74,10 @@ export function createSectionPlane({ renderer, camera, objectsRef, workerRef, pa
     applyToMaterials(true); syncKernel(true); invalidate?.()
     return true
   }
-  // Re-applied when a brush opens and when the object set changes: a mesh spawned while the plane was on would
-  //  otherwise render uncut over a scene that is cut.
-  const refresh = () => { if (ratio >= 0) applyToMaterials(true) }
+  // Re-applied when a brush opens, when the object set changes and when a stroke switches the selector to another
+  //  plate: a mesh spawned while the plane was on would otherwise render uncut over a scene that is cut, and the
+  //  kernel's copy of the plane is in the held plate's local frame, so a switched selector needs it re-sent.
+  const refresh = () => { if (ratio >= 0) { applyToMaterials(true); syncKernel(true) } }
   const isActive = () => ratio >= 0
   // The paint overlay is rebuilt from the kernel on every stroke, so it cannot be walked once and left alone —
   //  whoever builds one asks for the list instead. Unclipped, it hangs in the air where the model was cut away.

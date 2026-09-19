@@ -18,7 +18,7 @@ import { useMoveScrub } from './hooks/use_move_scrub.js'
 import { useViewportHistory, undoRedoDirection } from './hooks/use_viewport_history.js'
 import { useThreeScene } from './scene/use_three_scene.js'
 import {
-  makeToolpathView, useNoopSlicer, makeSupportPaint, MAX_PAINT_EXTRUDERS,
+  makeToolpathView, useNoopSlicer, makeSupportPaint, paintKindOfMode, MAX_PAINT_EXTRUDERS,
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
   makeFilamentColors, DEFAULT_FILAMENT_COLORS, makePreviewControls,
 } from './actions/index.js'
@@ -282,6 +282,13 @@ export default function Viewport({
     // Clicking a plate in the viewport selects it, so the tab bar is no longer the only way to switch. Through a
     //  ref because the scene installs its handlers once and makePlateActions is built further down.
     onPlateClicked: (i) => { if (i !== selectedPlateRef.current) selectPlateRef.current?.(i) },
+    // A brush stroke that reaches an object on another plate: that plate becomes the selected one, and the selector
+    //  swaps to it holding the open brush's annotation (paint_input.js carries the stroke on once it resolves).
+    onPaintPlateNeeded: (plate) => {
+      if (paintModeRef.current === 'off') return null
+      selectPlateRef.current?.(plate)
+      return registerSelectorRef.current?.(null, { kind: paintKindOfMode(paintModeRef.current) })
+    },
     onSelectionChanged: () => setSelectedIds(apiRef.current?.selectedObjectIds?.() ?? []),
     //  The drag can land on any plate's box, and each plate's position is its own array entry — the origin
     //  subtracted is the dragged box's own plate, and only that plate's entry is written, so the other plates'

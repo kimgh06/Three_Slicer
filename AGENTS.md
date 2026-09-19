@@ -137,7 +137,13 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   strokes blocked; the pre-slice sync turns it into a failed slice rather than a bare one. **(15)** Undo restores a
   DELETED object's paint (the snapshot carries `paint` by reference — the store never mutates a map — and delete
   flushes first); a live object keeps its own, so undoing a move does not roll back strokes made after it. Strokes
-  themselves are still outside undo.
+  themselves are still outside undo. **(16)** A raycast reports the facet in the HIT OBJECT's numbering and the
+  selector numbers across its merge, so every stroke goes through `mergedFacetOf(members, id, facet)` — it used to
+  send the raw index, and only the merge's first object could be painted. A stroke that reaches an object of
+  another plate selects that plate and swaps the selector to it with the open brush's kind (`onPaintPlateNeeded`);
+  the samples arriving during the swap are held (the latest one is painted once it lands, which is what makes a
+  fill click on another plate work), the capsule restarts, and the section plane is re-sent in the new plate's
+  frame. A hover never swaps. `test_paint_plate_switch.mjs` drives the real `createPaintInput`.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not

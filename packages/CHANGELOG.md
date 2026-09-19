@@ -41,6 +41,9 @@
   mesh and loaded from it after; slice-all pool workers load their plate's paint; a 3mf save writes every plate's
   brush strokes (it used to save them only for a single-plate project); copy, duplicate and paste carry the paint,
   and a split hands each part the marks on its own facets.
+- A brush stroke painted only the first object of the plate being painted: the hit facet was sent in the hit
+  object's own numbering, not the plate merge's. A stroke now also carries across plates — reaching an object on
+  another plate selects that plate and keeps painting there.
   Every plate's paint stays drawn, not only the plate being painted.
 - Review fixes to the paint store, each reproduced before the fix: a slice-all pool worker printed the previous
   plate's paint on an unpainted plate; opening the support brush filed another plate's material paint as support

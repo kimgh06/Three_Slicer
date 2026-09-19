@@ -50,6 +50,13 @@ export async function requestPaintExport(worker, timeoutMs = PAINT_EXPORT_TIMEOU
 }
 
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each render.
+// Which annotation a brush writes — the kind setPaintMode asks the selector to hold.
+export function paintKindOfMode(mode) {
+  if (mode === 'material') return 'color'
+  if (mode === 'enforcer' || mode === 'blocker') return 'supports'
+  return null
+}
+
 export function makeSupportPaint(deps) {
   const {
     three, objectsRef, apiRef, getWorker, selectedPlateRef, selectorGeomRef,
@@ -298,12 +305,7 @@ export function makeSupportPaint(deps) {
     if (held && held.worker === worker) return held
     return null
   }
-  // Which annotation a brush writes — the kind setPaintMode asks the selector to hold.
-  const kindOfMode = (mode) => {
-    if (mode === 'material') return 'color'
-    if (mode === 'enforcer' || mode === 'blocker') return 'supports'
-    return null
-  }
+  const kindOfMode = paintKindOfMode
   // Write the held selector's marks back to the objects it was built from, under the kind RECORDED for them — what
   //  was loaded, or what was last brushed — never the brush mode at write time: a mode switch queues this and flips
   //  the mode before it runs, which filed plate 1's material paint as support paint (measured: color 208 -> supports

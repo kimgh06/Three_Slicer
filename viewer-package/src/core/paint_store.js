@@ -65,6 +65,22 @@ export function mergedPaint(objectsById, members, kind) {
   return { facets: Int32Array.from(facets), hex: hex.join('\n') }
 }
 
+/** A brush hit's facet in the selector's numbering. A raycast reports the facet in the HIT OBJECT's own numbering,
+ *  and the selector numbers across the whole merge, so only the merge's first object used to paint where it was
+ *  hit: a stroke on any later one seeded the kernel's flood at the first object's facet of that number, outside
+ *  the brush, and marked nothing. Null when the selector does not hold the object (another plate, hidden). */
+export function mergedFacetOf(members, objectId, localFacet) {
+  let base = 0
+  for (const member of members ?? []) {
+    if (member.id === objectId) {
+      if (!(localFacet >= 0 && localFacet < member.faceCount)) return null
+      return base + localFacet
+    }
+    base += member.faceCount
+  }
+  return null
+}
+
 /** What a pool worker must do to its selector before slicing a plate: 'load' the plate's stored paint, 'clear' the
  *  paint the previous plate left behind (slicing never resets the selector), or nothing. */
 export function poolPaintAction(storedPaint, workerHoldsPaint) {

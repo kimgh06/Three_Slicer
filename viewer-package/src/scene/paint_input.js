@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createBrushCursor } from './brush_cursor.js'
 import { SUPPORT_OVERLAY_COLOR, UNPAINTED_COLOR } from '../core/paint_colors.js'
+import { mergedFacetOf } from '../core/paint_store.js'
 
 // The painting half of the pointer handling: the raycast -> kernel-coordinate conversion, the brush cursor preview,
 // the stroke's own state (anchor, previous sample) and the wheel bindings. Split out of use_three_scene.js when the
@@ -17,6 +18,7 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
   const {
     workerRef, paintModeRef, paintXformRef, paintToolRef, brushRadiusRef,
     materialExtruderRef, extruderColorsRef, setBrushRadius, setFillAngle,
+    objectsRef, selectorGeomRef, apiRef, onPaintPlateNeeded,
   } = deps
   const cursor = createBrushCursor(cursorParent, invalidate)
 
@@ -42,6 +44,37 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
     return null
   }
 
+  // Where a hit lands in the selector. The selector holds ONE plate's merge, numbered across its objects, so a hit
+  //  becomes { facet } in that numbering; an object of another plate becomes { plate } — the stroke has reached a
+  //  plate the selector must be switched to; anything else (the tower, a hidden object) is null and paints nothing.
+  const resolveHit = (hit) => {
+    const object = objectsRef?.current?.find(candidate => candidate.mesh === hit.object)
+    if (!object || object.visible === false) return null
+    const held = selectorGeomRef?.current
+    const facet = mergedFacetOf(held?.members, object.id, hit.faceIndex)
+    if (facet !== null) return { facet }
+    // Plate membership is by position (the scene's plateOfObject), not a field on the record.
+    const plate = apiRef?.current?.plateOfObject?.(object)
+    if (plate == null || (held && plate === held.plate)) return null
+    return { plate }
+  }
+  // A stroke that crosses onto another plate switches the selector there (onPaintPlateNeeded: select the plate,
+  //  swap the selector, which writes this plate's marks back to the store first) and carries on. The swap is a
+  //  worker round trip, so the samples that arrive meanwhile are not dropped wholesale: the latest one is kept and
+  //  painted once the swap lands — for a fill that one sample IS the click. One switch at a time.
+  let plateSwitch = null, heldSample = null
+  const switchPlate = (plate, sample) => {
+    heldSample = sample
+    if (plateSwitch || !onPaintPlateNeeded) return
+    plateSwitch = Promise.resolve(onPaintPlateNeeded(plate)).catch(() => null).then(() => {
+      plateSwitch = null
+      previous = null   // the capsule must not span two plates' frames
+      sectionPlane?.refresh()   // the kernel's clip plane is in plate-local coordinates
+      const sample = heldSample; heldSample = null
+      if (sample && selectorGeomRef?.current?.plate === plate) paintAt(sample.event, sample.options)
+    })
+  }
+
   // Stroke state. `anchor` is where the press landed (the axis lock pivots on it); `previous` is the last sample's
   //  kernel-space hit, which the capsule stroke below spans to.
   let anchor = null, previous = null, drawing = false
@@ -56,18 +89,25 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
   }
 
   const paintAt = (ev, { erase = false } = {}) => {
+    const sample = { event: { clientX: ev.clientX, clientY: ev.clientY }, options: { erase } }
+    if (plateSwitch) { heldSample = sample; return }
     const X = paintXformRef.current; if (!X) return
     toPointer(lockedEvent(ev))
     const hit = pickHit()
     if (!hit || hit.faceIndex == null) { cursor.hide(); return }
+    const target = resolveHit(hit)
+    if (!target) return
+    if (target.plate !== undefined) { switchPlate(target.plate, sample); return }
     const toK = v => [v.x - X.cx, -v.z - X.cy, v.y - X.minz]   // viewer(Y-up) -> STL(Z-up) -> kernel
     const hk = toK(hit.point), ck = toK(camera.position)
     const brush = brushOf()
     // The tool travels with the stroke rather than being stamped later: a fill takes an angle where a brush takes a
     //  radius, so the message has to say which of the two it is at the point the hit is taken. `radius`/`cx..cz`
     //  ride along for the brush; the worker's fill dispatch simply does not read them.
+    let command = 'paint'
+    if (erase) command = 'erase'
     const message = {
-      cmd: erase ? 'erase' : 'paint', facet: hit.faceIndex, hx: hk[0], hy: hk[1], hz: hk[2],
+      cmd: command, facet: target.facet, hx: hk[0], hy: hk[1], hz: hk[2],
       cx: ck[0], cy: ck[1], cz: ck[2], radius: brushRadiusRef.current,
       enforcer: paintModeRef.current === 'enforcer',
       tool: brush.tool, cursor: brush.cursor, angle: brush.angle,
@@ -158,10 +198,12 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
     const X = paintXformRef.current; if (!X) return
     const hit = pickHit()
     const worker = listeningWorker(); if (!worker) return
-    if (!hit || hit.faceIndex == null) { clearFillPreview(); worker.postMessage({ cmd: 'fillPreview', clear: true }); return }
+    // A hover never switches plates (a swap is a round trip): an object the selector does not hold gets no preview.
+    const target = hit && hit.faceIndex != null && resolveHit(hit)
+    if (!target || target.facet === undefined) { clearFillPreview(); worker.postMessage({ cmd: 'fillPreview', clear: true }); return }
     const brush = brushOf()
     const hk = [hit.point.x - X.cx, -hit.point.z - X.cy, hit.point.y - X.minz]
-    worker.postMessage({ cmd: 'fillPreview', facet: hit.faceIndex, hx: hk[0], hy: hk[1], hz: hk[2],
+    worker.postMessage({ cmd: 'fillPreview', facet: target.facet, hx: hk[0], hy: hk[1], hz: hk[2],
                          tool: brush.tool, angle: brush.angle })
   }
   const queueFillPreview = () => { if (!previewFrame) previewFrame = requestAnimationFrame(requestFillPreview) }
