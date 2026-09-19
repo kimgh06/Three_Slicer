@@ -507,7 +507,7 @@ export function useSlicer(deps) {
   // `ctx` is a pool context for a plate sliced beside the selected one; null is the selector worker itself.
   // `resyncPaint` (selector worker only): puts the plate's paint back into a recreated selector worker — the caller
   //  owns the selector (support_paint.js); a pool context re-syncs itself (ctx.syncPaint).
-  async function runSlice(merged, ctx = null, { resyncPaint = null } = {}) {
+  async function runSlice(merged, ctx = null, { syncPaint = null, resyncPaint = null } = {}) {
     // SLA routing: the technology key sends the merge to the pure-JS contour slicer instead of the kernel. No
     //  retry ladder and no incremental cache — there is no Arachne to crash and no stage cache to reuse — and the
     //  derived params ride on the result so the SL1 writer rasterizes with the values this slice actually used.
@@ -523,8 +523,15 @@ export function useSlicer(deps) {
     }
     // A pool worker's selector must hold this plate's paint, or none (ctx.syncPaint above).
     const storedPaint = merged.paint?.color ?? merged.paint?.supports
-    let paintCounts = null
+    let paintCounts = null, dig = null
     if (ctx) paintCounts = await ctx.syncPaint(merged.buf, storedPaint)
+    else {
+      // The selector worker's selector is loaded LAST, with nothing awaited between the load and the post: a drag
+      //  commit re-registers the selector, and one that landed in a gap (the digest used to sit there) swapped it
+      //  back to the selected plate, so another plate of a slice-all was cut with that plate's facets and paint.
+      dig = await geomDigest(merged.buf)
+      await syncPaint?.()
+    }
     const params = buildParams(merged, { painted: !ctx, paintCounts })
     // Where this plate's tower was built (the auto placement included) rides on its own result, so the card reads
     //  the selected plate's — it used to read window.__vpParams, the selector worker's last slice, which after a
@@ -540,7 +547,7 @@ export function useSlicer(deps) {
       return withTower(await sliceLadder(merged.buf, params, ctx, () => ctx.syncPaint(merged.buf, storedPaint)))
     }
     treeSupportRef.current = params.support_style === 'tree'
-    const dig = await geomDigest(merged.buf); applyIncremental(params, dig)
+    applyIncremental(params, dig)
     try {
       const out = await sliceLadder(merged.buf, params, selectorCtx, resyncPaint)   // on a normal failure: classic walls -> economy retry
       lastGeomRef.current = (out.economy || out.classicWalls) ? null : dig
