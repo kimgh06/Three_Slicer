@@ -407,6 +407,8 @@ export default function Viewport({
     //  The held marks go to the store first: if the retry ladder has to recreate the worker, the strokes that lived
     //  only in its selector would go with it, and the resync after the recreate loads the plate from the store.
     syncPaintSelector: async (merged) => {
+      // A resin slice reads no paint (slice_sla has no selector), so it neither closes the brush nor waits on a load.
+      if (frameOf(merged?.plate ?? selectedPlateRef.current).tech === 'SLA') return
       // No stroke may reach the selector while it slices: the slice below may swap it to another annotation ('auto'),
       //  and a stroke of the open brush would then be filed under the wrong kind. The preview a finished slice
       //  switches to closes the brush anyway.
