@@ -279,6 +279,33 @@ const LAYER_HEIGHT_MM = 0.2
   eq('...on both axes', [restored.wipe_tower_y[0], restored.wipe_tower_y[1]], [null, CHOSEN_Y_MM])
 }
 
+// ---- 5c. a hole in a bool array is written in upstream's bool spelling, not "false" --------------------------
+{
+  // retract_when_changing_layer is a coBools (one per extruder); a hole must become the schema default as "0"/"1".
+  const holedBools = []; holedBools[1] = true
+  const bytes = await write3MFProject(oneObjectOnPlateZero(), { layer_height: LAYER_HEIGHT_MM, retract_when_changing_layer: holedBools },
+    { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 })
+  const { project } = await parse3MFProject(bytes, 'bool holes')
+  eq('a bool hole is the default in bool spelling', project.settings.retract_when_changing_layer, ['0', '1'])
+}
+
+// ---- 5d. an empty plate keeps the grid: every plate gets a <plate> record ----------------------------------
+{
+  const SESSION_PLATES = 5, OCCUPIED = [0, 3]
+  const objects = OCCUPIED.map(plate => {
+    const origin = viewerPlateOrigin(plate, SESSION_PLATES, BED_W, BED_D)
+    return { id: plate + 1, name: `p${plate}`, extruder: 1, plate, plateOriginX: origin.x, plateOriginY: origin.y,
+             tris: tetra(origin.x + 20, origin.y + 30, 6), faceCount: TETRA_FACETS, paint: null }
+  })
+  const bytes = await write3MFProject(objects, { layer_height: LAYER_HEIGHT_MM }, { bedWidth: BED_W, bedDepth: BED_D, plateCount: SESSION_PLATES })
+  const { objects: read, project } = await parse3MFProject(bytes, 'empty plates')
+  eq('a <plate> record for every plate, the empty ones too', project.plates.map(plate => plate.index), [0, 1, 2, 3, 4])
+  const placements = platePlacements(project.plates, read, BED_W, BED_D)
+  eq('objects decode onto their own plates under the same grid', placements.map(([, plate]) => plate), OCCUPIED)
+  const TETRA_SIZE_MM = 6, TETRA_BBOX_CENTRE_MM = TETRA_SIZE_MM / 2   // offsets are of the bbox centre (as in section 2)
+  near('...at their own offset', placements[1][2], 20 + TETRA_BBOX_CENTRE_MM, 0.01)
+}
+
 // ---- 6. the sidecar is read defensively: a file from anywhere costs only itself ----------------------------
 {
   const { zipSync, unzipSync, strToU8 } = await import('three/examples/jsm/libs/fflate.module.js')

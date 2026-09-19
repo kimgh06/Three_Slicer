@@ -171,7 +171,7 @@ export function makeModelLoad(deps) {
     if (assignments.length && applyProjectPlates) {
       //  The saved plate count counts too (our member): the <plate> records name only plates holding objects, so an
       //  empty plate the author configured would otherwise not come back.
-      const needed = Math.max(Math.max(...assignments.map(([, index]) => index)) + 1, project.plateCount ?? 0)
+      const needed = Math.max(Math.max(...assignments.map(([, index]) => index)) + 1, project.plates.length, project.plateCount ?? 0)
       applyProjectPlates(needed, bed?.bed_width, bed?.bed_depth, (plateCount) => {
         finalPlateCount = plateCount
         for (const [id, index, offsetX, offsetY] of assignments) {

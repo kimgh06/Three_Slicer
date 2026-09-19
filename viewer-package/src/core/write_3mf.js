@@ -232,9 +232,12 @@ function fillArrayHoles(projectSettings, settings) {
     //  in a string vector (a filament slot with no preset id), which must stay as written.
     const holes = Array.from(original, entry => entry == null)
     if (!holes.some(Boolean)) continue
+    // The default in upstream's spelling for its type (a bool as "0"/"1", a point as "XxY") — a String() of it wrote
+    //  "false", which upstream rejects, ending its key loop exactly as a null did.
     const fallback = [settingRaw({}, key)].flat()[0]
+    const fallbackText = serializeProjectSettings({ [key]: [fallback] })[key]?.[0] ?? ''
     projectSettings[key] = holes.map((hole, at) => {
-      if (hole) return String(fallback ?? '')
+      if (hole) return fallbackText
       return value[at]
     })
     holed[key] = original
@@ -357,7 +360,11 @@ export async function write3MFProject(objects, settings, opts = {}) {
     objectConfig.push('  </object>\n')
   })
   // plater_id is 1-based upstream; the viewer's plates are 0-based (parse_3mf.js reads it back the same way).
+  // A record for EVERY plate, the empty ones included, as upstream writes them: the importer lays its grid out from
+  //  the number of records, and one short (an empty plate between two occupied ones) moved every column —
+  //  objects failed to decode onto their plates and fell back to group-centred placement.
   const plates = new Map()
+  for (let plate = 0; plate < plateCount; plate++) plates.set(plate, [])
   objects.forEach((object, at) => {
     const plate = object.plate ?? 0
     if (!plates.has(plate)) plates.set(plate, [])
