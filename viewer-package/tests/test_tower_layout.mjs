@@ -1,7 +1,8 @@
 // Prime tower placement — the stand-in must land where the slicer will actually put the tower.
 //   Run: node viewer-package/tests/test_tower_layout.mjs
 import assert from 'node:assert'
-import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats, towerFootprint, clampTowerPosition, towerSelectionRule } from '../src/core/tower_layout.js'
+import { towerBoxes, chosenTowerCoord, usesMultipleTools, towerResultStats, towerFootprint, clampTowerPosition, towerSelectionRule,
+  AUTO_GAP, RING_TOWER_SIDE_MM, REAL_TOWER_DEFAULT_WIDTH_MM } from '../src/core/tower_layout.js'
 import { platePosition } from '../src/core/plate_layout.js'
 
 const BED = { bedWidth: 200, bedDepth: 200 }
@@ -138,13 +139,16 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
 {
   // Plate 0 switched off, plate 1 on at its own width: before towerOf, one plate's Off hid every box and every
   //  box took the global width.
+  const PLATE_OFF = 0, PLATE_ON = 1, OWN_WIDTH_MM = 40
+  const CUBE_HALF_MM = 10                                 // cubeOn's 20mm cube, centred on the plate
   const boxes = towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, plateOrigin,
     modelBounds: (plate) => cubeOn(plate),
-    towerOf: (plate) => (plate === 0 ? { on: false } : { on: true, size: 40 }) })
+    towerOf: (plate) => (plate === PLATE_OFF ? { on: false } : { on: true, size: OWN_WIDTH_MM }) })
   assert.equal(boxes.length, 1)
-  assert.equal(boxes[0].plate, 1)
-  assert.equal(boxes[0].size, 40, 'the plate draws its own footprint')
-  assert.equal(boxes[0].x, plateOrigin(1).x - 10 - 5 - 20, 'auto placement uses that footprint too')
+  assert.equal(boxes[0].plate, PLATE_ON)
+  assert.equal(boxes[0].size, OWN_WIDTH_MM, 'the plate draws its own footprint')
+  // Auto placement: one gap to the model's left, and the box is centred, so half its own footprint further.
+  assert.equal(boxes[0].x, plateOrigin(PLATE_ON).x - CUBE_HALF_MM - AUTO_GAP - OWN_WIDTH_MM / 2, 'auto placement uses that footprint too')
   assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, plateOrigin,
     modelBounds: (plate) => cubeOn(plate), towerOf: () => ({ on: false }) }), null, 'no plate with a tower -> null')
   // towerOf without a size keeps the shared one.
@@ -152,17 +156,29 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
     modelBounds: () => cubeOn(0), towerOf: () => ({ on: true }) })[0].size, SIZE)
 }
 
-// ---- the footprint the kernel builds: the derived width for the real tower, 15 for the ring ----
-assert.equal(towerFootprint({ prime_tower_width: 60 }, true), 60, 'an unset width reaches the kernel as the schema 60')
-assert.equal(towerFootprint({}, true), 30, 'no width at all -> the kernel default 30')
-assert.equal(towerFootprint({ prime_tower_width: 60 }, false), 15, 'the ring ignores the width')
+// ---- the footprint the kernel builds: the derived width for the real tower, the fixed ring otherwise ----
+{
+  const SCHEMA_DEFAULT_TOWER_WIDTH_MM = 60   // what an unset prime_tower_width derives to (config-schema.json)
+  const REAL = true, RING = false
+  assert.equal(towerFootprint({ prime_tower_width: SCHEMA_DEFAULT_TOWER_WIDTH_MM }, REAL), SCHEMA_DEFAULT_TOWER_WIDTH_MM,
+    'an unset width reaches the kernel as the schema default')
+  assert.equal(towerFootprint({}, REAL), REAL_TOWER_DEFAULT_WIDTH_MM, 'no width at all -> the kernel default')
+  assert.equal(towerFootprint({ prime_tower_width: SCHEMA_DEFAULT_TOWER_WIDTH_MM }, RING), RING_TOWER_SIDE_MM, 'the ring ignores the width')
+}
 
 // ---- a chosen position stays on the bed: corner coordinates in [0, bed - footprint] ----
-assert.deepEqual(clampTowerPosition(-20, 500, { bedW: 200, bedD: 250, size: 30 }), [0, 220])
-assert.deepEqual(clampTowerPosition(50, 60, { bedW: 200, bedD: 200, size: 30 }), [50, 60], 'inside is untouched')
-assert.deepEqual(clampTowerPosition('12', '7', { bedW: 200, bedD: 200, size: 30 }), [12, 7], 'typed strings become numbers')
-assert.deepEqual(clampTowerPosition(500, 500, { bedW: NaN, bedD: 10, size: 30 }), [500, 500],
-  'an unknown bed, or one smaller than the tower, is not clamped into a negative range')
+{
+  const BED_WIDTH_MM = 200, BED_DEPTH_MM = 250, TOWER_MM = 30
+  const frame = { bedW: BED_WIDTH_MM, bedD: BED_DEPTH_MM, size: TOWER_MM }
+  const FAR_PAST_THE_BED_MM = 500, BEFORE_THE_BED_MM = -20
+  assert.deepEqual(clampTowerPosition(BEFORE_THE_BED_MM, FAR_PAST_THE_BED_MM, frame), [0, BED_DEPTH_MM - TOWER_MM], 'clamped to the near and far edges')
+  const inside = [50, 60]
+  assert.deepEqual(clampTowerPosition(...inside, frame), inside, 'inside is untouched')
+  assert.deepEqual(clampTowerPosition('12', '7', frame), [12, 7], 'typed strings become numbers')
+  const BED_SMALLER_THAN_TOWER_MM = TOWER_MM / 3
+  assert.deepEqual(clampTowerPosition(FAR_PAST_THE_BED_MM, FAR_PAST_THE_BED_MM, { bedW: NaN, bedD: BED_SMALLER_THAN_TOWER_MM, size: TOWER_MM }),
+    [FAR_PAST_THE_BED_MM, FAR_PAST_THE_BED_MM], 'an unknown bed, or one smaller than the tower, is not clamped into a negative range')
+}
 
 // ---- the tower is selected alone; the primary decides which side of the rule wins ----
 {

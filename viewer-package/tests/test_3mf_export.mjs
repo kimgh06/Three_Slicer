@@ -2,7 +2,7 @@
 // is what went in. A writer can only be wrong in ways its own reader hides, so every assertion here goes through
 // parse3MFProject / normalizeProjectSettings / platePlacements — the code that reads a MakerWorld file — rather
 // than re-parsing the XML the writer just produced.
-import { write3MFProject, writeSTL } from '../src/core/write_3mf.js'
+import { write3MFProject, writeSTL, VIEWER_SETTINGS_MEMBER } from '../src/core/write_3mf.js'
 import { parse3MFProject } from '../src/core/parse_3mf.js'
 import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from '../src/settings/index.js'
 import { platePlacements } from '../src/actions/model_load.js'
@@ -206,57 +206,71 @@ function viewerPlateOriginOf(plate, plateCount = 1) {
     [0, 4, 8].map(o => degenerateView.getFloat32(84 + o, true)), [0, 0, 0])
 }
 
+// ---- shared by 5, 5b and 6: a one-object project on plate 0 of a `plateCount`-plate session ----
+const TETRA_FACETS = 4
+const oneObjectOnPlateZero = (plateCount = 1) =>
+  [{ id: 1, name: 'a', extruder: 1, plate: 0, ...viewerPlateOriginOf(0, plateCount), tris: tetra(0, 0), faceCount: TETRA_FACETS, paint: null }]
+const LAYER_HEIGHT_MM = 0.2
+
 // ---- 5. what upstream has no place for: per-plate overrides and the viewer knobs, in our own member -----------
 {
-  const objects = [{ id: 1, name: 'a', extruder: 1, plate: 0, ...viewerPlateOriginOf(0, 3), tris: tetra(0, 0), faceCount: 4, paint: null }]
-  const settings = { layer_height: 0.2, wipe_tower_real: true, enable_prime_tower: true }
+  const SESSION_PLATES = 3
+  const OVERRIDDEN_PLATE = 1, EMPTIED_PLATE = 2, DELETED_PLATE = 5   // DELETED_PLATE >= SESSION_PLATES
+  const OVERRIDE_TOWER_WIDTH_MM = 40, OVERRIDE_LAYER_HEIGHT_MM = 0.3
+  const overrideOfPlate = { enable_prime_tower: false, prime_tower_width: OVERRIDE_TOWER_WIDTH_MM, wipe_tower_real: false }
+  const settings = { layer_height: LAYER_HEIGHT_MM, wipe_tower_real: true, enable_prime_tower: true }
   const plateSettings = {
-    1: { enable_prime_tower: false, prime_tower_width: 40, wipe_tower_real: false },
-    2: {},                                        // an emptied override is not a plate override
-    5: { layer_height: 0.3 },                     // a plate that no longer exists is not written
+    [OVERRIDDEN_PLATE]: overrideOfPlate,
+    [EMPTIED_PLATE]: {},                                         // an emptied override is not a plate override
+    [DELETED_PLATE]: { layer_height: OVERRIDE_LAYER_HEIGHT_MM },  // a plate that no longer exists is not written
   }
-  const bytes = await write3MFProject(objects, settings, { bedWidth: BED_W, bedDepth: BED_D, plateCount: 3, plateSettings })
+  const bytes = await write3MFProject(oneObjectOnPlateZero(SESSION_PLATES), settings,
+    { bedWidth: BED_W, bedDepth: BED_D, plateCount: SESSION_PLATES, plateSettings })
   const { project } = await parse3MFProject(bytes, 'sidecar')
-  eq('the per-plate overrides come back, keyed by plate, with their JS types', project.plateSettings,
-     { 1: { enable_prime_tower: false, prime_tower_width: 40, wipe_tower_real: false } })
+  eq('the per-plate overrides come back, keyed by plate, with their JS types', project.plateSettings, { [OVERRIDDEN_PLATE]: overrideOfPlate })
   eq('the non-schema knobs of the global map come back', project.viewerSettings, { wipe_tower_real: true })
   check('project_settings.config still carries only schema keys', !('wipe_tower_real' in project.settings))
 
   // No overrides and no knobs: no member at all, so a plain project is the file it always was.
-  const plain = await parse3MFProject(await write3MFProject(objects, { layer_height: 0.2 },
+  const plain = await parse3MFProject(await write3MFProject(oneObjectOnPlateZero(), { layer_height: LAYER_HEIGHT_MM },
     { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 }), 'plain')
   eq('nothing to carry -> no sidecar', [plain.project.plateSettings, plain.project.viewerSettings], [null, null])
 }
 
 // ---- 5b. an array with holes: strings only for upstream, the holes kept for us --------------------------------
 {
-  const objects = [{ id: 1, name: 'a', extruder: 1, plate: 0, ...viewerPlateOriginOf(0, 3), tris: tetra(0, 0), faceCount: 4, paint: null }]
-  // Plate 0 automatic, plate 1 chosen: the shape writeTowerPosition produces ([, 160] is sparse, not [null, 160]).
-  const tower = []; tower[1] = 160
-  const settings = { layer_height: 0.2, z_hop: 0.4, wipe_tower_x: tower, wipe_tower_y: [null, 150] }
-  const bytes = await write3MFProject(objects, settings, { bedWidth: BED_W, bedDepth: BED_D, plateCount: 3 })
+  const SESSION_PLATES = 3
+  // Upstream's schema defaults for wipe_tower_x/y — what a hole is written as (settingRaw({}, key)).
+  const UPSTREAM_TOWER_X_DEFAULT = '15', UPSTREAM_TOWER_Y_DEFAULT = '220'
+  const CHOSEN_X_MM = 160, CHOSEN_Y_MM = 150, Z_HOP_MM = 0.4
+  // Plate 0 automatic, plate 1 chosen: the shape writeTowerPosition produces (x is sparse, y holds an explicit null).
+  const towerX = []; towerX[1] = CHOSEN_X_MM
+  const settings = { layer_height: LAYER_HEIGHT_MM, z_hop: Z_HOP_MM, wipe_tower_x: towerX, wipe_tower_y: [null, CHOSEN_Y_MM] }
+  const bytes = await write3MFProject(oneObjectOnPlateZero(SESSION_PLATES), settings, { bedWidth: BED_W, bedDepth: BED_D, plateCount: SESSION_PLATES })
   const { project } = await parse3MFProject(bytes, 'holes')
   // Upstream's parse_str_arr accepts an array only when every entry is a string; anything else ends its key loop.
-  const allStrings = Object.values(project.settings).every(v => !Array.isArray(v) || v.every(e => typeof e === 'string'))
-  check('every array entry in project_settings.config is a string', allStrings)
-  eq('a hole is written as the schema default', [project.settings.wipe_tower_x, project.settings.wipe_tower_y], [['15', '160'], ['220', '150']])
-  eq('keys after it are still there for upstream', project.settings.z_hop, '0.4')
+  const isStringArrayOrScalar = (value) => !Array.isArray(value) || value.every(entry => typeof entry === 'string')
+  check('every array entry in project_settings.config is a string', Object.values(project.settings).every(isStringArrayOrScalar))
+  eq('a hole is written as the schema default', [project.settings.wipe_tower_x, project.settings.wipe_tower_y],
+     [[UPSTREAM_TOWER_X_DEFAULT, String(CHOSEN_X_MM)], [UPSTREAM_TOWER_Y_DEFAULT, String(CHOSEN_Y_MM)]])
+  eq('keys after it are still there for upstream', project.settings.z_hop, String(Z_HOP_MM))
   // The import lays the sidecar over project_settings.config, so the plate is automatic again here.
   const restored = { ...normalizeProjectSettings(project.settings).settings, ...project.viewerSettings }
-  eq('the hole comes back as a hole', [restored.wipe_tower_x[0] == null, restored.wipe_tower_x[1]], [true, 160])
-  eq('...on both axes', [restored.wipe_tower_y[0], restored.wipe_tower_y[1]], [null, 150])
+  eq('the hole comes back as a hole', [restored.wipe_tower_x[0] == null, restored.wipe_tower_x[1]], [true, CHOSEN_X_MM])
+  eq('...on both axes', [restored.wipe_tower_y[0], restored.wipe_tower_y[1]], [null, CHOSEN_Y_MM])
 }
 
 // ---- 6. the sidecar is read defensively: a file from anywhere costs only itself ----------------------------
 {
   const { zipSync, unzipSync, strToU8 } = await import('three/examples/jsm/libs/fflate.module.js')
-  const base = await write3MFProject([{ id: 1, name: 'a', extruder: 1, plate: 0, ...viewerPlateOriginOf(0), tris: tetra(0, 0), faceCount: 4, paint: null }],
-    { layer_height: 0.2 }, { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 })
-  const withMember = (text) => { const files = unzipSync(base); files['Metadata/three_slicer_settings.json'] = strToU8(text); return zipSync(files) }
+  const base = await write3MFProject(oneObjectOnPlateZero(), { layer_height: LAYER_HEIGHT_MM }, { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 })
+  const withMember = (text) => { const files = unzipSync(base); files[VIEWER_SETTINGS_MEMBER] = strToU8(text); return zipSync(files) }
   const broken = await parse3MFProject(withMember('{ not json'), 'broken')
   eq('malformed JSON -> nothing, and the geometry still loads', [broken.project.plateSettings, broken.objects.length], [null, 1])
-  const odd = await parse3MFProject(withMember(JSON.stringify({ version: 1, viewer: [1], plates: { '-1': { a: 1 }, x: { a: 1 }, 0: [1], 1: { layer_height: 0.3 } } })), 'odd')
-  eq('only plain maps under plate indices survive', [odd.project.plateSettings, odd.project.viewerSettings], [{ 1: { layer_height: 0.3 } }, null])
+  const VALID_PLATE = 1, VALID_OVERRIDE = { layer_height: 0.3 }
+  const oddSidecar = { version: 1, viewer: [1], plates: { '-1': { a: 1 }, x: { a: 1 }, 0: [1], [VALID_PLATE]: VALID_OVERRIDE } }
+  const odd = await parse3MFProject(withMember(JSON.stringify(oddSidecar)), 'odd')
+  eq('only plain maps under plate indices survive', [odd.project.plateSettings, odd.project.viewerSettings], [{ [VALID_PLATE]: VALID_OVERRIDE }, null])
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\n3mf export passed')

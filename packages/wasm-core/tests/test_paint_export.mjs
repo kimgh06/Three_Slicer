@@ -122,17 +122,27 @@ ok(JSON.stringify(exportPaint().pairs) === JSON.stringify(beforeMove.pairs), 'an
 //  tools), and it splits an export per object and rebuilds the merge's import from it. Checked here against the
 //  kernel's own strings, because a decoder that only agrees with itself is the failure this file exists to catch.
 console.log('\n[the viewer store decodes and round-trips the kernel strings]')
-for (const [state, hex] of Object.entries(HEX)) ok(decodePaintStates(hex).has(Number(state)) && decodePaintStates(hex).size === 1, `state ${state} decodes from "${hex}"`)
+for (const [state, hex] of Object.entries(HEX)) {
+  const decoded = decodePaintStates(hex)
+  ok(decoded.has(Number(state)) && decoded.size === 1, `state ${state} decodes from "${hex}"`)
+}
+// Two sphere-brush strokes on the 20mm cube's bottom face, one per state, at opposite corners — enough to split
+//  facets into trees. selector_paint_state(facet, hit x/y/z, camera x/y/z, radius, state).
+const STORE_STATES = [2, 3]
+const BRUSH_FACET = 0, BRUSH_RADIUS_MM = 6, CAMERA_ABOVE = [0, 0, 100]
+const STROKE_HITS = { 2: [3, 3, 0], 3: [17, 17, 0] }
+const ONE_NIBBLE_HEX_LENGTH = 2                  // "0C": the longest unsplit (leaf-only) facet string
 prepare()
-M.selector_paint_state(0, 3, 3, 0, 0, 0, 100, 6, 2)   // split trees, two states on one mesh
-M.selector_paint_state(0, 17, 17, 0, 0, 0, 100, 6, 3)
+for (const state of STORE_STATES) M.selector_paint_state(BRUSH_FACET, ...STROKE_HITS[state], ...CAMERA_ABOVE, BRUSH_RADIUS_MM, state)
 {
   const painted = exportPaint()
   const decoded = new Set(); for (const hex of painted.hex) decodePaintStates(hex, decoded)
-  ok(painted.hex.some(hex => hex.length > 2), 'the strokes produced split trees (more than one nibble)')
-  ok([...decoded].sort().join() === '2,3' && counts(2)[0] > 0 && counts(3)[0] > 0, `the decoder finds the states the kernel painted (${[...decoded].sort()})`)
-  // Two objects of 6 facets each, as a merge would list them: split, rebuild, re-import -> the same export.
-  const members = [{ id: 7, faceCount: 6 }, { id: 9, faceCount: 6 }]
+  ok(painted.hex.some(hex => hex.length > ONE_NIBBLE_HEX_LENGTH), 'the strokes produced split trees (more than one nibble)')
+  ok([...decoded].sort().join() === STORE_STATES.join() && STORE_STATES.every(state => counts(state)[0] > 0),
+     `the decoder finds the states the kernel painted (${[...decoded].sort()})`)
+  // The cube's 12 facets as two objects of 6, the way a merge would list them: split, rebuild, re-import -> the same export.
+  const CUBE_FACETS = 12, FACETS_PER_OBJECT = CUBE_FACETS / 2
+  const members = [{ id: 7, faceCount: FACETS_PER_OBJECT }, { id: 9, faceCount: FACETS_PER_OBJECT }]
   const byObject = splitPaintByObject({ facets: painted.facets, hex: painted.hex.join('\n') }, members)
   const objects = new Map(members.map(member => [member.id, { paint: { color: byObject.get(member.id) } }]))
   const rebuilt = mergedPaint(objects, members, 'color')
@@ -142,16 +152,32 @@ M.selector_paint_state(0, 17, 17, 0, 0, 0, 100, 6, 3)
   ok(JSON.stringify(again.pairs) === JSON.stringify(painted.pairs), 'split per object -> rebuilt merge -> kernel export is the identity')
   // The store also DRAWS a plate the selector does not hold, by replaying the split rule in JS. Same triangles as the
   //  kernel's own overlay of the same marks: count and total area per state.
-  const localPos = new Float32Array(12 * 9)
-  for (let t = 0; t < 12; t++) for (let k = 0; k < 9; k++) localPos[t * 9 + k] = cubeSTL.readFloatLE(84 + t * 50 + 12 + k * 4)
+  const STL_FACETS_OFFSET = 84, STL_FACET_BYTES = 50, STL_NORMAL_BYTES = 12, STL_FLOAT_BYTES = 4
+  const FLOATS_PER_FACET = 9                        // three vertices of x, y, z
+  const AREA_RELATIVE_TOLERANCE = 1e-6
+  const localPos = new Float32Array(CUBE_FACETS * FLOATS_PER_FACET)
+  for (let facet = 0; facet < CUBE_FACETS; facet++) for (let component = 0; component < FLOATS_PER_FACET; component++) {
+    const readAt = STL_FACETS_OFFSET + facet * STL_FACET_BYTES + STL_NORMAL_BYTES + component * STL_FLOAT_BYTES
+    localPos[facet * FLOATS_PER_FACET + component] = cubeSTL.readFloatLE(readAt)
+  }
   const drawn = paintTriangles(localPos, new Map(painted.pairs))
-  const area = (tris) => { let sum = 0; for (let i = 0; i < tris.length; i += 9) {
-    const ux = tris[i+3]-tris[i], uy = tris[i+4]-tris[i+1], uz = tris[i+5]-tris[i+2], vx = tris[i+6]-tris[i], vy = tris[i+7]-tris[i+1], vz = tris[i+8]-tris[i+2]
-    sum += Math.hypot(uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx) / 2 } return sum }
-  for (const state of [2, 3]) {
-    const kernel = M.selector_overlay_state(state), mine = drawn.get(state) ?? new Float32Array(0)
-    ok(mine.length === kernel.length && Math.abs(area(mine) - area(kernel)) < 1e-6 * Math.max(1, area(kernel)),
-       `state ${state}: the store draws the kernel's triangles (${mine.length / 9} vs ${kernel.length / 9}, area ${area(mine).toFixed(3)} vs ${area(kernel).toFixed(3)})`)
+  const totalArea = (triangles) => {
+    let sum = 0
+    for (let start = 0; start < triangles.length; start += FLOATS_PER_FACET) {
+      const firstEdge = [0, 1, 2].map(axis => triangles[start + 3 + axis] - triangles[start + axis])
+      const secondEdge = [0, 1, 2].map(axis => triangles[start + 6 + axis] - triangles[start + axis])
+      const cross = [firstEdge[1] * secondEdge[2] - firstEdge[2] * secondEdge[1],
+                     firstEdge[2] * secondEdge[0] - firstEdge[0] * secondEdge[2],
+                     firstEdge[0] * secondEdge[1] - firstEdge[1] * secondEdge[0]]
+      sum += Math.hypot(...cross) / 2
+    }
+    return sum
+  }
+  for (const state of STORE_STATES) {
+    const kernelTriangles = M.selector_overlay_state(state), storeTriangles = drawn.get(state) ?? new Float32Array(0)
+    const kernelArea = totalArea(kernelTriangles), storeArea = totalArea(storeTriangles)
+    ok(storeTriangles.length === kernelTriangles.length && Math.abs(storeArea - kernelArea) < AREA_RELATIVE_TOLERANCE * Math.max(1, kernelArea),
+       `state ${state}: the store draws the kernel's triangles (${storeTriangles.length / FLOATS_PER_FACET} vs ${kernelTriangles.length / FLOATS_PER_FACET}, area ${storeArea.toFixed(3)} vs ${kernelArea.toFixed(3)})`)
   }
 }
 

@@ -107,13 +107,15 @@ assert.equal(buildMergedSTL([makeObject(1, { at: [0, 0, 0] })], { plateIndex: 2,
   assert.deepEqual([...merged.paint.color.facets], [3, 5, 6])
   assert.equal(merged.paint.color.hex, '08\n0C\n04')     // hex order follows the facet order
   assert.equal(merged.paint.supports, null, 'an unpainted slot is null, not an empty pair')
-  // The merge's member order is the numbering the per-object store splits and rebuilds by (paint_store.js).
+  // The merge's member order is the numbering the per-object store splits and rebuilds by (paint_store.js): the
+  //  extruder sort puts the T1 object (id 2, 5 facets) before the T3 one (id 1, 2 facets).
   assert.deepEqual(merged.members, [{ id: 2, faceCount: 5 }, { id: 1, faceCount: 2 }])
   // The store writes only the kind it holds: a paint object with just `color` (no supports/seam/fuzzy Maps) must
   //  merge, not throw — it did, and the failed selector swap left the brush dead on the next plate.
-  const colorOnly = makeObject(3, { faces: 2, paint: { color: new Map([[1, '08']]) } })
+  const COLOR_ONLY_ID = 3, COLOR_ONLY_FACETS = 2, PAINTED_LOCAL_FACET = 1, STATE_2_HEX = '08'
+  const colorOnly = makeObject(COLOR_ONLY_ID, { faces: COLOR_ONLY_FACETS, paint: { color: new Map([[PAINTED_LOCAL_FACET, STATE_2_HEX]]) } })
   const partial = buildMergedSTL([colorOnly], { plateIndex: 0, ...GRID })
-  assert.deepEqual([...partial.paint.color.facets], [1])
+  assert.deepEqual([...partial.paint.color.facets], [PAINTED_LOCAL_FACET], 'a lone object: its local facet is the merged one')
   assert.equal(partial.paint.supports, null)
 }
 

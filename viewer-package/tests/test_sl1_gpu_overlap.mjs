@@ -20,36 +20,53 @@ try {
 } catch { device = null }
 if (!device) { console.log('test_sl1_gpu_overlap: skipped (no WebGPU device — CPU path is the contract)'); process.exit(0) }
 
-// A cube at [-4,4]^2 x [0,8], `copies` times; `inner` adds a half-size cube at z 2..6 with every facet flipped.
-const cubeFacets = (scale, z0) => {
-  const v = [[-1,-1,0],[1,-1,0],[1,1,0],[-1,1,0],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]].map(([x, y, z]) => [x * scale, y * scale, z0 + z * scale * 2])
-  return [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]].map(f => f.map(i => v[i]))
+// A cube of CUBE_HALF_MM around the origin, CUBE_HALF_MM * 2 tall; `flip` inverts every facet (inward-facing).
+const CUBE_HALF_MM = 4
+const INNER_HALF_MM = CUBE_HALF_MM / 2, INNER_BOTTOM_MM = CUBE_HALF_MM / 2     // half size, centred in height
+const SLICE_HEIGHT_MM = CUBE_HALF_MM                                            // mid-height of the outer cube
+// Raster: RASTER_PX square, RASTER_SCALE px per mm, model origin at the centre.
+const RASTER_PX = 64, RASTER_SCALE = 4
+const LIT_THRESHOLD = 127                          // a binary (aa=1) mask pixel is lit above half of 255
+// The hollow's lit share: the outer square minus the inner one, whose side is half as long -> 1 - (1/2)^2.
+const HOLLOW_LIT_SHARE = 1 - (INNER_HALF_MM / CUBE_HALF_MM) ** 2
+const HOLLOW_SHARE_TOLERANCE = 0.05                // boundary pixels of two squares
+const cubeFacets = (half, bottom) => {
+  const corners = [[-1,-1,0],[1,-1,0],[1,1,0],[-1,1,0],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]].map(([x, y, z]) => [x * half, y * half, bottom + z * half * 2])
+  return [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]].map(face => face.map(corner => corners[corner]))
 }
+const STL_FACETS_OFFSET = 84, STL_COUNT_OFFSET = 80, STL_FACET_BYTES = 50, STL_NORMAL_BYTES = 12, STL_FLOAT_BYTES = 4
 const stl = (facets) => {
-  const b = new Uint8Array(84 + facets.length * 50), dv = new DataView(b.buffer); dv.setUint32(80, facets.length, true)
-  facets.forEach((face, i) => { let o = 84 + 50 * i + 12; for (const p of face) for (const c of p) { dv.setFloat32(o, c, true); o += 4 } })
-  return b
+  const bytes = new Uint8Array(STL_FACETS_OFFSET + facets.length * STL_FACET_BYTES), view = new DataView(bytes.buffer)
+  view.setUint32(STL_COUNT_OFFSET, facets.length, true)
+  facets.forEach((face, index) => {
+    let writeAt = STL_FACETS_OFFSET + STL_FACET_BYTES * index + STL_NORMAL_BYTES
+    for (const vertex of face) for (const coordinate of vertex) { view.setFloat32(writeAt, coordinate, true); writeAt += STL_FLOAT_BYTES }
+  })
+  return bytes
 }
-const flip = (facets) => facets.map(([a, b, c]) => [a, c, b])
-const T = { px: 64, py: 64, map: (x, y) => [32 + x * 4, 32 - y * 4] }
-const lit = (mask) => mask.reduce((n, v) => n + (v > 127 ? 1 : 0), 0)
+const flip = (facets) => facets.map(([first, second, third]) => [first, third, second])
+const RASTER_CENTRE = RASTER_PX / 2
+const transform = { px: RASTER_PX, py: RASTER_PX, map: (x, y) => [RASTER_CENTRE + x * RASTER_SCALE, RASTER_CENTRE - y * RASTER_SCALE] }
+const litPixels = (mask) => mask.reduce((count, value) => count + (value > LIT_THRESHOLD ? 1 : 0), 0)
 const maskOf = async (facets) => {
   const parity = makeSl1ParityGpu(device)
   assert.ok(parity.prepare(stl(facets)))
-  const mask = await parity.rasterize(4, T, 1)
+  const mask = await parity.rasterize(SLICE_HEIGHT_MM, transform, 1)
   parity.dispose()
   return mask
 }
 
-const one = await maskOf(cubeFacets(4, 0))
-assert.ok(lit(one) > 0, 'one cube lights its square')
-assert.deepEqual(await maskOf([...cubeFacets(4, 0), ...cubeFacets(4, 0)]), one, 'two coincident cubes mask as one')
-console.log(`  ok coincident: two cubes on one spot light the same ${lit(one)} px as one`)
-assert.deepEqual(await maskOf(flip(cubeFacets(4, 0))), one, 'a cube with every facet flipped masks the same')
+const outerCube = cubeFacets(CUBE_HALF_MM, 0)
+const one = await maskOf(outerCube)
+assert.ok(litPixels(one) > 0, 'one cube lights its square')
+assert.deepEqual(await maskOf([...outerCube, ...outerCube]), one, 'two coincident cubes mask as one')
+console.log(`  ok coincident: two cubes on one spot light the same ${litPixels(one)} px as one`)
+assert.deepEqual(await maskOf(flip(outerCube)), one, 'a cube with every facet flipped masks the same')
 console.log('  ok flipped: a fully inverted cube masks the same')
-const hollow = await maskOf([...cubeFacets(4, 0), ...flip(cubeFacets(2, 2))])
-assert.ok(Math.abs(lit(hollow) / lit(one) - 0.75) < 0.05, `hollow keeps its void (${lit(hollow)} of ${lit(one)} px)`)
-console.log(`  ok void: an inward-facing inner cube stays empty (${lit(hollow)} of ${lit(one)} px lit)`)
+const hollow = await maskOf([...outerCube, ...flip(cubeFacets(INNER_HALF_MM, INNER_BOTTOM_MM))])
+assert.ok(Math.abs(litPixels(hollow) / litPixels(one) - HOLLOW_LIT_SHARE) < HOLLOW_SHARE_TOLERANCE,
+  `hollow keeps its void (${litPixels(hollow)} of ${litPixels(one)} px)`)
+console.log(`  ok void: an inward-facing inner cube stays empty (${litPixels(hollow)} of ${litPixels(one)} px lit)`)
 device.destroy?.()
 console.log('\ntest_sl1_gpu_overlap: 3 checks passed')
 process.exit(0)
