@@ -36,6 +36,11 @@ const plates = [
   { index: 2, gcode: gcodeOf(50), stats: { time_estimate: 60, filament_mm: 300, filament_mm_by_tool: [100, 200] } },
 ]
 check('fixture G-code parses to layers', parseGcode(plates[0].gcode).stats.layers >= 2)
+// Per-tool filament, the kernel's `filament_mm_by_tool`: the Filament-view switch reads it, so an opened multi-tool
+//  file needs it to land where the same slice did.
+const twoTools = parseGcode(['G90', 'M83', 'G1 Z0.2', 'G1 X0 Y0', 'G1 X10 Y0 E1.5', 'T1', 'G1 X10 Y10 E2.5', ''].join('\n')).stats
+eq('parsed filament_mm_by_tool splits by T', twoTools.filament_mm_by_tool, [1.5, 2.5])
+eq('parsed tools', twoTools.tools, [0, 1])
 const settings = { filament_diameter: [1.75, 1.75], filament_density: [1.24, 1.04], filament_type: ['PLA', 'PETG'],
   filament_colour: ['#FF0000', '#00FF00'] }
 const bytes = await writeGcode3MF(plates, settings, { plateCount: 3 })
