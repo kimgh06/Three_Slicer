@@ -120,7 +120,15 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   ladder recreates gets its plate's paint back before the retry (`sliceLadder`'s `afterRecreate`: `ctx.syncPaint`
   for a pool worker, `syncPaintSelector` — which flushes first — for the selector worker); a retried painted plate
   came out single-material with "G-code is fine". The overlay colour reads the recorded kind, never the last brush
-  opened.
+  opened. **(12)** The selector holds ONE annotation — upstream keeps material and support paint as two annotations
+  of a volume. Opening a brush of the other kind swaps it (`registerSelector(merged, {kind})`: the held marks go back
+  under their own kind, the requested kind is loaded), and a slice asks for `'auto'` (material first). Brushing
+  material over loaded support paint used to file every support mark as material paint (supports 208 -> 0, color
+  278). While the support annotation is held, the held objects' material paint is drawn from the store. A save
+  waits at most `PAINT_EXPORT_TIMEOUT_MS` for the write-back — the store is flushed before every selector slice, so
+  only strokes made during a running slice can be missing, and the notice says so. A pool worker whose plate paint
+  fails to load fails the plate ("failed to load" -> re-queued on the selector worker) rather than slicing it bare.
+  `test_paint_swap.mjs` drives the real `makeSupportPaint` against a fake selector worker for all of this.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not
