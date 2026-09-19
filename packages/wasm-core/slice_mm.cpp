@@ -239,6 +239,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   loadTool(0);
   gw.retract_min_travel=p.retraction_minimum_travel;
   gw.offX=p.bed_width*0.5; gw.offY=p.bed_depth*0.5;
+  gw.emit_role_tags = p.gcode_role_tags;
   SeamCtx seamCtx;
   gw.raw("; OrcaSlicer RE mini-kernel (Track C stage 6) — MULTIMATERIAL (basic, NOT a real wipe tower)");
   { char h[200];
@@ -332,7 +333,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     double zE=z+zShift, h=(i==0)?p.first_layer_height:p.layer_height;
     gw.set_e_per_mm(h,p); gw.z=zE; gw.pe_reset();
     std::vector<float> tp, widths; g_seg_w = &widths; g_seg_w_cur = (float)p.line_width;   // stage 21: record MM widths
-    char cm[64]; std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.raw(cm);
+    char cm[64]; std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.layer_begin(cm);
     std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
     int fPr=(int)std::llround(((i==0)?p.first_layer_speed:p.print_speed)*60);
 
@@ -546,6 +547,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
           if (wt.ok) {
             gw.raw("; wipe_tower_real: real ported WipeTower.generate()");
             gw.raw(wt.gcode.c_str());
+            gw.role_tag_unknown();                        // the tower wrote its own ;TYPE: — the next run re-states ours
             gw.filament += wt.filament_mm;
             // The real WipeTower builds its own stride-8 segments, so it never passes through push_seg — the tool
             //  channel is folded in here instead. The purge is extruded by the tool just switched to (curTool), and

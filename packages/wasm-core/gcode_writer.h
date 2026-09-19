@@ -89,6 +89,23 @@ struct GW {
   Paths  island;                   // region travels should stay inside (inside the walls). Empty means no check.
   bool   avoid_walls=false;
   long   wall_crossings=0;         // number of travels that actually crossed a wall (for cross-checking)
+  // Upstream's ;TYPE: role tag (Params::gcode_role_tags). `type` is the kernel's toolpath type, the value push_seg
+  //  records into the stream (0=travel … 11=prime tower, emit.cpp), so the text and the stream name the same role.
+  //  Stated again after every layer marker, because a reader keyed on layers (gcode_parse.js) resets its role there.
+  //  Upstream's own names where one exists; upstream folds raft into Support and thin walls into walls, which would
+  //  recolour both on a read-back here, so those two keep names of their own (upstream reads them as Undefined).
+  bool   emit_role_tags=false;
+  int    tag_type=-1;
+  void role_tag(int type){
+    if (!emit_role_tags || dry || type <= 0 || type == tag_type) return;
+    static const char* const NAMES[] = { "", "Outer wall", "Sparse infill", "Internal solid infill", "Skirt", "Support",
+      "Raft", "Gap infill", "Thin wall", "Bridge", "Ironing", "Prime tower" };
+    if (type >= (int)(sizeof NAMES / sizeof NAMES[0])) return;
+    tag_type = type;
+    s += ";TYPE:"; s += NAMES[type]; s += '\n';
+  }
+  void role_tag_unknown(){ tag_type = -1; }
+  void layer_begin(const char* marker){ raw(marker); tag_type = -1; }
   // Stage 9: emitting the real PE tags (OrcaSlicer format)
   bool   emit_pe_tags=false;
   int    pe_cur_role=-1;

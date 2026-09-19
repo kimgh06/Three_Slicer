@@ -119,7 +119,7 @@ void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
   char cm[72];
   if (ld.contour.empty()) {
     // Stage 33 [floating model fix] Support must be emitted even on layers with no model.
-    std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f (no model)",i,zE); gw.raw(cm);
+    std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f (no model)",i,zE); gw.layer_begin(cm);
     std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
     gw.z = zE; gw.set_e_per_mm(ld.h, p); gw.pe_reset();
     gw.set_fan(fan_S(i, p));
@@ -142,7 +142,7 @@ void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
     }
     return;
   }
-  std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.raw(cm);
+  std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.layer_begin(cm);
   gw.set_fan(fan_S(i, p));
   emit_layer_full(gw, tp, widths, i, ld, pre, p, zE, w, N, nraft, fTravel, seamMode, scarfOn, ironOn, seamCtx);
 }

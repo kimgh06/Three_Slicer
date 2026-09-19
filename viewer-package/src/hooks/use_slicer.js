@@ -470,6 +470,8 @@ export function useSlicer(deps) {
     if (cost)         params.filament_cost = cost
     params.gcode_stats_block = true
     params.gcode_config_block = true
+    // ;TYPE: on every role change: an exported .gcode / .gcode.3mf read back as text colours as the slice did.
+    params.gcode_role_tags = true
 
     // Prime tower next to the model. The kernel's default corner (10,10) is wherever the bed is, not wherever the
     //  model is — measured 90mm of travel per tool change with a centred model. Only when nothing chose a position:
