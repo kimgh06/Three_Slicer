@@ -79,8 +79,8 @@ export function platePlacements(plates, loaded, bedWidth, bedDepth) {
 
 function droppedFeatures(project, loaded) {
   const dropped = []
-  if (loaded.some(o => o.paint?.seam.size)) dropped.push('seam painting')
-  if (loaded.some(o => o.paint?.fuzzy.size)) dropped.push('fuzzy-skin painting')
+  if (loaded.some(o => o.paint?.seam?.size)) dropped.push('seam painting')
+  if (loaded.some(o => o.paint?.fuzzy?.size)) dropped.push('fuzzy-skin painting')
   if (project.hasLayerHeightProfile) dropped.push('variable layer height')
   if (project.hasCustomGcodePerLayer) dropped.push('per-layer custom G-code')
   // A per-object override only counts if it names something the config schema knows — the rest of that metadata is
@@ -256,9 +256,8 @@ export function makeModelLoad(deps) {
     setObjects(objectRows(objectsRef.current, apiRef.current))
     if (totalTri > 100000) setTriWarn(`${Math.round(totalTri).toLocaleString()} triangles — slicing may take a while`)
     for (const f of sl1Files) await importSl1(f)
-    // Imported painting only reaches the kernel through the selector, and nothing else registers one until the user
-    //  enters a brush — so a project could otherwise be sliced with its paint still sitting in JS. Registering here
-    //  is also what makes the import one-shot: it consumes the pending marks (see support_paint.js).
+    // Imported painting sits on the objects (the per-object store, core/paint_store.js); registering the selector
+    //  here loads the selected plate's share of it into the kernel and draws it, without waiting for a brush.
     if (anyPaint) registerSelectorRef?.current?.()
   }
   function onFiles(e) { loadFiles(e.target.files); e.target.value = '' }

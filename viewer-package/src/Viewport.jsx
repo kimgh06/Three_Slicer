@@ -26,6 +26,7 @@ import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
 import { withToolBreakdown } from './core/stats_view.js'
 import { towerBoxes, usesMultipleTools, towerResultStats, towerFootprint, clampTowerPosition } from './core/tower_layout.js'
+import { storedPaintStates } from './core/paint_store.js'
 import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } from './core/plate_settings.js'
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
@@ -126,6 +127,7 @@ export default function Viewport({
   const paintOverlayRef = useRef(null)  // Mesh[] — one per painted selector state (1..16)
   const selectorGeomRef = useRef(null)  // {identity, topology} of the mesh the kernel's selector holds (null = none)
   const registerSelectorRef = useRef(null)  // set below, from makeSupportPaint — the scene hook is built first
+  const flushPaintRef = useRef(null)        // same factory: the selector's strokes back onto the objects (paint_store.js)
   const selectPlateRef = useRef(null)       // set below, from makePlateActions — same reason
   const recordHistoryRef = useRef(null)     // set below, from the undo history — the scene hook is installed first
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
@@ -248,7 +250,7 @@ export default function Viewport({
   //  further down, which cannot exist yet.
   const wiring = {
     catalog: catalogProp, settings, setSettings, plateSettings, setPlateSettings,
-    apiRef, workerRef, objectsRef, keyRef, clipboardRef, onSlicedRef,
+    apiRef, workerRef, objectsRef, keyRef, clipboardRef, onSlicedRef, flushPaintRef,
     layersDataRef, toolpathRef, segDataRef, plateTpRef, lineWidthRef, plateResultsRef, plateOffsetsRef,
     selectedPlateRef, plateCountRef, placeXRef, canvasModeRef, selectorGeomRef, registerSelectorRef,
     paintXformRef, paintOverlayRef, paintModeRef, paintToolRef,
@@ -330,9 +332,14 @@ export default function Viewport({
     const api = apiRef.current; if (!api) return
     if (extruderColors.length < 2 || canvasMode !== 'prepare' || objects.length === 0) { api.setPrimeTower?.(null); return }
     const frames = Array.from({ length: plateCount }, (_, plate) => plateContext(settings, plateSettings, plate, DIMS))
-    // Two filaments LOADED is not a tower — a tool change is (usesMultipleTools). The paint counts are the
-    //  selector's, and the selector holds the SELECTED plate's merge, so they speak for that plate only.
-    const changesTools = (plate) => usesMultipleTools(objects.filter(o => o.plate === plate), plate === selectedPlate ? paintStateCounts : null)
+    // Two filaments LOADED is not a tower — a tool change is (usesMultipleTools). The live paint counts are the
+    //  selector's and speak for the plate it holds; every other plate's paint is on its objects (paint_store.js).
+    const selectorPlate = selectorGeomRef.current?.plate
+    const changesTools = (plate) => {
+      const onPlate = objects.filter(o => o.plate === plate)
+      const stored = () => storedPaintStates(onPlate.map(row => objectsRef.current.find(o => o.id === row.id)).filter(o => o && o.visible !== false))
+      return usesMultipleTools(onPlate, plate === selectorPlate ? paintStateCounts : stored())
+    }
     // enable_prime_tower is read the way deriveKernelParams reads it: absent leaves the kernel's tower on.
     const towerOn = (effective) => !('enable_prime_tower' in effective) || !!effective.enable_prime_tower
     api.setPrimeTower?.(towerBoxes({
@@ -375,10 +382,11 @@ export default function Viewport({
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
-  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector } = makeSupportPaint({
-    ...wiring, three, getWorker,
+  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint } = makeSupportPaint({
+    ...wiring, three, getWorker, paintStateCountsRef,
   })
   registerSelectorRef.current = registerSelector
+  flushPaintRef.current = flushPaint
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
@@ -387,10 +395,12 @@ export default function Viewport({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
     runSlice, createPoolContext, kernelKindRef, progressSinkRef,
     ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
-    // Belt to the commit hook's braces: a move can reach a slice without a gizmo commit (keyboard nudge, plate
-    //  re-arrange), so the slice itself hands the selector the mesh it is about to cut. Only for the selected
-    //  plate — that is the mesh the brush painted — and only when a selector exists at all.
-    syncPaintSelector: (merged) => { if (selectorGeomRef.current) registerSelectorRef.current?.(merged) },
+    // The selector worker's kernel reads its painting from the selector, so before it cuts ANY plate the selector
+    //  must hold that plate's mesh — loaded from the per-object store when it is another one. A move can also reach
+    //  a slice without a gizmo commit (keyboard nudge, plate re-arrange). Needed when a selector exists (it may hold
+    //  another plate) or the plate carries stored paint; the caller awaits it before posting the slice.
+    syncPaintSelector: (merged) => (selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports)
+      ? registerSelectorRef.current?.(merged) : Promise.resolve(),
   })
   selectPlateRef.current = selectPlate
 

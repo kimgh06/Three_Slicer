@@ -756,8 +756,6 @@ export function useThreeScene(deps) {
         geometryInput(o => o.visible !== false && (!selectedOnly || selection.has(o.mesh))), plateGrid()),
       /** Drop the pending 3mf painting after it has been handed to the kernel — the import is one-shot, and a
        *  second one would resurrect marks the user has since erased. */
-      clearPaintImport: () => { for (const o of objectsRef.current) o.paint = null },
-      hasPaintImport: () => objectsRef.current.some(o => o.paint),
       setObjectExtruder: (id, e) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.extruder = e; const c = extruderColorsRef.current[e - 1]; if (c) o.mesh.material.color.set(c) } },
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)
       recolorObjects: () => { for (const o of objectsRef.current) { const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // reflect filament color changes
