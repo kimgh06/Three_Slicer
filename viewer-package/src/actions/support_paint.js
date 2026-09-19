@@ -335,14 +335,18 @@ export function makeSupportPaint(deps) {
   //  the mode before it runs, which filed plate 1's material paint as support paint (measured: color 208 -> supports
   //  208, its tower box gone, drawn in the blocker red). A kernel without the export binding answers null: the store
   //  is then left as it was rather than emptied.
+  //  Resolves true when written, false when there was nothing to write or the kernel has no export binding, and
+  //  'failed' when the worker answered the export with an error, died or timed out — the strokes are then only in
+  //  the selector, and a swap must not prepare over them.
   async function writeBack(worker, timeoutMs = Infinity) {
     const held = heldBy(worker)
     // A record without a kind never had anything loaded or brushed: there is nothing to file, and filing its empty
     //  export under a guessed kind would erase that kind's stored marks.
     if (!held?.members || !held.kind) return false
-    const exported = await requestPaintExport(worker, timeoutMs)
-    if (!exported) return false
-    storePaint(objectsById(), splitPaintByObject(exported, held.members), held.kind)
+    const reply = await request(worker, { cmd: 'exportPaint' }, { types: ['paintExport'], timeoutMs })
+    if (!reply) return 'failed'
+    if (!reply.supported) return false
+    storePaint(objectsById(), splitPaintByObject(reply, held.members), held.kind)
     return true
   }
   /** Bring every object's stored paint up to date with the selector — before anything reads `object.paint` for an
@@ -361,8 +365,9 @@ export function makeSupportPaint(deps) {
     return serial(worker, async () => {
       const started = performance.now()
       const written = await writeBack(worker, timeoutMs)
-      if (!written && Number.isFinite(timeoutMs) && performance.now() - started >= timeoutMs) return 'timeout'
-      return written
+      if (written !== 'failed') return written
+      if (Number.isFinite(timeoutMs) && performance.now() - started >= timeoutMs) return 'timeout'
+      return false
     })
   }
 
@@ -437,10 +442,18 @@ export function makeSupportPaint(deps) {
     // A different set of objects (another plate, an object added or removed), or another annotation of the same
     //  ones: the held marks go back to their objects, and the new mesh is loaded from what its objects hold. No
     //  stroke may land in between — a null transform is what the pointer handler already treats as "no selector".
+    const heldTransform = paintXformRef.current
     paintXformRef.current = null
     const seen = lastCounts(worker)
     const hadPaint = Object.values(seen).some(count => count > 0)
     const kept = await writeBack(worker)
+    // The worker failed the export (an error reply, or it died): the strokes since the last write-back live only in
+    //  this selector, and preparing the next mesh would discard them. The swap stops with the selector as it was.
+    if (kept === 'failed') {
+      paintXformRef.current = heldTransform
+      setSliceNotice?.('The painting could not be saved from the slicer, so the painted mesh was kept. Try again.')
+      return 'export-failed'
+    }
     worker.postMessage({ cmd: 'prepare', stl: merged.buf })
     selectorGeomRef.current = next
     // A fresh selector holds nothing, so every number and every mesh derived from the old one goes with it.
@@ -496,7 +509,22 @@ export function makeSupportPaint(deps) {
   }
   // `clear` wipes every state at once, so the per-state map is emptied here rather than read back — the worker's
   //  clear reply only carries `counts` when the request asked for states, and the answer would be all-zero anyway.
-  function clearPaint() { getWorker().postMessage({ cmd: 'clear' }); clearPaintOverlay(); setPaintCounts({ enf:0, blk:0 }); publishCounts({}) }
+  //  It is a selector job like any swap: sent straight to the worker, a Clear pressed during a swap landed between
+  //  the export and the load, and the load put the paint right back. The held objects' stored marks of the held
+  //  annotation are emptied with it, and the remembered counts too (the next swap read them as paint to keep).
+  function clearPaint() {
+    const worker = paintStateAwareWorker()
+    if (!worker) return Promise.resolve()
+    return serial(worker, async () => {
+      worker.postMessage({ cmd: 'clear' })
+      clearPaintOverlay(); setPaintCounts({ enf: 0, blk: 0 }); publishCounts({})
+      const seen = lastCounts(worker)
+      for (const state of Object.keys(seen)) delete seen[state]
+      const held = heldBy(worker)
+      if (held?.members && held.kind) storePaint(objectsById(), new Map(held.members.map(member => [member.id, new Map()])), held.kind)
+      refreshStoredOverlays()
+    })
+  }
 
   return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, refreshStoredOverlays,
            beginPaintDrag, endPaintDrag, holdSelectorForSlice }

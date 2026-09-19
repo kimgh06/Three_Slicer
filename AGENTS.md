@@ -157,6 +157,11 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   releases it once the slice is posted: a drag committed in between took the move path, whose `prepare` reached the
   worker ahead of the slice. Any swap to another plate re-sends the section plane, not only a stroke's. A copy's
   paste waits for the copy (`clipboardRef.copying`), and one delete runs at a time, so a repeat adds no undo entry.
+  **(19)** A write-back the worker FAILS (error reply, death, timeout) is not "nothing to write": `writeBack`
+  resolves 'failed', and a swap stops there with the selector and its unsaved strokes as they were ('export-failed',
+  which the pre-slice sync turns into a failed slice). Only a kernel without the export binding still swaps on.
+  Clear is a selector job too: sent straight to the worker it landed between a swap's export and load, and the load
+  put the paint back; it also empties the held objects' stored marks and the remembered counts.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not

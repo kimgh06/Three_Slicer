@@ -14,7 +14,7 @@ const HEX_STATE_1 = '4', HEX_STATE_2 = '8', HEX_STATE_3 = '0C'
 
 // A worker holding one selector: merged facet -> hex. Replies echo requestId like the real one.
 class FakeSelectorWorker extends EventTarget {
-  constructor() { super(); this.marks = new Map(); this.sent = []; this.failImport = false }
+  constructor() { super(); this.marks = new Map(); this.sent = []; this.failImport = false; this.failExport = false }
   terminate() {}
   answer(data, request) {
     const event = new Event('message')
@@ -32,6 +32,7 @@ class FakeSelectorWorker extends EventTarget {
       Array.from(message.facets).forEach((facet, index) => this.marks.set(facet, hexes[index]))
       this.answer({ type: 'painted', counts: {} }, message); return
     }
+    if (message.cmd === 'exportPaint' && this.failExport) { this.answer({ type: 'error', error: 'memory access out of bounds' }, message); return }
     if (message.cmd === 'exportPaint') {
       const facets = [...this.marks.keys()].sort((a, b) => a - b)
       this.answer({ type: 'paintExport', supported: true, facets, hex: facets.map(facet => this.marks.get(facet)).join('\n') }, message); return
@@ -214,6 +215,42 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   release(); await settle(); await settle()
   assert.equal(worker().sent[sentBeforePost], 'slice', `nothing reached the worker between the load and the slice (${worker().sent.slice(sentBeforePost)})`)
   assert.equal(worker().sent.at(-1), 'prepare', 'the drag\'s prepare runs after the post')
+}
+
+// ---- an export the worker fails: the swap stops and the strokes stay in the selector ----
+{
+  const scene = makeScene()
+  const { paint, refs, worker } = setup(scene)
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  refs.paintModeRef.current = 'material'
+  worker().brush(1, HEX_STATE_2)                                       // a stroke not yet written back
+  worker().failExport = true
+  refs.selectedPlateRef.current = 1
+  const result = await paint.registerSelector(); await settle()
+  assert.equal(result, 'export-failed', 'the swap reports it')
+  assert.deepEqual(entries(worker().marks), [[1, HEX_STATE_2]], 'no prepare ran over the unsaved stroke')
+  assert.equal(refs.selectorGeomRef.current.plate, 0, 'the selector still holds the painted plate')
+  assert.notEqual(refs.paintXformRef.current, null, 'and strokes still land on it')
+  worker().failExport = false
+  await paint.registerSelector(); await settle()
+  assert.deepEqual(entries(paintOf(scene, 1).color), [[1, HEX_STATE_2]], 'the next swap saves the stroke after all')
+}
+
+// ---- Clear pressed while a swap is running clears the plate the swap lands on ----
+{
+  const scene = makeScene()
+  const { paint, refs, worker } = setup(scene)
+  scene.objects[1].paint = { color: new Map([[2, HEX_STATE_2]]) }      // plate 1 carries stored paint
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  refs.selectedPlateRef.current = 1
+  const swapping = paint.registerSelector()                             // e.g. a stroke crossed onto plate 1
+  paint.clearPaint()
+  await swapping; await settle(); await settle()
+  assert.equal(worker().marks.size, 0, 'the load did not put the cleared paint back')
+  assert.equal(paintOf(scene, 2).color.size, 0, 'and the store no longer holds it')
+  refs.selectedPlateRef.current = 0
+  await paint.registerSelector(); await settle()
+  assert.equal(paintOf(scene, 2).color.size, 0, 'nothing brings it back on the next swap')
 }
 
 console.log('paint_swap: ok')

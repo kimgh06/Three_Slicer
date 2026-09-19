@@ -443,6 +443,7 @@ export default function Viewport({
       try { result = await loading } catch (error) { release(); throw error }
       // A plate whose paint did not load is not sliced bare (the pool path does the same, ctx.syncPaint).
       if (result === 'load-failed') { release(); throw new Error('Worker failed to load the plate paint') }
+      if (result === 'export-failed') { release(); throw new Error('Worker failed to hand back the plate paint') }
       return { kind: selectorGeomRef.current?.kind ?? null, release }
     },
   })
