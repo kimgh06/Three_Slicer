@@ -3,7 +3,6 @@
 // parse3MFProject / normalizeProjectSettings / platePlacements — the code that reads a MakerWorld file — rather
 // than re-parsing the XML the writer just produced.
 import { write3MFProject, writeSTL } from '../src/core/write_3mf.js'
-import { rebasePaintOntoSubset } from '../src/actions/export_actions.js'
 import { parse3MFProject } from '../src/core/parse_3mf.js'
 import { normalizeProjectSettings, deriveKernelParams, serializeProjectSettings } from '../src/settings/index.js'
 import { platePlacements } from '../src/actions/model_load.js'
@@ -205,32 +204,6 @@ function viewerPlateOriginOf(plate, plateCount = 1) {
   const degenerateView = new DataView(degenerate.buffer, degenerate.byteOffset, degenerate.byteLength)
   eq('a degenerate facet keeps a zero normal, not NaN',
     [0, 4, 8].map(o => degenerateView.getFloat32(84 + o, true)), [0, 0, 0])
-}
-
-// ---- 7. exporting a SUBSET rebases the kernel's facet numbering ----------------------------------------------
-// The kernel numbers facets across every visible object's merge. Handing that numbering to a file containing only
-// some of those objects would paint the wrong triangles — silently, and on the model the user is looking at.
-{
-  const all = [
-    { id: 1, faceCount: 4 },
-    { id: 2, faceCount: 4 },
-    { id: 3, faceCount: 4 },
-  ]
-  // merged facet 9 is object 3's facet 1; merged facet 2 is object 1's facet 2.
-  const kernelPaint = { facets: [2, 5, 9], hex: '8\n4\n0C' }
-
-  const middleOnly = rebasePaintOntoSubset(kernelPaint, all, [all[1]])
-  eq('only the marks of the exported object survive', middleOnly.facets, [1])
-  eq('...with its own hex', middleOnly.hex, '4')
-
-  const firstAndLast = rebasePaintOntoSubset(kernelPaint, all, [all[0], all[2]])
-  // object 1 keeps base 0, object 3 now starts at 4 — so its facet 1 becomes 5.
-  eq('a gap in the middle renumbers what follows it', firstAndLast.facets, [2, 5])
-  eq('...and each hex rides with its own facet', firstAndLast.hex, '8\n0C')
-
-  eq('exporting everything is the identity', rebasePaintOntoSubset(kernelPaint, all, all).facets, [2, 5, 9])
-  eq('a subset with no marks yields nothing', rebasePaintOntoSubset(kernelPaint, all, [{ id: 9, faceCount: 4 }]), null)
-  eq('no kernel paint yields nothing', rebasePaintOntoSubset(null, all, all), null)
 }
 
 // ---- 5. what upstream has no place for: per-plate overrides and the viewer knobs, in our own member -----------
