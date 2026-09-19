@@ -81,8 +81,10 @@ export interface ViewportProps {
   /**
    * G-code text to render instead of a slice result. Parsed into the same layer stream the kernel produces and
    * shown on the selected plate; the kernel is never started. While it is set, auto re-slice leaves that plate alone.
+   * A `{ plateIndex: text }` map puts each text on its own (0-based) plate, adding plates as needed — the shape an
+   * opened `.gcode.3mf` takes. This prop wins over a `.gcode.3mf` the user opens while it is set.
    */
-  gcode?: string | null
+  gcode?: string | Record<number, string> | null
   /**
    * An `.sl1` archive rendered as a raster preview — the SLA half of {@link ViewportProps.gcode}'s contract: it
    * lands on the selected plate and the kernel is never started. Set both and the G-code wins; one plate holds

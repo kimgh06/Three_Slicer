@@ -95,7 +95,8 @@ Every panel can be switched off, and the values the component owns can be seeded
   resin masks on a filament bed. The one number it cannot supply is the display's PHYSICAL size: millimetres
   appear nowhere in an SL1, so the preview is scaled by the printer set in the viewer and the import notice says
   so. Export hands an imported archive back byte-identical rather than re-rasterizing empty geometry.
-- **`gcode`** — G-code text drawn on the selected plate instead of a slice result. `parseGcode` recovers roles from
+- **`gcode`** — G-code text drawn on the selected plate instead of a slice result, or a `{ plateIndex: text }` map
+  drawn plate by plate (what an opened `.gcode.3mf` becomes; the viewer is preview-only while one is shown). `parseGcode` recovers roles from
   `;TYPE:` (OrcaSlicer/PrusaSlicer/Cura), from `;_EXTRUSION_ROLE:` tags and from this kernel's own feature comments;
   bead width comes from `;WIDTH:` or, absent that, from E. What the file never states cannot be recovered: an
   unmarked run reads as wall, and there is no print-time estimate (that needs the machine's acceleration limits).

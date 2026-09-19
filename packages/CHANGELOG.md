@@ -10,6 +10,11 @@
 - A saved `.3mf` carries the per-plate overrides and the global map's non-schema keys (`wipe_tower_real`,
   `sla_antialias`) in a member of its own, `Metadata/three_slicer_settings.json`, and an import restores them.
   Upstream has no place for either and ignores the member, so OrcaSlicer still opens the file on the global preset.
+- "Export all" writes one `.gcode.3mf` (upstream's "Export all plate sliced file") instead of one `.gcode` download
+  per plate: each plate's G-code as `Metadata/plate_N.gcode` with its MD5, the estimate in `slice_info.config`, no
+  meshes. Opening one (drop, picker or `files`) puts every plate's G-code back on its plate and makes the viewer
+  preview-only until it is closed from the top bar or a model is loaded. The `gcode` prop also takes a
+  `{ plateIndex: text }` map. A resin plate still exports as its own `.sl1`.
 
 ### Changed
 
@@ -22,6 +27,11 @@
 
 ### Fixed
 
+- The drop highlight stayed on after a drop the host handled itself (the demo app's `.gcode` drop): the canvas's
+  own handler never ran and a drop fires no `dragleave`. The window's capture phase now clears it.
+- Injected G-code moved half a bed off its plate whenever the plate grid was re-laid out (adding a plate, editing
+  the bed): the re-layout set every display offset to the plate origin, dropping the bed-corner offset injected
+  G-code carries. Offsets now move by the origin's delta.
 - Two objects on the same spot sliced to nothing. The kernel slices the merge of every object as one mesh and filled
   the layer loops even-odd, so coincident shells counted as "inside twice". Segments are now oriented by the facet
   normal and filled NonZero, upstream's Regular slicing mode, in the FFF, multi-material and SLA paths. Measured: a
