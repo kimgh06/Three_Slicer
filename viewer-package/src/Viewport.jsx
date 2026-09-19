@@ -406,7 +406,8 @@ export default function Viewport({
       const needsSelector = selectorGeomRef.current || merged?.paint?.color || merged?.paint?.supports
       if (!needsSelector) return
       await flushPaintRef.current?.()
-      return registerSelectorRef.current?.(merged)
+      // 'auto': the kernel slices with the annotation the store says wins (material first), whichever brush was open.
+      return registerSelectorRef.current?.(merged, { kind: 'auto' })
     },
   })
   selectPlateRef.current = selectPlate

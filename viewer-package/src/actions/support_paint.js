@@ -133,9 +133,6 @@ export function makeSupportPaint(deps) {
         return post(...args)
       }
       if (message && message.cmd === 'paint') {
-        // A stroke decides what the held marks are: the kind its write-back files them under.
-        const strokeKind = kindOfMode(paintModeRef.current)
-        if (strokeKind && selectorGeomRef.current) selectorGeomRef.current.kind = strokeKind
         const state = paintStateFor(paintModeRef.current, materialExtruderRef?.current)
         // The eraser resolves to NONE, which is not a paint state and never will be: the worker rejects an integer
         //  0 on the state path on purpose, because embind turns a JS `false` into 0 and a boolean must not be able
@@ -247,14 +244,21 @@ export function makeSupportPaint(deps) {
   //  own split geometry replayed in JS (paintTriangles, pinned against the kernel overlay in test_paint_export.mjs),
   //  in the object's LOCAL frame and attached as children of its mesh, so they move, hide and delete with it.
   function refreshStoredOverlays() {
-    const held = new Set(selectorGeomRef.current?.members?.map(member => member.id) ?? [])
+    const record = selectorGeomRef.current
+    const held = new Set(record?.members?.map(member => member.id) ?? [])
     for (const object of objectsRef.current) {
       for (const child of [...object.mesh.children]) {
         if (!child.userData?.storedPaint) continue
         object.mesh.remove(child); child.geometry.dispose(); child.material.dispose()
       }
-      if (held.has(object.id)) continue
-      const kind = storedPaintKind(object.paint)
+      // An object the selector holds is drawn by the kernel overlay — for the annotation the selector holds. While
+      //  that is the support annotation (a support brush is or was open), its material paint sits in the store only,
+      //  and is drawn from there: opening the support brush must not make the material paint vanish from view.
+      let kind = storedPaintKind(object.paint)
+      if (held.has(object.id)) {
+        if (record.kind === 'color' || !object.paint?.color?.size) continue
+        kind = 'color'
+      }
       if (!kind) continue
       for (const [state, triangles] of paintTriangles(object.localPos, object.paint[kind])) {
         const geometry = new THREE.BufferGeometry()
@@ -290,7 +294,7 @@ export function makeSupportPaint(deps) {
     if (held && held.worker === worker) return held
     return null
   }
-  // Which annotation the brush writes: the selector's recorded kind follows the strokes (paintStateAwareWorker).
+  // Which annotation a brush writes — the kind setPaintMode asks the selector to hold.
   const kindOfMode = (mode) => {
     if (mode === 'material') return 'color'
     if (mode === 'enforcer' || mode === 'blocker') return 'supports'
@@ -301,31 +305,47 @@ export function makeSupportPaint(deps) {
   //  the mode before it runs, which filed plate 1's material paint as support paint (measured: color 208 -> supports
   //  208, its tower box gone, drawn in the blocker red). A kernel without the export binding answers null: the store
   //  is then left as it was rather than emptied.
-  async function writeBack(worker) {
+  async function writeBack(worker, timeoutMs = Infinity) {
     const held = heldBy(worker)
-    if (!held?.members) return false
-    const exported = await requestPaintExport(worker, Infinity)
+    // A record without a kind never had anything loaded or brushed: there is nothing to file, and filing its empty
+    //  export under a guessed kind would erase that kind's stored marks.
+    if (!held?.members || !held.kind) return false
+    const exported = await requestPaintExport(worker, timeoutMs)
     if (!exported) return false
-    storePaint(objectsById(), splitPaintByObject(exported, held.members), held.kind ?? 'color')
+    storePaint(objectsById(), splitPaintByObject(exported, held.members), held.kind)
     return true
   }
   /** Bring every object's stored paint up to date with the selector — before anything reads `object.paint` for an
    *  object the selector holds (a 3mf save, a copy, a slice on another worker). */
-  function flushPaint() {
+  //  `timeoutMs` bounds the wait for a caller that can fall back on the store as it is — a save during a slice: the
+  //  selector worker's plate was flushed right before that slice started (syncPaintSelector), so only strokes made
+  //  while it runs can be missing. Resolves 'timeout' when the bound ran out, true when written, false otherwise.
+  function flushPaint(timeoutMs = Infinity) {
     const worker = getWorker()
     if (!worker) return Promise.resolve(false)
-    return serial(worker, () => writeBack(worker))
+    return serial(worker, async () => {
+      const started = performance.now()
+      const written = await writeBack(worker, timeoutMs)
+      if (!written && Number.isFinite(timeoutMs) && performance.now() - started >= timeoutMs) return 'timeout'
+      return written
+    })
   }
 
   // Hand the kernel the mesh the brush is about to work on — on entering a brush, on every transform commit while
   //  a selector exists, and before the selector worker slices a plate. Returns the chain's promise; a caller that
   //  posts to the worker afterwards (a slice) must await it.
-  function registerSelector(prebuiltMerged = null) {
+  //  `kind` says which annotation the selector must hold afterwards: 'color' or 'supports' (a brush of that kind was
+  //  opened), 'auto' (a slice is about to read it: material paint wins, the import-time rule), or absent (keep the
+  //  held one). One selector holds ONE annotation — upstream keeps material and support paint as two annotations of
+  //  a volume — so a different kind is a swap: the held marks go back under their own kind and the requested kind is
+  //  loaded. Brushing material over a loaded support annotation used to file every support mark as material paint
+  //  (measured: supports 0, color 278 after one material stroke).
+  function registerSelector(prebuiltMerged = null, { kind: requestedKind } = {}) {
     const worker = paintStateAwareWorker()
     if (!worker) return Promise.resolve()
-    return serial(worker, async () => { await swapTo(worker, prebuiltMerged); refreshStoredOverlays() })
+    return serial(worker, async () => { await swapTo(worker, prebuiltMerged, requestedKind); refreshStoredOverlays() })
   }
-  async function swapTo(worker, prebuiltMerged) {
+  async function swapTo(worker, prebuiltMerged, requestedKind) {
     const merged = prebuiltMerged ?? apiRef.current?.buildMergedSTL(selectedPlateRef.current); if (!merged) return
     // The selector holds plate-local coordinates, so a raycast hit (world) subtracts the plate origin to match it.
     //  This used to be the model's own bbox centre, which changed the moment the model was dragged — every stroke
@@ -333,25 +353,30 @@ export function makeSupportPaint(deps) {
     const transform = { cx: merged.offX, cy: -merged.offZ, minz: 0 }
     const held = heldBy(worker)
     const identity = geomIdentity(merged.buf)
+    // The kind the selector must end up holding; null means "whatever is there / nothing".
+    let wantedKind = held?.kind ?? null
+    if (requestedKind === 'color' || requestedKind === 'supports') wantedKind = requestedKind
+    if (requestedKind === 'auto') wantedKind = paintKindFor(objectsById(), merged.members) ?? held?.kind ?? null
+    const kindChanges = held != null && wantedKind !== null && wantedKind !== held.kind
     const next = { identity, topology: merged.topology, members: merged.members, plate: merged.plate, worker, kind: held?.kind ?? null }
     // Same bytes AND the same objects -> the selector already holds this mesh and every mark on it. Bytes alone
     //  are not enough: a copy on another plate, placed where the original sits on its own plate, merges to the
     //  same plate-local bytes — and was taken for the original, so its plate inherited the original's paint.
-    if (held?.identity === identity && held.topology === merged.topology) {
+    if (held?.identity === identity && held.topology === merged.topology && !kindChanges) {
       selectorGeomRef.current = next; paintXformRef.current = transform; return
     }
     // Same objects with the same faces at new coordinates is a MOVE: the selector is rebuilt on the real positions
     //  (the brush and the layer projection both need them) and the marks are carried across by facet index.
-    if (held != null && held.topology === merged.topology) {
+    if (held != null && held.topology === merged.topology && !kindChanges) {
       worker.postMessage({ cmd: 'prepare', stl: merged.buf, keepPaint: true })
       selectorGeomRef.current = next; paintXformRef.current = transform
       // The marks came across; their geometry did not, and no facet count changed to ask for the redraw.
       if (Object.values(lastCounts(worker)).some(count => count > 0)) worker.postMessage({ cmd: 'overlay' })
       return
     }
-    // A different set of objects (another plate, an object added or removed): the held marks go back to their
-    //  objects, and the new mesh is loaded from what its objects hold. No stroke may land in between — a null
-    //  transform is what the pointer handler already treats as "no selector".
+    // A different set of objects (another plate, an object added or removed), or another annotation of the same
+    //  ones: the held marks go back to their objects, and the new mesh is loaded from what its objects hold. No
+    //  stroke may land in between — a null transform is what the pointer handler already treats as "no selector".
     paintXformRef.current = null
     const seen = lastCounts(worker)
     const hadPaint = Object.values(seen).some(count => count > 0)
@@ -366,7 +391,7 @@ export function makeSupportPaint(deps) {
     // Only a kernel that cannot export loses paint here now — and that must not be silent.
     if (hadPaint && !kept) setSliceNotice?.('The painted regions were reset: this kernel cannot hand its painting '
                                            + 'back, so it does not survive switching the painted mesh.')
-    await loadStoredPaint(worker, merged)
+    await loadStoredPaint(worker, merged, wantedKind)
     paintXformRef.current = transform
   }
 
@@ -377,14 +402,15 @@ export function makeSupportPaint(deps) {
   // One facet carries one state (see paintStateFor), and material and support paint are two independent
   //  annotations that CAN both mark the same facet. There is no representation here that holds both, so material
   //  paint wins and the support paint is reported as left out rather than half-applied.
-  function loadStoredPaint(worker, merged) {
+  function loadStoredPaint(worker, merged, requestedKind = null) {
     const objects = objectsById()
-    const kind = paintKindFor(objects, merged.members)
+    const kind = requestedKind ?? paintKindFor(objects, merged.members)
+    // Which kind the selector holds from now on — even with nothing of it to load: the overlay colour reads it
+    //  (overlayColorFor), and the write-back files the marks under it.
+    if (selectorGeomRef.current) selectorGeomRef.current.kind = kind
     const chosen = mergedPaint(objects, merged.members, kind)
     if (!chosen) return Promise.resolve()
-    // Which kind was loaded: the overlay colour reads it (overlayColorFor), and the write-back files the marks under it.
-    if (selectorGeomRef.current) selectorGeomRef.current.kind = kind
-    if (kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
+    if (!requestedKind && kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
       setSliceNotice?.('These objects are painted for both material and support. One facet holds one paint state, so '
                      + 'the material painting was loaded and the support painting was left out.')
     // No overlay request follows: the reply carries `counts`, and the message listener above already asks for the
@@ -396,7 +422,7 @@ export function makeSupportPaint(deps) {
   //  carries one selector state (see paintStateFor above).
   function setPaintMode(mode) {
     if (mode !== 'off' && objectsRef.current.length === 0) { setError('Upload an STL first'); return }
-    if (mode !== 'off') { apiRef.current?.detachTransform(); registerSelector() }
+    if (mode !== 'off') { apiRef.current?.detachTransform(); registerSelector(null, { kind: kindOfMode(mode) }) }
     paintModeRef.current = mode; setPaintModeState(mode)
     apiRef.current?.refreshCursor()   // refresh the cursor hint when entering/leaving paint mode
   }
