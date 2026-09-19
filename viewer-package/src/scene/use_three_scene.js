@@ -685,7 +685,7 @@ export function useThreeScene(deps) {
        *  50-deep history costs kilobytes. Paint is not in here — see history.js. */
       sceneSnapshot: () => objectsRef.current.map(o => ({
         id: o.id, name: o.name, localPos: o.localPos,
-        extruder: o.extruder || 1, visible: o.visible !== false,
+        extruder: o.extruder || 1, visible: o.visible !== false, paint: o.paint ?? null,   // by reference: the store never mutates a map
         pos: o.mesh.position.clone(), rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(),
       })),
       /** Put the scene back the way a snapshot found it, as a diff by id: drop what is gone, re-create what is
@@ -703,6 +703,7 @@ export function useThreeScene(deps) {
                       { id: s.id, extruder: s.extruder, visible: s.visible, quiet: true })
             o = objectsRef.current.find(x => x.id === s.id)
             if (!o) continue
+            o.paint = s.paint   // a re-created object's paint lives only here; a live object keeps its own (later strokes)
           }
           o.mesh.position.copy(s.pos); o.mesh.rotation.copy(s.rot); o.mesh.scale.copy(s.scale)
           o.mesh.updateMatrixWorld(true)

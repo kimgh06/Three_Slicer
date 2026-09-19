@@ -50,15 +50,19 @@ export function makeObjectActions(deps) {
     if (!clipboardRef.current) return
     recordHistory(); spawnWithPaint(clipboardRef.current, clonePaint(clipboardRef.current.paint))
   }
-  function deleteSelected() {
+  // Deleting flushes first so the undo snapshot carries the object's latest paint (history.js restores a deleted
+  //  object with the paint it had; the store is the only place a plate's paint lives once the selector moves on).
+  async function deleteSelected() {
     const id = apiRef.current?.selectedObjectId()
     if (!id) { setError('Select an object to delete first'); return }
+    await flushPaintRef?.current?.()
     recordHistory(); removeObject(id); setError('')
   }
   // Stage 33: delete all (upstream Ctrl+D / Delete all). Empties every object from the scene.
-  function deleteAllObjects() {
+  async function deleteAllObjects() {
     const ids = objectsRef.current.map(o => o.id)
     if (!ids.length) return
+    await flushPaintRef?.current?.()
     recordHistory()
     for (const id of ids) apiRef.current?.removeObject(id)
     refreshObjects()
