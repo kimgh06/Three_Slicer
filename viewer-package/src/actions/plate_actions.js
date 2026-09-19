@@ -461,11 +461,12 @@ export function makePlateActions(deps) {
         // The selector worker's kernel reads the paint from its selector, so it must hold THIS plate's mesh before
         //  the slice is posted — the selected plate, and a pool plate re-run here after its worker died. A pool
         //  worker gets the plate's stored paint with the slice instead (use_slicer.js runSlice).
-        if (!ctx) await syncPaintSelector?.(merged)
         plateOffsetsRef.current[i] = { offX: merged.offX, offZ: merged.offZ }
         ;(ctx ? ctx.holder : sink).plate = i   // route this worker's progress to the plate it is on
         patch(i, { state: PLATE_STATES.busy })
         try {
+          // Inside the try: a paint that fails to load fails THIS plate (the catch below), not the whole run.
+          if (!ctx) await syncPaintSelector?.(merged)
           const { r, economy, classicWalls } = await runSlice(merged, ctx, { resyncPaint: () => syncPaintSelector?.(merged) })
           plateLineWidth(i)
           plateResultsRef.current[i] = r; refreshSlicedCount(); announceSlice(i, r); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
