@@ -62,7 +62,7 @@ export function makeSupportPaint(deps) {
     three, objectsRef, apiRef, getWorker, selectedPlateRef, selectorGeomRef,
     paintXformRef, paintOverlayRef, paintModeRef, materialExtruderRef, extruderColorsRef,
     setError, setPaintModeState, setPaintCounts, setPaintStateCounts, setSliceNotice, paintStateCountsRef,
-    isSelectorSlicing = () => false,
+    isSelectorSlicing = () => false, paintDragRef = { current: false },
   } = deps
   // The counts a slice reads (use_slicer.js buildParams) — written here synchronously as well as through React
   //  state, because a slice posted right after a selector swap cannot wait for a render to carry them into the ref.
@@ -262,26 +262,50 @@ export function makeSupportPaint(deps) {
       // An object the selector holds is drawn by the kernel overlay — for the annotation the selector holds. While
       //  that is the support annotation (a support brush is or was open), its material paint sits in the store only,
       //  and is drawn from there: opening the support brush must not make the material paint vanish from view.
-      let kind = storedPaintKind(object.paint)
+      //  During a drag the kernel overlay is hidden (beginPaintDrag) and the held objects draw the held annotation
+      //  from the store too, so each object's paint moves with that object alone.
+      let kinds = [storedPaintKind(object.paint)]
       if (held.has(object.id)) {
-        if (record.kind === 'color' || !object.paint?.color?.size) continue
-        kind = 'color'
+        kinds = []
+        if (paintDragRef.current && record.kind) kinds.push(record.kind)
+        if (record.kind !== 'color' && object.paint?.color?.size) kinds.push('color')
       }
-      if (!kind) continue
-      for (const [state, triangles] of paintTriangles(object.localPos, object.paint[kind])) {
-        const geometry = new THREE.BufferGeometry()
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(triangles, 3))
-        // The section plane clips these like the kernel overlay: section_plane.js only reaches children that exist
-        //  when it is toggled, and these are rebuilt on every swap.
-        const color = paintStateColor(state, kind === 'color', extruderColorsRef?.current)
-        const mesh = new THREE.Mesh(geometry, paintOverlayMaterial(color, apiRef.current?.paintClipPlanes?.() ?? null))
-        mesh.userData.storedPaint = true
-        mesh.renderOrder = PAINT_OVERLAY_RENDER_ORDER
-        object.mesh.add(mesh)
+      for (const kind of kinds) {
+        if (!kind || !object.paint?.[kind]?.size) continue
+        drawStoredPaint(object, kind)
       }
     }
     three.current?.invalidate?.()
   }
+  function drawStoredPaint(object, kind) {
+    for (const [state, triangles] of paintTriangles(object.localPos, object.paint[kind])) {
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(triangles, 3))
+      // The section plane clips these like the kernel overlay: section_plane.js only reaches children that exist
+      //  when it is toggled, and these are rebuilt on every swap.
+      const color = paintStateColor(state, kind === 'color', extruderColorsRef?.current)
+      const mesh = new THREE.Mesh(geometry, paintOverlayMaterial(color, apiRef.current?.paintClipPlanes?.() ?? null))
+      mesh.userData.storedPaint = true
+      mesh.renderOrder = PAINT_OVERLAY_RENDER_ORDER
+      object.mesh.add(mesh)
+    }
+  }
+  // A drag moves one object (or a selection) while the kernel overlay is ONE mesh per state across every object the
+  //  selector holds — moving that mesh with the drag carried the other objects' paint along until the drop. So the
+  //  drag draws per object instead: the selector's strokes go to the store, the kernel overlay is hidden, and every
+  //  held object draws its stored marks as its own children, which move with it and only with it. The drop needs
+  //  nothing here: its commit re-registers the selector, whose job shows the rebuilt kernel overlay and drops these.
+  //  Until the flush lands (a worker round trip) the kernel overlay simply stays where it was.
+  function beginPaintDrag() {
+    paintDragRef.current = true
+    if (!paintOverlayRef.current?.size) return Promise.resolve()
+    return flushPaint().then(flushed => {
+      if (!paintDragRef.current || flushed !== true) return
+      for (const mesh of paintOverlayRef.current?.values?.() ?? []) mesh.visible = false
+      refreshStoredOverlays()
+    })
+  }
+  function endPaintDrag() { paintDragRef.current = false }
   // The selector is one mesh at a time, and swapping it is a round trip: the marks it holds have to come OUT of the
   //  worker (exportPaint) into the per-object store before the next mesh goes in, or they are lost with the old
   //  selector. Every swap, flush and slice-time sync is therefore a job on one chain per worker — a stroke, a slice
@@ -356,6 +380,7 @@ export function makeSupportPaint(deps) {
     if (!worker) return Promise.resolve()
     return serial(worker, async () => {
       const result = await swapTo(worker, prebuiltMerged, requestedKind)
+      if (!paintDragRef.current) for (const mesh of paintOverlayRef.current?.values?.() ?? []) mesh.visible = true
       refreshStoredOverlays()
       return result
     })
@@ -389,7 +414,8 @@ export function makeSupportPaint(deps) {
       worker.postMessage({ cmd: 'prepare', stl: merged.buf, keepPaint: true })
       selectorGeomRef.current = next; paintXformRef.current = transform
       // The marks came across; their geometry did not, and no facet count changed to ask for the redraw.
-      if (Object.values(lastCounts(worker)).some(count => count > 0)) worker.postMessage({ cmd: 'overlay' })
+      //  Awaited, so the job that shows the kernel overlay again after a drag shows the rebuilt one.
+      if (Object.values(lastCounts(worker)).some(count => count > 0)) await request(worker, { cmd: 'overlay' }, { types: ['overlay'] })
       return
     }
     // A different set of objects (another plate, an object added or removed), or another annotation of the same
@@ -456,5 +482,6 @@ export function makeSupportPaint(deps) {
   //  clear reply only carries `counts` when the request asked for states, and the answer would be all-zero anyway.
   function clearPaint() { getWorker().postMessage({ cmd: 'clear' }); clearPaintOverlay(); setPaintCounts({ enf:0, blk:0 }); publishCounts({}) }
 
-  return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, refreshStoredOverlays }
+  return { rebuildPaintOverlay, clearPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, refreshStoredOverlays,
+           beginPaintDrag, endPaintDrag }
 }

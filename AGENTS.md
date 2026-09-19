@@ -149,6 +149,10 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   drives the real `createPaintInput`. Paint for a filament that is not configured is left out of the extruder count
   on every path (`paintedExtruderCount`, `usesMultipleTools`) and named in a notice: the selector worker reported
   only the configured states and a pool worker all 16, so one plate sliced with two different counts.
+  **(17)** The kernel overlay is one mesh per state across every held object, so it cannot follow one dragged
+  object (moving it carried the other objects' paint along until the drop). A transform drag (gizmo or scale
+  corner) flushes the selector, hides the kernel overlay and lets every held object draw its stored marks as its own
+  children (`beginPaintDrag`); the drop's re-registration awaits the rebuilt overlay and shows it again.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not

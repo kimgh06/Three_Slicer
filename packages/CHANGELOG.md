@@ -45,6 +45,7 @@
   object's own numbering, not the plate merge's. A stroke now also carries across plates — reaching an object on
   another plate selects that plate and keeps painting there, and an object added to the plate while the brush is
   open is painted too.
+- Dragging a painted object no longer drags the paint of the other objects on its plate along with it.
 - Paint for a filament that is not configured (T3 painted, then the list cut to two) no longer widens the extruder
   count on a slice-all pool worker only; every path leaves it out and the slice says so.
   Every plate's paint stays drawn, not only the plate being painted.

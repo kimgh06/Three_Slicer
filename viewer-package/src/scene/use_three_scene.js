@@ -119,40 +119,18 @@ export function useThreeScene(deps) {
     //  cannot slice negative z, so sinking is unsupported -> any minZ≠0 snaps to 0 in either direction. World bbox minY (three height) -> 0.
     const _seatBox = new THREE.Box3()
     const seatMesh = (m) => { if (!m) return; m.updateMatrixWorld(true); _seatBox.setFromObject(m); const minY = _seatBox.min.y; if (Number.isFinite(minY) && Math.abs(minY) > 1e-4) { m.position.y -= minY; m.updateMatrixWorld(true) } }
-    // The paint overlay is baked in world coordinates and rebuilt from the kernel only on commit, so between grab
-    //  and drop it would sit still while the mesh moves under it. Instead, the delta from the grab pose rides on
-    //  the overlay meshes every objectChange — position, rotation and scale all fold into one matrix — and the
-    //  commit's kernel rebuild then replaces the approximation with the truth.
-    //  ponytail: the WHOLE overlay follows the dragged object; with paint on several objects the others' marks
-    //  ride along for the duration of the drag (snapped right on drop). Splitting per object needs the kernel to
-    //  report each overlay triangle's source facet.
-    const paintDragStartInverse = new THREE.Matrix4(), paintDragDelta = new THREE.Matrix4()
-    const paintDragBase = new Map()   // overlay mesh -> its matrix at grab (a prior drag's delta may still be on it)
-    let paintDragging = false
+    // The kernel's paint overlay is one mesh per state across every object the selector holds, so it cannot follow
+    //  one dragged object: the paint module draws per object for the drag instead (support_paint.js beginPaintDrag).
     transform.addEventListener('objectChange', () => {
       if (transform.mode === 'scale' && transform.object) clampMeshScale(transform.object)
-      if (!paintDragging || !transform.object) return
-      transform.object.updateMatrixWorld(true)
-      paintDragDelta.copy(transform.object.matrixWorld).multiply(paintDragStartInverse)
-      for (const [mesh, base] of paintDragBase) {
-        mesh.matrixAutoUpdate = false
-        mesh.matrix.multiplyMatrices(paintDragDelta, base)
-      }
     })
     transform.addEventListener('dragging-changed', e => {
       orbit.enabled = !e.value
       if (e.value) {
         // Undo records the state BEFORE the drag (the commit only says it ended); not the tower's — a host setting.
         if (!isTower(transform.object)) deps.onTransformStarted?.()
-        paintDragBase.clear()
-        const overlays = deps.paintOverlayRef?.current
-        paintDragging = !!(overlays && overlays.size && transform.object && !transform.object.userData?.isPrimeTower)
-        if (paintDragging) {
-          transform.object.updateMatrixWorld(true)
-          paintDragStartInverse.copy(transform.object.matrixWorld).invert()
-          for (const mesh of overlays.values()) paintDragBase.set(mesh, mesh.matrix.clone())
-        }
-      } else paintDragging = false
+        if (transform.object && !isTower(transform.object)) deps.onPaintDragStart?.()
+      } else deps.onPaintDragEnd?.()
       if (!e.value) {
         // The tower stands on the bed by definition and has no geometry to seat — it reports its new XY instead.
         if (transform.object && transform.object.userData?.isPrimeTower) {
@@ -399,7 +377,7 @@ export function useThreeScene(deps) {
       if (!transform.dragging && gizmoMode === 'scale' && scaleBoxTarget()) {
         toPointer(ev); raycaster.setFromCamera(pointer, camera)
         if (scaleBox.hitTest(raycaster) && scaleBox.begin(ev, scaleBoxTarget())) {
-          deps.onTransformStarted?.()
+          deps.onTransformStarted?.(); deps.onPaintDragStart?.()
           orbit.enabled = false
           renderer.domElement.setPointerCapture?.(ev.pointerId)
           return
@@ -433,7 +411,7 @@ export function useThreeScene(deps) {
       if (scaleBox.dragging()) {
         const scaled = scaleBox.end()
         orbit.enabled = true
-        seatMesh(scaled); deps.onTransformCommitted?.()
+        deps.onPaintDragEnd?.(); seatMesh(scaled); deps.onTransformCommitted?.()
         // Re-decide from where the pointer actually ended up: the handles moved with the new size, so leaving the
         //  gizmo disabled (or re-enabling it blindly) would decide the next press on a stale hover.
         if (ev) updateHandleHover(ev); else { overScaleHandle = false; transform.enabled = true }

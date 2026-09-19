@@ -128,6 +128,8 @@ export default function Viewport({
   const selectorGeomRef = useRef(null)  // {identity, topology} of the mesh the kernel's selector holds (null = none)
   const registerSelectorRef = useRef(null)  // set below, from makeSupportPaint — the scene hook is built first
   const flushPaintRef = useRef(null)        // same factory: the selector's strokes back onto the objects (paint_store.js)
+  const paintDragRef = useRef(false)        // a transform drag is in progress (support_paint.js beginPaintDrag)
+  const paintDragHandlersRef = useRef(null) // same factory: begin/end of that drag, for the scene's handlers
   const selectPlateRef = useRef(null)       // set below, from makePlateActions — same reason
   const recordHistoryRef = useRef(null)     // set below, from the undo history — the scene hook is installed first
   // Stage 29-2: multiple plates (minimal S7). Plate i sits at three-x offset PX_i = i*(bedW+GAP).
@@ -279,6 +281,9 @@ export default function Viewport({
     // A gizmo/corner drag reports only that it ENDED, and by then the mesh already holds the new pose — so the
     //  undo entry is taken at the start of the drag, where the old one is still readable.
     onTransformStarted: () => recordHistoryRef.current?.('drag'),
+    // Each object's paint follows that object alone during a drag (support_paint.js beginPaintDrag).
+    onPaintDragStart: () => paintDragHandlersRef.current?.begin(),
+    onPaintDragEnd: () => paintDragHandlersRef.current?.end(),
     // Clicking a plate in the viewport selects it, so the tab bar is no longer the only way to switch. Through a
     //  ref because the scene installs its handlers once and makePlateActions is built further down.
     onPlateClicked: (i) => { if (i !== selectedPlateRef.current) selectPlateRef.current?.(i) },
@@ -393,10 +398,11 @@ export default function Viewport({
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
-  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint } = makeSupportPaint({
-    ...wiring, three, getWorker, paintStateCountsRef,
+  const { rebuildPaintOverlay, setPaintMode, clearPaint, registerSelector, flushPaint, beginPaintDrag, endPaintDrag } = makeSupportPaint({
+    ...wiring, three, getWorker, paintStateCountsRef, paintDragRef,
     isSelectorSlicing: () => !!pendingSliceRef.current,
   })
+  paintDragHandlersRef.current = { begin: beginPaintDrag, end: endPaintDrag }
   registerSelectorRef.current = registerSelector
   flushPaintRef.current = flushPaint
 

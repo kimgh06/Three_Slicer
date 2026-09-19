@@ -37,6 +37,7 @@ class FakeSelectorWorker extends EventTarget {
       this.answer({ type: 'paintExport', supported: true, facets, hex: facets.map(facet => this.marks.get(facet)).join('\n') }, message); return
     }
     if (message.cmd === 'clear') { this.marks = new Map(); this.answer({ type: 'painted', counts: {} }, message) }
+    if (message.cmd === 'overlay') this.answer({ type: 'overlay', overlays: {} }, message)
   }
   // A brush stroke, as the kernel would record it.
   brush(facet, hex) { this.marks.set(facet, hex) }
@@ -62,7 +63,7 @@ const makeScene = ({ sameBytes = false } = {}) => {
   return { objects, buildMergedSTL }
 }
 
-const setup = (scene, { slicing = { current: false } } = {}) => {
+const setup = (scene, { slicing = { current: false }, paintDragRef = { current: false } } = {}) => {
   let worker = new FakeSelectorWorker()
   const refs = { selectedPlateRef: { current: 0 }, selectorGeomRef: { current: null }, paintXformRef: { current: null },
                  paintOverlayRef: { current: null }, paintModeRef: { current: 'off' }, materialExtruderRef: { current: 1 },
@@ -74,7 +75,7 @@ const setup = (scene, { slicing = { current: false } } = {}) => {
     apiRef: { current: { buildMergedSTL: scene.buildMergedSTL, detachTransform() {}, refreshCursor() {}, paintClipPlanes: () => null } },
     getWorker: () => worker,
     setError() {}, setPaintModeState() {}, setPaintCounts() {}, setPaintStateCounts() {}, setSliceNotice() {},
-    isSelectorSlicing: () => slicing.current,
+    isSelectorSlicing: () => slicing.current, paintDragRef,
   })
   return { paint, refs, worker: () => worker, replaceWorker: () => { worker = new FakeSelectorWorker(); return worker } }
 }
@@ -167,6 +168,27 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   await paint.registerSelector(); await settle()
   assert.deepEqual(entries(worker().marks), [[2, HEX_STATE_2]], 'the next re-registration loads the store')
   assert.notEqual(refs.paintXformRef.current, null, 'and only then turns strokes back on')
+}
+
+// ---- a drag: each held object draws its own paint and the plate-wide kernel overlay is hidden, then shown again ----
+{
+  const scene = makeScene()
+  const paintDragRef = { current: false }
+  const { paint, refs, worker } = setup(scene, { paintDragRef })
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  refs.paintModeRef.current = 'material'
+  worker().brush(1, HEX_STATE_2)
+  const kernelOverlay = { visible: true }
+  refs.paintOverlayRef.current = new Map([[2, kernelOverlay]])
+  const draggedMesh = scene.objects[0].mesh
+  const ownPaint = () => draggedMesh.children.filter(child => child.userData?.storedPaint).length
+  await paint.beginPaintDrag(); await settle()
+  assert.equal(kernelOverlay.visible, false, 'the plate-wide overlay does not ride the drag')
+  assert.ok(ownPaint() > 0, 'the dragged object carries its own paint, stroke included (flushed first)')
+  paint.endPaintDrag()
+  await paint.registerSelector(); await settle()                        // the drop's commit
+  assert.equal(kernelOverlay.visible, true, 'the drop shows the kernel overlay again')
+  assert.equal(ownPaint(), 0, 'and the held object stops drawing its own copy')
 }
 
 console.log('paint_swap: ok')
