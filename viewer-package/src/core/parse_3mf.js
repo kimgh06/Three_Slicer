@@ -252,11 +252,27 @@ function readProject(files, dec) {
     hasCustomGcodePerLayer: false,
     volumeMeta: new Map(),
     sla: { capabilities: { ...SLA_CAPABILITIES }, issues: [], supportPoints: new Map(), drainHoles: new Map() },
+    viewerSettings: null,  // Metadata/three_slicer_settings.json — this package's own member (write_3mf.js)
+    plateSettings: null,   //  ...its two halves: global viewer knobs, and per-plate overrides keyed by plate index
   }
   const settingsText = text('Metadata/project_settings.config')
   if (settingsText) {
     // Malformed metadata must not cost the geometry — a 3mf whose config we cannot read still has a mesh worth loading.
     try { project.settings = JSON.parse(settingsText) } catch { project.settings = null }
+  }
+  // Our own member, read defensively: it is a file from anywhere, so a malformed one costs only itself, and only
+  //  plain-object maps under non-negative integer plate keys survive.
+  const sidecarText = text('Metadata/three_slicer_settings.json')
+  if (sidecarText) {
+    let sidecar = null
+    try { sidecar = JSON.parse(sidecarText) } catch { sidecar = null }
+    const isMap = (value) => value && typeof value === 'object' && !Array.isArray(value)
+    if (isMap(sidecar)) {
+      if (isMap(sidecar.viewer) && Object.keys(sidecar.viewer).length) project.viewerSettings = sidecar.viewer
+      const plates = Object.entries(isMap(sidecar.plates) ? sidecar.plates : {})
+        .filter(([plate, map]) => /^\d+$/.test(plate) && isMap(map) && Object.keys(map).length)
+      if (plates.length) project.plateSettings = Object.fromEntries(plates.map(([plate, map]) => [Number(plate), map]))
+    }
   }
   const modelSettings = text('Metadata/model_settings.config')
   if (modelSettings) {
