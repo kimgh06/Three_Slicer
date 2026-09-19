@@ -331,6 +331,13 @@
   background: rgba(var(--_accent-rgb), .14); color: var(--_accent-on-dark); font-size: 18px; font-weight: 700; pointer-events: none;
   border: 3px dashed var(--_accent); box-sizing: border-box; }
 
+/* An opened .gcode.3mf, in the top bar: what is shown, and the one way back to preparing models. */
+.tb-gcode { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--_dark-text);
+  background: var(--_dark-control); border: 1px solid var(--_dark-border); border-radius: 6px; padding: 2px 3px 2px 10px; }
+.tb-gcode span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-gcode button { border: 0; background: transparent; color: var(--_dark-text-muted); cursor: pointer; width: 22px; height: 22px; border-radius: 4px; }
+.tb-gcode button:hover { background: var(--_dark-control-hover); }
+
 /* Split objects button */
 .obj-split { border: 0; background: transparent; cursor: pointer; padding: 0 3px; line-height: 0; }
 .obj-split img { width: 13px; height: 13px; opacity: .6; }
