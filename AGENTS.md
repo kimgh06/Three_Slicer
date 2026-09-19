@@ -129,6 +129,10 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   only strokes made during a running slice can be missing, and the notice says so. A pool worker whose plate paint
   fails to load fails the plate ("failed to load" -> re-queued on the selector worker) rather than slicing it bare.
   `test_paint_swap.mjs` drives the real `makeSupportPaint` against a fake selector worker for all of this.
+  **(13)** No stroke reaches the selector while it slices: a slice start closes the brush (its 'auto' swap could
+  otherwise file the open brush's strokes under the other kind), and the store is flushed right before it. So a
+  flush during a selector slice has nothing to fetch and answers `'busy'` at once — a save, copy or duplicate used to
+  queue behind the whole slice.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not
