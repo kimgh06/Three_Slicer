@@ -18,7 +18,7 @@ import { DEFAULT_LINE_WIDTH } from '../core/viewer_defaults.js'
  */
 function useGcodeInjection(gcode, deps) {
   const { tech, kp, apiRef, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef, lineWidthRef,
-          refreshSlicedCount, setError, setSliceNotice, showPlateResult, selectPlate, growPlates } = deps
+          refreshSlicedCount, setError, clearError, clearSliceNotice, showPlateResult, selectPlate, growPlates } = deps
   useEffect(() => {
     if (gcode == null || tech === 'SLA') return   // injected G-code is an FFF artifact — a resin profile has no path that renders it
     // A string lands on the selected plate; a {plate: text} map (a .gcode.3mf, or a host's own per-plate files)
@@ -48,7 +48,7 @@ function useGcodeInjection(gcode, deps) {
     if (!shown.length) { setError('No printable moves found in the G-code'); return }
     lineWidthRef.current = kp.line_width || DEFAULT_LINE_WIDTH
     refreshSlicedCount()
-    setError(''); setSliceNotice('')
+    clearError(); clearSliceNotice()
     // The selected plate if it received one, else the first that did — upstream selects the first sliced plate.
     if (shown.includes(selectedPlateRef.current)) showPlateResult(selectedPlateRef.current)
     else (selectPlate ?? showPlateResult)(Math.min(...shown))

@@ -100,8 +100,8 @@ export function makeModelLoad(deps) {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
     clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
     selectedPlateRef, disposePlateToolpath, plateCountRef, setPlateCount, bedRef,
-    setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
-    setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
+    setError, clearError, setTriWarn, clearTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
+    setColorRange, setSliceNotice, clearSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
     openGcodePlates, closeImportedGcode,
   } = deps
 
@@ -229,12 +229,12 @@ export function makeModelLoad(deps) {
     }
     if (!files.length) {
       for (const f of presetFiles) await loadPresetFile(f)
-      if (sl1Files.length || gcodeFiles.length) setError('')
+      if (sl1Files.length || gcodeFiles.length) clearError()
       for (const f of sl1Files) await importSl1(f)
       if (gcodeFiles.length) await openGcodeFile(gcodeFiles.at(-1))   // one plate holds one print job
       return
     }
-    setError(''); setTriWarn(''); setProgress(0)
+    clearError(); clearTriWarn(); setProgress(0)
     // Only the plate the meshes land on loses its result: another plate's slice still describes objects this load
     //  does not touch (the per-plate staleness rule, slice_staleness.js). It used to reset every plate, so adding a
     //  model to plate 2 silently threw plate 1's slice away. A project that places objects on other plates
@@ -242,9 +242,9 @@ export function makeModelLoad(deps) {
     layersDataRef.current = null; segDataRef.current = null
     dropPlateResult(selectedPlateRef?.current ?? 0)
     clearToolpaths(); refreshSlicedCount()
-    setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setSliceNotice(''); setDowngradeOffer(null)
+    setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); clearSliceNotice(); setDowngradeOffer(null)
     // Presets before the meshes they came with — those are the settings the model is meant to load under — but
-    //  AFTER the state reset above, or the reset's setSliceNotice('') wipes the "Loaded machine: …" notice
+    //  AFTER the state reset above, or the reset's clearSliceNotice() wipes the "Loaded machine: …" notice
     //  (measured: the notice never appeared when a preset and an STL arrived in one pass).
     for (const f of presetFiles) await loadPresetFile(f)
     setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return '' })

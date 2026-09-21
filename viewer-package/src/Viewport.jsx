@@ -262,8 +262,8 @@ export default function Viewport({
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount, setLayerLo, setLayerHi,
     setPlateRun, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setCanvasMode, setSliceNotice, setDowngradeOffer,
     setPaintCounts, setPaintModeState, setPaintStateCounts, setFillAngle,
-    setSlicedPlateCount, setSliceMenu, setPlateCount, setSelectedPlate,
-  }
+    setSlicedPlateCount, setSliceMenu, setPlateCount, setSelectedPlate, clearError: () => setError(''),
+    clearSliceNotice: () => setSliceNotice(''), clearTriWarn: () => setTriWarn(''), }   // "nothing to show", named once
 
   // ---- three.js scene (renderer/camera/controls/pointer handlers + the imperative apiRef surface) ----
   const { mountRef, three } = useThreeScene({
@@ -500,10 +500,10 @@ export default function Viewport({
   })
 
   // ---- Injection: the `gcode` and `sl1` props, rendered on the selected plate without running the kernel ----
-  useInjection({
+  useInjection({ ...wiring,
     gcode: injectedGcode, sl1, importSl1, tech, kp: { ...ctx.params, bed_width: ctx.bedW, bed_depth: ctx.bedD },   // the SELECTED plate's params — injected content renders on it
     apiRef, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef,
-    lineWidthRef, refreshSlicedCount, setError, setSliceNotice, showPlateResult, selectPlate, growPlates,
+    lineWidthRef, refreshSlicedCount, setError, showPlateResult, selectPlate, growPlates,
   })
 
   // Editing bed width x depth on the printer card — reduced to a printable_area rectangle (origin preserved). Circular/custom shapes belong to the panel editor.

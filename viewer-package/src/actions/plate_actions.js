@@ -45,7 +45,7 @@ export function makePlateActions(deps) {
     runSlice, createPoolContext, kernelKindRef, progressSinkRef, setPlateRun, setSliceRate,
     ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
-    setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
+    setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice, clearError, clearSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
     onSlicedRef, extruderColorsRef,
   } = deps
@@ -443,7 +443,7 @@ export function makePlateActions(deps) {
     }
   }
   async function onSlice(scope = 'current') {
-    setSliceMenu(false); setError(''); setSliceNotice(''); setDowngradeOffer(null)
+    setSliceMenu(false); clearError(); clearSliceNotice(); setDowngradeOffer(null)
     const idx0 = selectedPlateRef.current
     // Per plate, not once for the run: a plate override can change line_width, and the toolpath mesh built when
     //  that plate's result lands reads whatever this ref holds at the time.
@@ -531,7 +531,7 @@ export function makePlateActions(deps) {
       }
       finally { progressSinkRef.current = null; for (const ctx of extras) ctx.terminate(); setSliceRate(0) }
       setSlicing(false)
-      if (canceled) { setSliceNotice('Slice canceled' + (sliced ? ` — ${sliced} finished result(s) are kept` : '')); setError(''); }
+      if (canceled) { setSliceNotice('Slice canceled' + (sliced ? ` — ${sliced} finished result(s) are kept` : '')); clearError(); }
       else if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('All plates failed to slice (economy mode included) — try the simplified retry'); return }
       else if (failed.length) {
         // Say WHY, not just which: every reason the ladder can end on names memory, and a row of crosses does not.
@@ -539,7 +539,7 @@ export function makePlateActions(deps) {
         setError(`Plate ${failed.join(', ')} failed — the ${sliced} finished result(s) are kept (inspect/export from the tabs)`
           + (reasons.length ? `. ${reasons[0]}` : '') + (reasons.length > 1 ? ` (+${reasons.length - 1} more, see the tab tooltips)` : ''))
       }
-      else { setError(''); setDowngradeOffer(null) }
+      else { clearError(); setDowngradeOffer(null) }
       if (anyEconomy) setSliceNotice('Memory pressure — some plates finished in economy mode (no preview, G-code is fine)')
       else if (anyClassic) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
       else if (!canceled && !failed.length) setSliceNotice(`Sliced ${sliced} plate${sliced === 1 ? '' : 's'} in ${((performance.now() - started) / 1000).toFixed(1)}s with ${pool} worker${pool === 1 ? '' : 's'}`
@@ -563,7 +563,7 @@ export function makePlateActions(deps) {
           syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged) })
         if (r?.stats) log.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
-        setError(''); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
+        clearError(); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
         // The SLA support tree can fail while the slice itself stands — saying so beats a silently bare model.
         if (r?.stats?.support_error) setSliceNotice(`Support generation failed (${r.stats.support_error}) — the slice contains the model only`)
         if (economy) setSliceNotice('Memory pressure — finished in economy mode (no preview, G-code can still be downloaded)')

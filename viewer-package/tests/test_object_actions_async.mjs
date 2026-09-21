@@ -24,7 +24,7 @@ const setup = () => {
     objectsRef, clipboardRef, paintModeRef: { current: 'off' },
     flushPaintRef: { current: () => { const flush = new Promise(resolve => { finishFlush = resolve }); flushes.push(flush); return flush } },
     selectorGeomRef: { current: null }, registerSelectorRef: { current: null },
-    setPaintMode() {}, removeObject: (id) => removed.push(id), refreshObjects() {}, setError() {}, setSliceNotice() {},
+    setPaintMode() {}, removeObject: (id) => removed.push(id), refreshObjects() {}, setError() {}, setSliceNotice() {}, clearError() {},
     recordHistory: () => history.push(history.length),
   })
   return { actions, history, spawned, removed, clipboardRef, finish: () => finishFlush(), flushes }
