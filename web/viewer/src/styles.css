@@ -1,18 +1,6 @@
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: #222; background: #000; }
 .prepare { position: absolute; inset: 0; }
-/* The G-code pill floats over the viewport's canvas, clear of its top bar and left rail. */
-.prepare-gcode {
-  position: absolute; top: 52px; left: 56px; z-index: 5;
-  display: flex; gap: 8px; align-items: center;
-  font: 12px/1.4 system-ui, sans-serif; color: #c9d3de;
-}
-.prepare-gcode button {
-  background: #1a1f26; color: #c9d3de; border: 1px solid #2a2f3a; border-radius: 6px;
-  padding: 4px 10px; font: inherit; cursor: pointer;
-}
-.prepare-gcode button:hover { border-color: #4c8dff; }
-.prepare-gcode-error { color: #f08a8a; }
 section { margin-bottom: 18px; }
 h2 { font-size: 18px; } h3 { font-size: 14px; color: #0a7d4f; margin: 12px 0 4px; }
 
