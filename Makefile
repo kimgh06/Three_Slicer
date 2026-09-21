@@ -10,7 +10,28 @@
 VERSION       := $(shell node -p "require('./viewer-package/package.json').version")
 VIEWER_REMOTE ?= https://github.com/kimgh06/three-slicer-viewer.git
 DRY           ?= 0
-NPM_PUBLISH   := npm publish $(if $(filter 1,$(DRY)),--dry-run,)
+LOG_DIR       ?= $(or $(TMPDIR),/tmp)/three-slicer-release
+
+# The account publishes with 2FA, so a real publish asks for a one-time code right before each upload (a code
+# typed at the start would expire during the tests). --ignore-scripts skips the viewer's prepublishOnly: its build
+# and its two tests are exactly what preflight has just run.
+ifeq ($(DRY),1)
+ASK_OTP     :=
+NPM_PUBLISH := npm publish --ignore-scripts --dry-run
+else
+ASK_OTP     := printf 'npm OTP: '; read otp </dev/tty;
+NPM_PUBLISH := npm publish --ignore-scripts --otp=$$otp
+endif
+
+# $(call step,label,command): one status line per step. The output goes to $(LOG_DIR)/<label>.log and is printed
+# only when the step fails; "[  ]" is shown while it runs when stdout is a terminal. Neither argument may contain
+# a comma ($(call) splits on it).
+step = mkdir -p $(LOG_DIR); label='$(1)'; \
+	log="$(LOG_DIR)/$$(printf '%s' "$$label" | tr -c 'A-Za-z0-9.' _).log"; \
+	pad=$$(printf '%*s' $$((48 - $${\#label})) '' | tr ' ' '-'); \
+	cr=''; if [ -t 1 ]; then printf '%s %s [  ]' "$$label" "$$pad"; cr='\r'; fi; \
+	if ( $(2) ) >"$$log" 2>&1; then printf "$$cr%s %s [V]\n" "$$label" "$$pad"; \
+	else printf "$$cr%s %s [X]\n" "$$label" "$$pad"; tail -n 40 "$$log"; echo "full log: $$log"; exit 1; fi
 
 .PHONY: bump preflight publish
 
@@ -27,26 +48,26 @@ bump:  ## set three-slicer, three-slicer-viewer, the pin and the demo app's pins
 	@node viewer-package/tests/test_version_lockstep.mjs >/dev/null && echo "lockstep ok"
 
 preflight:  ## everything that must hold before a publish; DRY=1 skips the git-state checks
-	@grep -q "^## $(VERSION)" packages/CHANGELOG.md || { echo "packages/CHANGELOG.md has no '## $(VERSION)' entry"; exit 1; }
+	@$(call step,CHANGELOG has ## $(VERSION),grep -q "^## $(VERSION)" packages/CHANGELOG.md)
 ifneq ($(DRY),1)
-	@git diff --quiet && git diff --cached --quiet || { echo "working tree is not clean"; exit 1; }
-	@[ "$$(git branch --show-current)" = main ] || { echo "publish from main (on $$(git branch --show-current))"; exit 1; }
-	@git fetch -q origin && [ "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" ] || { echo "main is not pushed to origin"; exit 1; }
-	@! git rev-parse -q --verify "refs/tags/v$(VERSION)" >/dev/null || { echo "tag v$(VERSION) already exists"; exit 1; }
-	@npm whoami >/dev/null 2>&1 || { echo "not logged in to npm (npm login)"; exit 1; }
+	@$(call step,working tree is clean,git diff --quiet && git diff --cached --quiet)
+	@$(call step,on main,[ "$$(git branch --show-current)" = main ])
+	@$(call step,main is pushed to origin,git fetch -q origin && [ "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" ])
+	@$(call step,tag v$(VERSION) is new,! git rev-parse -q --verify "refs/tags/v$(VERSION)")
+	@$(call step,logged in to npm,npm whoami)
 endif
-	npm test
-	npm run build
-	bash packages/pack_check.sh
+	@$(call step,npm test,npm test)
+	@$(call step,npm run build,npm run build)
+	@$(call step,pack_check.sh,bash packages/pack_check.sh)
 
 publish: preflight  ## release $(VERSION): viewer first, then three-slicer, then the mirror and the tag
-	cd viewer-package && $(NPM_PUBLISH)
-	cd packages && $(NPM_PUBLISH)
+	@$(ASK_OTP) $(call step,publish three-slicer-viewer@$(VERSION),cd viewer-package && $(NPM_PUBLISH))
+	@$(ASK_OTP) $(call step,publish three-slicer@$(VERSION),cd packages && $(NPM_PUBLISH))
 ifeq ($(DRY),1)
 	@echo "[dry] skipped: mirror sync, tag v$(VERSION), push"
 else
-	$(MAKE) -C web sync-viewer VIEWER_REMOTE=$(VIEWER_REMOTE)
-	git tag -a "v$(VERSION)" -m "three-slicer + three-slicer-viewer $(VERSION)"
-	git push origin "v$(VERSION)"
+	@$(call step,sync the MIT mirror,$(MAKE) -C web sync-viewer VIEWER_REMOTE=$(VIEWER_REMOTE))
+	@$(call step,tag v$(VERSION),git tag -a "v$(VERSION)" -m "three-slicer + three-slicer-viewer $(VERSION)")
+	@$(call step,push tag v$(VERSION),git push origin "v$(VERSION)")
 	@echo "released $(VERSION)"
 endif
