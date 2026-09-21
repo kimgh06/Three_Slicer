@@ -21,11 +21,15 @@ export function followPlateLayout(THREE, { objects, count, prev, platePos, plate
     const dx = to.x - from.x, dz = to.z - from.z
     if (dx || dz) { o.mesh.position.x += dx; o.mesh.position.z += dz; o.mesh.updateMatrixWorld(true); moved = true }
   }
+  // By the DELTA, not onto the new origin: a kernel slice's offset IS its plate origin, but injected G-code's is
+  //  the bed CORNER (use_injection.js — its coordinates are bed millimetres), and setting it to the origin moved
+  //  every injected plate half a bed off its plate the moment the grid was re-laid out (a .gcode.3mf growing it).
   for (const key of Object.keys(plateOffsets ?? {})) {
-    const i = Number(key); if (i >= count) continue
-    const to = platePos(i)
-    plateOffsets[i] = { offX: to.x, offZ: to.z }
-    plateTp?.[i]?.group?.position.set(to.x, 0, to.z)
+    const i = Number(key); if (i >= count || i >= prev.n || !plateOffsets[i]) continue   // past the old grid: set against this one
+    const from = oldPosOf(i), to = platePos(i)
+    const offset = { offX: plateOffsets[i].offX + to.x - from.x, offZ: plateOffsets[i].offZ + to.z - from.z }
+    plateOffsets[i] = offset
+    plateTp?.[i]?.group?.position.set(offset.offX, 0, offset.offZ)
   }
   return moved
 }

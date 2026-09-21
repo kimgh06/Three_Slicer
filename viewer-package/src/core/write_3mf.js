@@ -12,6 +12,7 @@ import { serializeProjectSettings, settingRaw } from 'three-slicer-viewer/settin
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
 import { DEFAULT_BED, SLA_POINT_RADIUS } from './viewer_defaults.js'
 import { STL_HEADER_BYTES, STL_DATA_OFFSET, stlByteLength } from './stl_format.js'
+import { md5Hex } from './md5.js'
 
 // Deflate is the single largest cost of writing a project, and on the main thread every millisecond of it is a
 //  frozen tab. fflate's async entry point moves it to a Web Worker pool — the mirror of what parse_3mf.js does for
@@ -417,6 +418,98 @@ export async function write3MFProject(objects, settings, opts = {}) {
   //  buys nothing here and costs the user seconds of a frozen tab. Measured on a 980k-facet sphere (79MB of XML):
   //  level 6 = 1445ms -> 7.94MB, level 3 = 781ms -> 7.92MB. Level 3 is both faster AND smaller on this input;
   //  level 1 (681ms -> 8.77MB) starts giving real size back, so 3 is where the curve turns.
+  return zipAll(files, { level: 3 })
+}
+
+// ---- .gcode.3mf — upstream's "Export all plate sliced file" -------------------------------------------------
+// The same container, a different payload: upstream writes it with SaveStrategy SkipModel | WithGcode
+//  (Plater.cpp export_gcode_3mf), so the meshes are left out and each sliced plate's G-code rides as
+//  Metadata/plate_N.gcode, named by a `gcode_file` entry on its <plate> record, with its MD5 beside it (the
+//  printer checks it) and the plate's estimate in Metadata/slice_info.config. It is a print job, not a project:
+//  opening one shows the result and nothing in it can be re-sliced — which is also how upstream opens it.
+export const gcodeMemberOf = (plate) => `Metadata/plate_${plate + 1}.gcode`
+
+const GCODE_CONTENT_TYPES = CONTENT_TYPES.replace('</Types>',
+  ' <Default Extension="gcode" ContentType="text/x.gcode"/>\n</Types>')
+
+const EMPTY_MODEL = '<?xml version="1.0" encoding="UTF-8"?>\n'
+  + '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n'
+  + ' <resources>\n </resources>\n <build>\n </build>\n</model>\n'
+
+// Grams from millimetres of filament, per tool: the filament's cross-section times its density (g/cm3), as upstream
+//  derives used_g. A tool without a density or diameter weighs 0 rather than NaN.
+function filamentGrams(millimetres, tool, settings) {
+  const pick = (key) => Number([settingRaw(settings, key)].flat()[tool] ?? [settingRaw(settings, key)].flat()[0]) || 0
+  const radius = pick('filament_diameter') / 2
+  return millimetres * Math.PI * radius * radius * pick('filament_density') / 1000
+}
+
+function sliceInfoPlate(plate, stats, settings) {
+  const byTool = Array.isArray(stats?.filament_mm_by_tool) ? stats.filament_mm_by_tool : [stats?.filament_mm ?? 0]
+  const filaments = byTool.map((millimetres, tool) => ({ tool, millimetres: Number(millimetres) || 0 }))
+    .filter(entry => entry.millimetres > 0)
+  const colors = [settingRaw(settings, 'filament_colour')].flat()
+  const types = [settingRaw(settings, 'filament_type')].flat()
+  const grams = filaments.reduce((sum, entry) => sum + filamentGrams(entry.millimetres, entry.tool, settings), 0)
+  const lines = [
+    '  <plate>\n',
+    `    <metadata key="index" value="${plate + 1}"/>\n`,
+    `    <metadata key="prediction" value="${Math.round(Number(stats?.time_estimate) || 0)}"/>\n`,
+    `    <metadata key="weight" value="${grams.toFixed(2)}"/>\n`,
+    `    <metadata key="outside" value="${stats?.over_bed ? 'true' : 'false'}"/>\n`,
+  ]
+  for (const entry of filaments) {
+    lines.push(`    <filament id="${entry.tool + 1}" type="${xmlEscape(types[entry.tool] ?? '')}"`
+      + ` color="${xmlEscape(colors[entry.tool] ?? '')}" used_m="${(entry.millimetres / 1000).toFixed(2)}"`
+      + ` used_g="${filamentGrams(entry.millimetres, entry.tool, settings).toFixed(2)}"/>\n`)
+  }
+  lines.push('  </plate>\n')
+  return lines.join('')
+}
+
+/**
+ * Sliced plates -> a .gcode.3mf (Uint8Array, via a Promise — the deflate runs off-thread like the project writer's).
+ *   plates: [{ index, gcode, stats }] — plateResultsRef's own shape; `index` is the 0-based plate.
+ *   settings: the global map, written as project_settings.config exactly as a project save writes it.
+ *   opts.plateCount — every plate gets a <plate> record, sliced or not, as the project writer does.
+ */
+export async function writeGcode3MF(plates, settings, opts = {}) {
+  const { plateCount = 1, application = 'ThreeSlicer' } = opts
+  const sliced = (plates ?? []).filter(plate => typeof plate?.gcode === 'string' && plate.gcode.length)
+    .sort((left, right) => left.index - right.index)
+  if (!sliced.length) throw new Error('no sliced plate to export')
+  const encoder = new TextEncoder()
+  const files = {
+    '_rels/.rels': strToU8(RELS),
+    '[Content_Types].xml': strToU8(GCODE_CONTENT_TYPES),
+    '3D/3dmodel.model': strToU8(EMPTY_MODEL),
+  }
+  const byPlate = new Map(sliced.map(plate => [plate.index, plate]))
+  const plateTotal = Math.max(plateCount, sliced.at(-1).index + 1)
+  const modelConfig = ['<?xml version="1.0" encoding="UTF-8"?>\n<config>\n']
+  const sliceInfo = ['<?xml version="1.0" encoding="UTF-8"?>\n<config>\n',
+    `  <header>\n    <header_item key="X-BBL-Client-Type" value="slicer"/>\n    <header_item key="X-BBL-Client-Version" value="${xmlEscape(application)}"/>\n  </header>\n`]
+  for (let plate = 0; plate < plateTotal; plate++) {
+    modelConfig.push('  <plate>\n', `    <metadata key="plater_id" value="${plate + 1}"/>\n`)
+    const result = byPlate.get(plate)
+    if (result) {
+      const member = gcodeMemberOf(plate)
+      const bytes = encoder.encode(result.gcode)
+      files[member] = bytes
+      files[`${member}.md5`] = strToU8(md5Hex(bytes))
+      modelConfig.push(`    <metadata key="gcode_file" value="${member}"/>\n`)
+      sliceInfo.push(sliceInfoPlate(plate, result.stats, settings))
+    }
+    modelConfig.push('  </plate>\n')
+  }
+  modelConfig.push('</config>\n')
+  sliceInfo.push('</config>\n')
+  files['Metadata/model_settings.config'] = strToU8(modelConfig.join(''))
+  files['Metadata/slice_info.config'] = strToU8(sliceInfo.join(''))
+  const projectSettings = serializeProjectSettings(settings)
+  fillArrayHoles(projectSettings, settings)
+  if (Object.keys(projectSettings).length)
+    files['Metadata/project_settings.config'] = strToU8(JSON.stringify(projectSettings, null, 4) + '\n')
   return zipAll(files, { level: 3 })
 }
 

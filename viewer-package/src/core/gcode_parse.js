@@ -65,6 +65,7 @@ export function parseGcode(text, opts = {}) {
   let pendingZ = NaN
   let nSeg = 0, nTravel = 0, filament = 0
   const tools = new Set([0])
+  const filamentByTool = []                                    // mm of filament per tool index, the kernel's filament_mm_by_tool
 
   // A layer change resets the role and the width back to "unstated". They are per-run markers: this kernel writes
   //  "; skirt" once, for the skirt of layer 0, and nothing afterwards — carrying that across the whole file painted
@@ -80,6 +81,7 @@ export function parseGcode(text, opts = {}) {
     if (dist < EPS) return
     if (dE > EPS) {                                            // extrusion
       filament += dE
+      filamentByTool[tool] = (filamentByTool[tool] ?? 0) + dE
       if (pendingLayer) openLayer(Number.isNaN(pendingZ) ? z1 : pendingZ)
       else if (!markerMode && z1 > cur.z + 1e-3) openLayer(z1) // comment-less fallback: new layer on z rise
       const enc = encodeRole(role, tool)
@@ -169,11 +171,15 @@ export function parseGcode(text, opts = {}) {
   // `filament_mm` / `path_segments` / `layers` carry the kernel's own stat names, so a parsed result drops straight
   //  into the places a slice result goes (StatsCard reads stats.filament_mm). Time is NOT derived: an estimate needs
   //  the machine's acceleration limits, which G-code does not carry.
+  // `filament_mm_by_tool` too: the Filament-view switch, the stats card's per-tool rows and a .gcode.3mf's
+  //  slice_info all read it, and without it an opened multi-tool file landed on the Feature view while the same
+  //  slice opened on Filament. Purge (tower) extrusion is counted under its tool: G-code does not separate it.
   return {
     layers: layers.map(L => ({ z: L.z, paths: Float32Array.from(L.p), widths: Float32Array.from(L.w) })),
     stats: {
       layers: layers.length, path_segments: nSeg, travel_segments: nTravel,
       filament_mm: filament, tools: [...tools].sort((a, b) => a - b),
+      filament_mm_by_tool: Array.from(filamentByTool, mm => mm ?? 0),
     },
   }
 }
