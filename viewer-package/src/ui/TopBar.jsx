@@ -9,7 +9,7 @@ import { openIcon, saveIcon } from '../core/icons.js'
 //  on a large model (mostly one deflate call), so the button that started it says so and both are locked for the
 //  duration, the same way the slice button becomes "Slicing… 42%". No percentage here on purpose: the compression
 //  reports no progress, and a bar that moves on a timer tells the user something the program does not know.
-export default function TopBar({ showTabs, canvasMode, onCanvasMode, previewEnabled, onOpen, onSaveProject, onExportSTL, canSave,
+export default function TopBar({ showTabs, canvasMode, onCanvasMode, previewEnabled, prepareEnabled = true, gcodeJob = null, onCloseGcode, onOpen, onSaveProject, onExportSTL, canSave,
                                  exporting = null, onUndo, onRedo, canUndo, canRedo }) {
   const exportBusy = !!exporting
   const exportLabel = (which, idle, busy) => (exporting === which ? busy : idle)
@@ -33,9 +33,15 @@ export default function TopBar({ showTabs, canvasMode, onCanvasMode, previewEnab
           </button>
         )}
       </div>
+      {gcodeJob && (
+        <div className="tb-gcode" data-testid="gcode-job">
+          <span>G-code · {gcodeJob.name} · {Object.keys(gcodeJob.plates).length} plate(s)</span>
+          <button onClick={onCloseGcode} title="Close the G-code and go back to preparing models" data-testid="gcode-close">✕</button>
+        </div>
+      )}
       {showTabs && (
         <div className="tb-tabs" role="tablist" aria-label="Canvas mode">
-          <button role="tab" className={canvasMode === 'prepare' ? 'on' : ''} onClick={() => onCanvasMode('prepare')} data-testid="mode-prepare" title="Arrange, transform and paint supports">Prepare</button>
+          <button role="tab" className={canvasMode === 'prepare' ? 'on' : ''} onClick={() => onCanvasMode('prepare')} disabled={!prepareEnabled} data-testid="mode-prepare" title="Arrange, transform and paint supports (close an opened G-code first)">Prepare</button>
           <button role="tab" className={canvasMode === 'preview' ? 'on' : ''} onClick={() => onCanvasMode('preview')} disabled={!previewEnabled} data-testid="mode-preview" title="Preview the sliced toolpaths (enabled after slicing)">Preview</button>
         </div>
       )}
