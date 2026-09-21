@@ -1494,5 +1494,47 @@ const bedTreeCentre = sliceOnBed(makeTableSTL(), treeNoSkirt)
 ok(typeTotal(bedTreeCentre, 5) > 0, `a centred model's tree support is unaffected (type5=${typeTotal(bedTreeCentre, 5)})`)
 ok(bedTreeCentre.stats.over_bed === false, `...and is not over the bed either`)
 
+// ===== ;TYPE: role tags: the G-code TEXT names the roles the stream records =======================================
+//  The viewer draws a slice from the toolpath stream, but an exported .gcode / .gcode.3mf comes back as text, and
+//  the multi-material path wrote no role marks at all: an opened painted model drew its object as prime tower (every
+//  extrusion after the tower's "; prime tower" comment inherited it until the next layer). With gcode_role_tags the
+//  writer tags each run from the same type push_seg records, so reading the text back must give the stream's
+//  per-role extrusion length. Without the flag no tag is written — the default G-code is pinned by golden.mjs.
+console.log('\n[role tags]')
+const { parseGcode } = await import('../../../viewer-package/src/core/gcode_parse.js')
+const lengthByRole = (layers) => {
+  const byRole = {}
+  for (const L of layers) for (let i = 0; i < L.paths.length; i += 8) {
+    const role = ROLE_OF(L.paths[i + 3]); if (role === 0) continue
+    byRole[role] = (byRole[role] ?? 0) + Math.hypot(L.paths[i + 4] - L.paths[i], L.paths[i + 5] - L.paths[i + 1])
+  }
+  return byRole
+}
+const tagCases = [
+  ['single material, tree support, skirt', makeTableSTL(), { ...params, enable_support: true, support_style: 'tree', support_threshold_angle: 30 }],
+  ['raft', stlBin, { ...params, raft_layers: 2 }],
+  ['multi-material, ring tower', mmStl, { ...params, extruder_count: 2, mm_group_split: mmSplit, wipe_tower_real: false }],
+  ['multi-material, real WipeTower', mmStl, { ...params, extruder_count: 2, mm_group_split: mmSplit, wipe_tower_real: true }],
+  ['thin wall + gap fill', makeCrossSTL(), params],
+  ['gap fill ring', makeRingSTL(), params],
+  ['arachne walls + ironing', stlBin, { ...params, wall_generator: 'arachne', ironing_type: 'top' }],
+  ['scarf seam', stlBin, { ...params, seam_slope_type: 'external' }],
+  ['spiral', stlBin, { ...params, spiral_mode: true }],
+]
+for (const [name, stl, caseParams] of tagCases) {
+  const untagged = Module.slice(new Uint8Array(stl), JSON.stringify(caseParams), () => {})
+  const tagged = Module.slice(new Uint8Array(stl), JSON.stringify({ ...caseParams, gcode_role_tags: true }), () => {})
+  ok(!untagged.gcode.includes(';TYPE:'), `${name}: no ;TYPE: without the flag`)
+  //  The time estimate reads the same G-code through the ported GCodeProcessor, which acts on ;TYPE: — a tag must
+  //  change what a move is called, never how long it takes.
+  //  (The multi-material path reports no estimate; there both sides are absent and only the filament is compared.)
+  ok(untagged.stats.time_estimate === tagged.stats.time_estimate && untagged.stats.filament_mm === tagged.stats.filament_mm,
+     `${name}: same time estimate and filament with tags (${tagged.stats.time_estimate?.toFixed(1) ?? 'no estimate'}s, ${tagged.stats.filament_mm.toFixed(1)}mm)`)
+  const stream = lengthByRole(tagged.layers), text = lengthByRole(parseGcode(tagged.gcode).layers)
+  const roles = [...new Set([...Object.keys(stream), ...Object.keys(text)])].sort((a, b) => a - b)
+  const off = roles.filter(role => Math.abs((stream[role] ?? 0) - (text[role] ?? 0)) > 0.01 * Math.max(stream[role] ?? 0, text[role] ?? 0, 1))
+  ok(off.length === 0, `${name}: text read back gives the stream's length in every role (${roles.map(role => `${role}:${(stream[role] ?? 0).toFixed(0)}/${(text[role] ?? 0).toFixed(0)}`).join(' ')})`)
+}
+
 console.log(failed === 0 ? '\nALL NODE TESTS PASSED' : `\n${failed} TEST(S) FAILED`)
 process.exit(failed === 0 ? 0 : 1)

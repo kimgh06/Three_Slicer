@@ -259,6 +259,18 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 - One facet holds one integer (see the EnforcerBlockerType note above), but a 3mf keeps material and support paint
   in two independent annotations that can both mark the same facet. On import **material paint wins** and the
   support paint is reported as dropped — half-applying it would be worse than not applying it.
+- **The G-code text names the roles the stream records** (`Params::gcode_role_tags`, which the viewer turns on).
+  The preview draws a slice from the toolpath stream, but an exported `.gcode` / `.gcode.3mf` comes back as TEXT, and
+  the multi-material path wrote no role marks: an opened painted model drew its object as prime tower. `GW::role_tag`
+  writes upstream's `;TYPE:<name>` from the same kernel type `push_seg` records — one call per run in every `emit_*`
+  path, re-stated after every layer marker (`GW::layer_begin`) and after the real WipeTower's own tagged block
+  (`role_tag_unknown`). Upstream names where one exists; raft and thin wall, which upstream folds into Support and
+  walls, keep `Raft` / `Thin wall` so a read-back here keeps their colours (OrcaSlicer reads them as Undefined). The
+  flag is opt-in because the default G-code is golden-pinned; the tags change neither the time estimate nor the
+  filament total, and st/mt stay byte-identical with them on. `[role tags]` in `test.mjs` pins it by reading the
+  text back through `gcode_parse.js` and comparing per-role extrusion length with the stream in nine cases. The
+  parser resets its role at a layer MARKER, never where a layer lazily opens: that reset threw away a `;TYPE:`
+  written between the marker and the first move (every raft layer here, and Cura's `;LAYER:` files).
 - The toolpath stream's role field (`paths[k+3]`, stride 8) encodes `role + tool * 16`. Roles only reach 11, so the tool rides in the spare high bits rather than a 9th float — the segment stream is the largest array the viewer holds and a 9th float costs +12.5% of it for one small integer. **Anything reading that field must mask** (`& 15` for the role, `>>> 4` for the tool); pre-encoding output is entirely below 16 and decodes to its own role with tool 0. The viewer's readers and writers take the layout from `viewer-package/src/core/toolpath_encoding.js` (`STRIDE`, `ROLE`, `encodeRole`/`roleOf`/`toolOf`); the engine's standalone SLA worker keeps named copies.
 - `web/extract_all.py` takes the kernel key list (which preset columns to keep) from the GENERATED
   `viewer-package/src/settings/kernel_setting_keys.js`, the list `gen_kernel_params.mjs` probes out of

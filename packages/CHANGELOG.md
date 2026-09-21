@@ -10,6 +10,8 @@
 - A saved `.3mf` carries the per-plate overrides and the global map's non-schema keys (`wipe_tower_real`,
   `sla_antialias`) in a member of its own, `Metadata/three_slicer_settings.json`, and an import restores them.
   Upstream has no place for either and ignores the member, so OrcaSlicer still opens the file on the global preset.
+- The kernel can tag every extrusion run with upstream's `;TYPE:` (`gcode_role_tags`, opt-in; the viewer turns it
+  on), from the same role the preview draws. A saved G-code read back as text colours as the slice did.
 
 ### Changed
 
@@ -22,6 +24,10 @@
 
 ### Fixed
 
+- An opened multi-material G-code drew its model as prime tower in the Feature view: the multi-material path wrote
+  no role marks, so everything after a tower's comment inherited it until the next layer.
+- The G-code reader dropped a `;TYPE:` written between a layer marker and the layer's first move (Cura's
+  `;LAYER:` files, this kernel's raft layers), reading that run as wall.
 - Two objects on the same spot sliced to nothing. The kernel slices the merge of every object as one mesh and filled
   the layer loops even-odd, so coincident shells counted as "inside twice". Segments are now oriented by the facet
   normal and filled NonZero, upstream's Regular slicing mode, in the FFF, multi-material and SLA paths. Measured: a

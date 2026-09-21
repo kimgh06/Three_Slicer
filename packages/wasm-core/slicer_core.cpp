@@ -419,7 +419,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       seamCtx.rng = 2654435761u * (uint32_t)(i+1);
       g_seg_w = &widths; g_seg_w_cur = (float)w;
       char cm[72];
-      std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.raw(cm);
+      std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.layer_begin(cm);
       gw.set_fan(fan_S(i, p));
       std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
       int fSp = (int)std::llround(((i==0&&nraft==0)?p.first_layer_speed:p.print_speed)*60);
