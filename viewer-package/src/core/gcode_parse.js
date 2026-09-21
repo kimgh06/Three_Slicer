@@ -2,7 +2,7 @@
 //  (or the kernel's own output) without slicing: parseGcode(text) returns layers[{z, paths, widths}] in the
 //  exact contract buildSegmentData consumes (paths stride 8: [x0,y0,z0,enc, x1,y1,z1,enc], enc = role + tool*16,
 //  widths one entry per segment — see toolpath_segments.js).
-// Recognized input: G0/G1 linear moves, G2/G3 I/J arcs, G90/G91, M82/M83, G92, T<n> tool changes,
+// Recognized input: G0/G1 linear moves, G2/G3 I/J arcs, G90/G91, M82/M83, G92, T<n> tool changes (n <= 254),
 //  and the role/layer comment conventions of OrcaSlicer/PrusaSlicer (;TYPE: ;WIDTH: ;LAYER_CHANGE ;Z:),
 //  Cura (;TYPE: ;LAYER:) and this kernel ("; LAYER n Zx.xxx", "; walls"-style feature markers).
 // Roles the stream cannot state are recovered lossily: unknown ;TYPE: names fall back to wall(1), and when no
@@ -14,6 +14,45 @@ import { DEFAULT_FILAMENT_DIAMETER, DEFAULT_LAYER_HEIGHT } from './viewer_defaul
 import { ROLE, encodeRole } from './toolpath_encoding.js'
 
 const EPS = 1e-6
+// Upstream's highest real tool id (GCodeProcessor::process_T). Bambu start/end G-code carries T255, T1000, T1001,
+//  T1100, T65279 and T65535 as firmware opcodes, not tool changes; reading them as tools stamped the purge line
+//  as "tool 1000" and put a bogus entry in the tool list.
+const MAX_TOOL = 254
+// `; filament_colour = #RRGGBB;#RRGGBB` (Orca/Bambu/Prusa config block) and `; extruder_colour = …` (Prusa, where
+//  an empty entry means "use the filament colour"). The exact key only: Orca also writes filament_colour_type and
+//  filament_multi_colour, which are not the palette.
+const COLOUR_LINE = /^(filament|extruder)_colour\s*=\s*(.*)$/i
+const colourList = (value) => value.split(/[;,]/).map(entry => {
+  const match = /^"?#?([0-9a-f]{6})(?:[0-9a-f]{2})?"?$/i.exec(entry.trim())   // #RRGGBBAA keeps its RGB
+  if (!match) return null
+  return '#' + match[1].toUpperCase()
+})
+
+// The file's own colours with the session palette filling the holes, one entry per tool either side has.
+//  G-code colours belong to the ARTIFACT (upstream's G-code viewer reads them from the file, GCodeProcessor.cpp
+//  :3291), so a loaded file is drawn in them; a result without them (every kernel slice) keeps the session palette.
+export function resultToolColors(stats, sessionColors = []) {
+  const own = Array.isArray(stats?.colors) ? stats.colors : []
+  const length = Math.max(own.length, sessionColors.length)
+  return Array.from({ length }, (_unused, index) => own[index] || sessionColors[index])
+}
+
+// Appends the palette to G-code that does not state one, so an exported file opens in its own colours here and in
+//  upstream's viewer. The kernel does not write it (its G-code is golden-pinned); a file that already carries a
+//  palette — an opened .gcode saved again — keeps its own.
+export function withFilamentColours(gcode, colors) {
+  const text = String(gcode ?? '')
+  const valid = [colors].flat().filter(Boolean)
+  if (!valid.length || /^;\s*filament_colour\s*=/mi.test(text)) return text
+  const line = '; filament_colour = ' + valid.join(';') + '\n'
+  // Upstream reads settings only between ; CONFIG_BLOCK_START and ; CONFIG_BLOCK_END (Config.cpp
+  //  load_from_gcode_file), so where the file has that block the line goes inside it.
+  const blockEnd = text.lastIndexOf('\n; CONFIG_BLOCK_END')
+  if (blockEnd >= 0) return text.slice(0, blockEnd + 1) + line + text.slice(blockEnd + 1)
+  let separator = '\n'
+  if (!text || text.endsWith('\n')) separator = ''
+  return text + separator + line
+}
 const ROLE_BY_NAME = {
   // OrcaSlicer / PrusaSlicer ;TYPE: names
   'outer wall': ROLE.WALL, 'external perimeter': ROLE.WALL, 'inner wall': ROLE.WALL, 'perimeter': ROLE.WALL,
@@ -51,7 +90,8 @@ const PE_ROLE = {
 }
 
 // parseGcode(text, {filamentDiameter=1.75, defaultLayerHeight=0.2}) ->
-//   { layers: [{z, paths: Float32Array, widths: Float32Array}], stats: {layers, path_segments, travel_segments, tools} }
+//   { layers: [{z, paths: Float32Array, widths: Float32Array}],
+//     stats: {layers, path_segments, travel_segments, filament_mm, tools, filament_mm_by_tool, colors?} }
 export function parseGcode(text, opts = {}) {
   const filArea = Math.PI / 4 * (opts.filamentDiameter > 0 ? opts.filamentDiameter : DEFAULT_FILAMENT_DIAMETER) ** 2
   const defH = opts.defaultLayerHeight > 0 ? opts.defaultLayerHeight : DEFAULT_LAYER_HEIGHT
@@ -66,6 +106,7 @@ export function parseGcode(text, opts = {}) {
   let nSeg = 0, nTravel = 0, filament = 0
   const tools = new Set([0])
   const filamentByTool = []                                    // mm of filament per tool index, the kernel's filament_mm_by_tool
+  let filamentColours = [], extruderColours = []
 
   // A layer change resets the role and the width back to "unstated". They are per-run markers: this kernel writes
   //  "; skirt" once, for the skirt of layer 0, and nothing afterwards — carrying that across the whole file painted
@@ -112,6 +153,12 @@ export function parseGcode(text, opts = {}) {
 
     if (comment && !code) {
       const cl = comment.toLowerCase()
+      const colourLine = COLOUR_LINE.exec(comment)
+      if (colourLine) {
+        if (colourLine[1].toLowerCase() === 'filament') filamentColours = colourList(colourLine[2])
+        else extruderColours = colourList(colourLine[2])
+        continue
+      }
       if (cl.startsWith('type:')) { role = ROLE_BY_NAME[cl.slice(5).trim()] ?? ROLE.WALL; tagged = true; continue }
       if (cl.startsWith('_extrusion_role:')) { role = PE_ROLE[parseInt(cl.slice(16), 10)] ?? ROLE.WALL; tagged = true; continue }
       if (cl.startsWith('width:')) { const v = parseFloat(cl.slice(6)); width = v > 0 ? v : 0; continue }
@@ -131,7 +178,11 @@ export function parseGcode(text, opts = {}) {
     if (cmd === 'G91') { absXYZ = false; continue }
     if (cmd === 'M82') { absE = true; continue }
     if (cmd === 'M83') { absE = false; continue }
-    if (/^T\d+$/.test(cmd)) { tool = parseInt(cmd.slice(1), 10); tools.add(tool); continue }
+    if (/^T\d+$/.test(cmd)) {
+      const id = parseInt(cmd.slice(1), 10)
+      if (id <= MAX_TOOL) { tool = id; tools.add(tool) }
+      continue
+    }
 
     if (cmd === 'G92' || cmd === 'G0' || cmd === 'G1' || cmd === 'G2' || cmd === 'G3') {
       let nx = NaN, ny = NaN, nz = NaN, ne = NaN, ai = 0, aj = 0
@@ -181,12 +232,18 @@ export function parseGcode(text, opts = {}) {
   // `filament_mm_by_tool` too: the Filament-view switch, the stats card's per-tool rows and a .gcode.3mf's
   //  slice_info all read it, and without it an opened multi-tool file landed on the Feature view while the same
   //  slice opened on Filament. Purge (tower) extrusion is counted under its tool: G-code does not separate it.
+  // Per tool, extruder_colour wins where it names one (PrusaSlicer's GCodeViewer rule); Orca writes both the same.
+  const colourCount = Math.max(filamentColours.length, extruderColours.length)
+  const colors = Array.from({ length: colourCount }, (_unused, index) => extruderColours[index] || filamentColours[index] || null)
+  const byTool = Array.from({ length: Math.max(...tools) + 1 }, (_unused, index) => filamentByTool[index] || 0)
   return {
     layers: layers.map(L => ({ z: L.z, paths: Float32Array.from(L.p), widths: Float32Array.from(L.w) })),
     stats: {
       layers: layers.length, path_segments: nSeg, travel_segments: nTravel,
       filament_mm: filament, tools: [...tools].sort((a, b) => a - b),
-      filament_mm_by_tool: Array.from(filamentByTool, mm => mm ?? 0),
+      // The kernel's own stat name, so the Filament-view switch and the stats card's per-tool split work unchanged.
+      filament_mm_by_tool: byTool,
+      ...(colors.some(Boolean) && { colors }),
     },
   }
 }
