@@ -18,6 +18,17 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   lookup table with `??` when the choice maps names to values (`{ key: value }[name] ?? fallback`), and `cond &&
   <Element/>` for conditional JSX. `?.` and `??` are not ternaries and stay. Existing code is converted as it is
   touched.
+- **A value that has a named owner is read from it, never typed out again.** A list, label, limit or conversion
+  written a second time is right only until the owner changes, and nothing fails when the copy drifts. The format
+  list is the case that happened: `SUPPORTED_EXT` (`scene/model_loaders.js`) grows through `registerLoader()`, while
+  the drop overlay and the load-rejection message spelled out `STL/OBJ/3MF/AMF/PLY`, so neither named STEP, which
+  the demo registers, and the overlay named neither SL1 nor G-code. Derive the text from the owner (`EXT_LABEL` in
+  `Viewport.jsx`, `SUPPORTED_EXT` in `model_load.js`); where a value has no owner yet, make one constant and read it
+  everywhere. `test_layers.mjs` fails on the format list spelled out in code.
+  A plain `''` or `0` has no owner and never changes, so it is not a constant. An empty value that carries a
+  meaning is named instead: "clear the message" is `clearError()` / `clearSliceNotice()` / `clearTriWarn()`
+  (`Viewport.jsx` wiring), not `setError('')` at each call site, and "no value" is `null`. `test_layers.mjs` fails on
+  a `set…('')` outside those definitions.
 - `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
 - Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (93 keys from an empty settings map today), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
@@ -470,6 +481,63 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 - Licensed AGPL-3.0-or-later (`LICENSE.txt`) — except `viewer-package/`, which is MIT and must never import the
   AGPL package (`packages/viewer/tests/test_license_boundary.mjs` enforces it). Which code may carry which licence, and
   why, is `packages/PROVENANCE.md`.
+
+## Code review checklist
+
+What a review of a diff in this repo checks, in order. Each item points at the rule it enforces; the rule itself
+lives in Core rules above and is not restated here.
+
+### Scope and process
+
+- Review the diff, not the neighbourhood. A finding outside the changed lines is reported separately, never fixed
+  as a side effect.
+- Reproduce before judging a bug: run the case, read the output. Hold at least three competing explanations for a
+  defect, trace the causal chain past the first plausible cause, and report the explanations that were rejected and
+  why.
+- A completion or "fixed" claim cites a command and its output from this session. For UI, SVG or chart changes,
+  the evidence is the rendered result, not a static check.
+- Narrowing the requested scope is reported as a choice with the cost of doing it fully, never done silently or
+  filed as a "known limitation".
+
+### Repo rules (Core rules above)
+
+- No ternary operator anywhere, JSX and tests included. Suggest an early `return`, `if`/`else`, a lookup table with
+  `??`, or `cond && <Element/>`. Ternaries in touched code are converted.
+- One owner per fact. A second place that computes the same conversion, merge order, plate context or colour list,
+  or that types out a list, label or limit a constant already holds, is a defect even if it agrees today (`paint_clip.js`, `buildMergedSTL`, `plateContext`, `filament_colors.js`).
+- Omission, not defaults: a param is emitted only when the settings map holds its key.
+- Generated files (`PARAMS.md`, `settings-keys.d.ts`, `kernel_setting_keys.js`) change only through their generator.
+- Layer boundary: nothing under `core/` imports React, the DOM or a renderer; `ui/` does not reach into the scene or
+  the kernel. Arithmetic found in `scene/` is a candidate to move into `core/` where it can be tested.
+- Undo `record()` is called at the action layer, before the mutation, not in a button handler.
+- Unsupported input is refused with a typed code, never approximated.
+- `viewer-package/` never imports the AGPL package.
+- Kernel changes come with a golden `cmp` against a baseline regenerated from the pre-change source, plus `test.mjs`.
+- A new rule or invariant lands with the test that fails when it is broken.
+
+### Clean code
+
+- Does the change need to exist? Code for a speculative future need is removed.
+- Reuse before writing: a helper that already exists a few files away is imported, not copied.
+- Dependency ladder: standard library, then platform feature, then an installed dependency, then hand-written code.
+  A new dependency for a few lines is rejected.
+- No speculative abstraction: an interface with one implementation, a factory with one product, a config value that
+  never changes.
+- Boring over clever. Code that has to be decoded is rewritten, not commented.
+- Fix the shared root cause, not each symptom at its call site.
+- A deliberate simplification carries a comment naming its ceiling and what would justify replacing it.
+- Names are written out (`visibleCount`, not `vis`), scratch scripts included.
+- Comments and docs state facts and measurements ("measured: 208 -> 0"), without emphasis or dramatic wording.
+  Technical terms stay in their original language.
+
+### Never minimized away
+
+Validation at a trust boundary, error handling that prevents data loss, security controls, accessibility basics,
+and anything the request explicitly asked for.
+
+### Tools
+
+`/code-review` for correctness, `/ponytail-review` for over-engineering, `/simplify` to apply cleanups.
 
 ## Commands
 

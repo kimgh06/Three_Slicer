@@ -11,8 +11,34 @@ export interface GcodeLayer {
 
 export interface ParseGcodeResult {
   layers: GcodeLayer[]
-  stats: { layers: number; path_segments: number; travel_segments: number; tools: number[] }
+  stats: {
+    layers: number; path_segments: number; travel_segments: number; filament_mm: number
+    /** Tool ids that extruded or were selected. Firmware opcodes above T254 (Bambu's T1000, T255, …) are not tools. */
+    tools: number[]
+    /** Filament length (mm of E) per tool id — the kernel's own stat name. */
+    filament_mm_by_tool: number[]
+    /** The file's own palette per tool (`; filament_colour` / `; extruder_colour`), null where it names none. */
+    colors?: (string | null)[]
+  }
 }
+
+/**
+ * A result's colour list, one entry per tool: its own palette (`stats.colors`), then the session palette, then the
+ * categorical stand-in for a tool neither names. What the toolpath is drawn in and what an export states.
+ */
+export function resultToolColors(
+  stats: { colors?: (string | null)[]; filament_mm_by_tool?: number[] } | null | undefined,
+  sessionColors?: string[] | null,
+): string[]
+
+/** A result's G-code as it is saved: `withFilamentColours` over `resultToolColors`. */
+export function exportedGcode(
+  result: { gcode: string; stats?: { colors?: (string | null)[]; filament_mm_by_tool?: number[] } },
+  sessionColors?: string[] | null,
+): string
+
+/** Appends `; filament_colour = …` unless the text already states a palette. */
+export function withFilamentColours(gcode: string, colors: (string | null | undefined)[]): string
 
 export interface ParseGcodeOptions {
   /** Used to derive bead width from E when the file has no ;WIDTH: comments. Default 1.75. */

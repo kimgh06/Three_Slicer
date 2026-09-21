@@ -5,7 +5,7 @@ import { useSliceRequest, useAutoSlice } from './hooks/use_slice_request.js'
 import { useStaleSlice } from './hooks/use_stale_slice.js'
 import { useInitialFiles } from './hooks/use_initial_files.js'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
-import { SUPPORTED_EXT } from './scene/model_loaders.js'
+import { SUPPORTED_EXT, GCODE_EXTS } from './scene/model_loaders.js'
 import { MAX_PLATES } from './core/plate_layout.js'
 import { useSliceRun } from './hooks/use_slice_run.js'
 import { objectTools } from './core/toolbar_items.js'
@@ -262,8 +262,8 @@ export default function Viewport({
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount, setLayerLo, setLayerHi,
     setPlateRun, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setCanvasMode, setSliceNotice, setDowngradeOffer,
     setPaintCounts, setPaintModeState, setPaintStateCounts, setFillAngle,
-    setSlicedPlateCount, setSliceMenu, setPlateCount, setSelectedPlate,
-  }
+    setSlicedPlateCount, setSliceMenu, setPlateCount, setSelectedPlate, clearError: () => setError(''),
+    clearSliceNotice: () => setSliceNotice(''), clearTriWarn: () => setTriWarn(''), }   // "nothing to show", named once
 
   // ---- three.js scene (renderer/camera/controls/pointer handlers + the imperative apiRef surface) ----
   const { mountRef, three } = useThreeScene({
@@ -387,7 +387,7 @@ export default function Viewport({
   // ---- Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once) ----
   const {
     disposePlateToolpath, clearToolpaths, buildPlateToolpath, ensurePlateToolpaths,
-    applyViewColors, rebuildToolpaths, applyLayerRange,
+    applyViewColors, rebuildToolpaths, applyLayerRange, plateToolColors,
   } = makeToolpathView({ ...wiring, three })
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
@@ -500,10 +500,10 @@ export default function Viewport({
   })
 
   // ---- Injection: the `gcode` and `sl1` props, rendered on the selected plate without running the kernel ----
-  useInjection({
+  useInjection({ ...wiring,
     gcode: injectedGcode, sl1, importSl1, tech, kp: { ...ctx.params, bed_width: ctx.bedW, bed_depth: ctx.bedD },   // the SELECTED plate's params — injected content renders on it
     apiRef, selectedPlateRef, plateCountRef, plateOffsetsRef, plateResultsRef,
-    lineWidthRef, refreshSlicedCount, setError, setSliceNotice, showPlateResult, selectPlate, growPlates,
+    lineWidthRef, refreshSlicedCount, setError, showPlateResult, selectPlate, growPlates,
   })
 
   // Editing bed width x depth on the printer card — reduced to a printable_area rectangle (origin preserved). Circular/custom shapes belong to the panel editor.
@@ -656,7 +656,7 @@ export default function Viewport({
       layerLo={layerLo} layerHi={layerHi} segCount={segCount} singleLayer={singleLayer}
       onLayerLo={onLo} onLayerHi={onHi} onToggleSingle={toggleSingle}
       showTravel={showTravel} onToggleTravel={onToggleTravel}
-      colorRange={colorRange} roleLegend={roleLegend} extruderColors={extruderColors}
+      colorRange={colorRange} roleLegend={roleLegend} extruderColors={plateToolColors(selectedPlateRef.current)}
       moveScrub={!stats?.sla && showPanel('moveBar') ? moveScrub : null} />
   )
   // The per-tool filament split and the purge total are kernel stats of the focused plate's cached result
@@ -678,14 +678,14 @@ export default function Viewport({
   const bedOverText = overflowText(bedOverShown)
 
   const statsBlock = <StatsCard stats={statsWithTools} overBed={overBed} overBedText={bedOverText}
-    overBedModel={stats?.overBedModel !== false} extruderColors={extruderColors}
+    overBedModel={stats?.overBedModel !== false} extruderColors={plateToolColors(selectedPlateRef.current)}
     filamentTypes={asList('filament_type')} filamentIds={asList('filament_settings_id')} />
 
   // registerLoader() can add formats, so this is computed at render time.
-  // .sl1 rides on the same picker but is not in SUPPORTED_EXT — that list is the MESH loaders', and an archive
-  //  of raster masks must not reach them (model_load routes it to importSl1 instead).
-  const PICKER_EXT = [...SUPPORTED_EXT, 'sl1']
-  const EXT_LABEL = PICKER_EXT.map(e => e.toUpperCase()).join(' · ')
+  // .sl1 and G-code ride on the same picker but are not in SUPPORTED_EXT — that list is the MESH loaders', and
+  //  neither is a mesh (model_load routes them to importSl1 and openGcodePlates instead).
+  const PICKER_EXT = [...SUPPORTED_EXT, 'sl1', ...GCODE_EXTS]
+  const EXT_LABEL = [...SUPPORTED_EXT, 'sl1', 'gcode'].map(ext => ext.toUpperCase()).join(' · ')   // .gco/.g are aliases
 
   return (
     <ShadowHost css={THEME_CSS + shadowCss}>
@@ -733,7 +733,7 @@ export default function Viewport({
                 <button className="eh-btn" onClick={openFilePicker} data-testid="empty-pick" title={`Pick a ${EXT_LABEL} file (multiple allowed)`}>Choose file</button>
               </div>
             )}
-            {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here (STL/OBJ/3MF/AMF/PLY)</div>}
+            {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here ({EXT_LABEL})</div>}
             {ctxMenu && (
               <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} canPaste={!!clipboardRef.current}
                 selectedCount={selectedIds.length}

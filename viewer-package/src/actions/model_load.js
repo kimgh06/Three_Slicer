@@ -1,7 +1,8 @@
 import { log } from '../core/log.js'
+import { parseGcode } from '../core/gcode_parse.js'
 import { objectRows } from '../core/object_rows.js'
 import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer-viewer/settings'
-import { loadModel, SUPPORTED_EXT, fileExt } from '../scene/model_loaders.js'
+import { loadModel, SUPPORTED_EXT, GCODE_EXTS, fileExt } from '../scene/model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO, MAX_PLATES } from '../core/plate_layout.js'
 import { PRESET_ACCEPT } from './preset_actions.js'
 import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
@@ -99,8 +100,8 @@ export function makeModelLoad(deps) {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
     clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
     selectedPlateRef, disposePlateToolpath, plateCountRef, setPlateCount, bedRef,
-    setError, setTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
-    setColorRange, setSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
+    setError, clearError, setTriWarn, clearTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
+    setColorRange, setSliceNotice, clearSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
     openGcodePlates, closeImportedGcode,
   } = deps
 
@@ -200,25 +201,40 @@ export function makeModelLoad(deps) {
     }
   }
 
+  // A plain .gcode is a print job on the selected plate — the same path a .gcode.3mf takes (openGcodePlates), so
+  //  one Open button and one drop target take models, archives and G-code alike. Opened last, like .sl1: a model
+  //  load in the same pass would otherwise close it again.
+  //  A file with no printable move is refused BEFORE it opens: an opened job makes the viewer preview-only, and an
+  //  empty one left the Prepare tab locked behind a blank plate. (ponytail: parses the text twice — the injection
+  //  parses it again; hand the parse through if a large file makes that measurable.)
+  async function openGcodeFile(file) {
+    const text = await file.text()
+    if (!parseGcode(text).stats.layers) { setError(`${file.name}: no printable moves found — is this G-code?`); return }
+    openGcodePlates([{ index: selectedPlateRef?.current ?? 0, gcode: text }], file.name)
+  }
+
   async function loadFiles(fileList) {
     const all = Array.from(fileList || [])
+    const gcodeFiles = all.filter(file => openGcodePlates && GCODE_EXTS.includes(fileExt(file.name)))
     // .sl1 is not a mesh: it routes to the raster-preview import, and deliberately AFTER the mesh block below —
     //  loading meshes clears plateResultsRef, which is exactly where the import lands its result.
     const sl1Files = importSl1 ? all.filter(f => fileExt(f.name) === 'sl1') : []
     const presetFiles = loadPresetFile ? all.filter(f => PRESET_EXTS.includes(fileExt(f.name))) : []
     const files = all.filter(f => SUPPORTED_EXT.includes(fileExt(f.name)))
-    const rejected = all.length - files.length - sl1Files.length - presetFiles.length
-    if (!files.length && !sl1Files.length && !presetFiles.length) {
-      if (rejected) setError('Supported formats: STL/OBJ/3MF/AMF/PLY' + (importSl1 ? '/SL1' : '') + (loadPresetFile ? ' + preset files' : ''))
+    const rejected = all.length - files.length - sl1Files.length - presetFiles.length - gcodeFiles.length
+    if (!files.length && !sl1Files.length && !presetFiles.length && !gcodeFiles.length) {
+      const formats = [...SUPPORTED_EXT.map(ext => ext.toUpperCase()), importSl1 && 'SL1', openGcodePlates && 'G-code'].filter(Boolean).join('/')
+      if (rejected) setError('Supported formats: ' + formats + ((loadPresetFile && ' + preset files') || ''))
       return
     }
     if (!files.length) {
       for (const f of presetFiles) await loadPresetFile(f)
-      if (sl1Files.length) setError('')
+      if (sl1Files.length || gcodeFiles.length) clearError()
       for (const f of sl1Files) await importSl1(f)
+      if (gcodeFiles.length) await openGcodeFile(gcodeFiles.at(-1))   // one plate holds one print job
       return
     }
-    setError(''); setTriWarn(''); setProgress(0)
+    clearError(); clearTriWarn(); setProgress(0)
     // Only the plate the meshes land on loses its result: another plate's slice still describes objects this load
     //  does not touch (the per-plate staleness rule, slice_staleness.js). It used to reset every plate, so adding a
     //  model to plate 2 silently threw plate 1's slice away. A project that places objects on other plates
@@ -226,9 +242,9 @@ export function makeModelLoad(deps) {
     layersDataRef.current = null; segDataRef.current = null
     dropPlateResult(selectedPlateRef?.current ?? 0)
     clearToolpaths(); refreshSlicedCount()
-    setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setSliceNotice(''); setDowngradeOffer(null)
+    setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); clearSliceNotice(); setDowngradeOffer(null)
     // Presets before the meshes they came with — those are the settings the model is meant to load under — but
-    //  AFTER the state reset above, or the reset's setSliceNotice('') wipes the "Loaded machine: …" notice
+    //  AFTER the state reset above, or the reset's clearSliceNotice() wipes the "Loaded machine: …" notice
     //  (measured: the notice never appeared when a preset and an STL arrived in one pass).
     for (const f of presetFiles) await loadPresetFile(f)
     setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return '' })
@@ -263,6 +279,7 @@ export function makeModelLoad(deps) {
     setObjects(objectRows(objectsRef.current, apiRef.current))
     if (totalTri > 100000) setTriWarn(`${Math.round(totalTri).toLocaleString()} triangles — slicing may take a while`)
     for (const f of sl1Files) await importSl1(f)
+    if (gcodeFiles.length) await openGcodeFile(gcodeFiles.at(-1))
     // Imported painting sits on the objects (the per-object store, core/paint_store.js); registering the selector
     //  here loads the selected plate's share of it into the kernel and draws it, without waiting for a brush.
     if (anyPaint) registerSelectorRef?.current?.()

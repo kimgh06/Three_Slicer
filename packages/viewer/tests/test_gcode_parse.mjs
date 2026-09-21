@@ -6,7 +6,7 @@ import assert from 'node:assert'
 //  back with the permissive parser — so it stays on the AGPL side. The permissive package must not
 //  depend on the kernel, in tests either.
 import createSlicer from '../../engine/src/slicer_core.js'
-import { parseGcode } from 'three-slicer-viewer/gcode'
+import { parseGcode, resultToolColors, withFilamentColours } from 'three-slicer-viewer/gcode'
 
 const ROLE_OF = (v) => v & 15, TOOL_OF = (v) => v >>> 4
 
@@ -139,4 +139,43 @@ for (const role of Object.keys(hKernel)) {
 }
 assert.deepStrictEqual(Object.keys(hParsed).sort(), Object.keys(hKernel).sort(), 'tag mode recovers exactly the kernel roles')
 console.log(`  ok: tag mode roles ${Object.keys(hKernel).sort((a, b) => a - b).join(',')} recovered exactly`)
+
+// ── (3) a file's own colours and per-tool filament, and Bambu's firmware T opcodes ──────────────────
+//  Without filament_mm_by_tool a multi-tool file stayed on the Feature type view (Viewport's switch reads it), and
+//  without the palette the Filament view drew it in the session's colours. T1000/T255 are not tool changes.
+const bambu = parseGcode(`; filament_colour = #FF0000;#00ff00FF
+; filament_colour_type = 0;0
+M83
+T1000
+;LAYER_CHANGE
+;Z:0.2
+G1 X0 Y0 Z0.2
+G1 X10 Y0 E1
+T255
+T1
+G1 X20 Y0 E2
+T65535
+`)
+assert.deepStrictEqual(bambu.stats.tools, [0, 1], 'opcodes above T254 are not tools')
+assert.deepStrictEqual(bambu.stats.filament_mm_by_tool, [1, 2], 'filament per tool')
+assert.deepStrictEqual(bambu.stats.colors, ['#FF0000', '#00FF00'], 'filament_colour read, alpha dropped, _type ignored')
+const toolsOfFile = new Set(); for (let k = 0; k < bambu.layers[0].paths.length; k += 8) toolsOfFile.add(TOOL_OF(bambu.layers[0].paths[k + 3]))
+assert.deepStrictEqual([...toolsOfFile].sort(), [0, 1], 'the T255 after T0 leaves the tool at 0 until T1')
+// PrusaSlicer: extruder_colour wins per tool, an empty entry falls back to filament_colour.
+const prusa = parseGcode('; extruder_colour = "";"#0000FF"\n; filament_colour = #111111;#222222\nG1 X1 E1\n')
+assert.deepStrictEqual(prusa.stats.colors, ['#111111', '#0000FF'], 'extruder_colour over filament_colour per tool')
+assert.strictEqual(parseGcode('G1 X1 E1\n').stats.colors, undefined, 'no palette stated -> no colors field')
+assert.deepStrictEqual(resultToolColors({ colors: ['#FF0000', null] }, ['#AAAAAA', '#BBBBBB', '#CCCCCC']),
+  ['#FF0000', '#BBBBBB', '#CCCCCC'], 'file palette first, session fills holes')
+// Export round trip: the kernel writes no palette, the export appends one, a file that has one keeps it.
+assert.ok(!/filament_colour/.test(r.gcode), 'the kernel G-code states no palette (golden unchanged)')
+const exported = withFilamentColours(r.gcode, ['#123456', '#ABCDEF'])
+assert.deepStrictEqual(parseGcode(exported).stats.colors, ['#123456', '#ABCDEF'], 'an exported file reads its colours back')
+assert.strictEqual(withFilamentColours(exported, ['#000000']), exported, 'a stated palette is kept')
+if (r.gcode.includes('; CONFIG_BLOCK_END')) {
+  const block = exported.slice(exported.indexOf('; CONFIG_BLOCK_START'), exported.indexOf('; CONFIG_BLOCK_END'))
+  assert.ok(block.includes('; filament_colour = #123456;#ABCDEF'), 'the palette sits inside the config block upstream reads')
+}
+assert.strictEqual(withFilamentColours('G1 X1', ['#123456']), 'G1 X1\n; filament_colour = #123456\n', 'no block -> appended')
+console.log('  ok: file palette, per-tool filament, T>254 opcodes, export round trip')
 console.log('gcode_parse: ALL OK')

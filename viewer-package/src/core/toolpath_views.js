@@ -38,7 +38,7 @@ export function computeColors(data, viewType, ctx) {
     //  The Filament view paints each tool in that filament's OWN colour when the host supplied one (ctx.toolColors,
     //  the same list the filament card and the stats legend read), falling back to the categorical palette per tool.
     //  Without this the preview contradicts every other place the filament appears.
-    const toolRgb = (ctx?.toolColors ?? []).map(hexToRgb)
+    const toolRgb = (ctx?.toolColors ?? []).map(hex => hex && hexToRgb(hex))   // a hole falls back to TOOL_COLOR below
     const fixedColorAt = vt.key === 'filament'
       ? (i => { const t = meta.vTool ? meta.vTool[i] : 0; return toolRgb[t] || TOOL_COLOR[t % TOOL_COLOR.length] })
       : (i => TYPE_COLOR[meta.vType[i]] || TYPE_COLOR[1])

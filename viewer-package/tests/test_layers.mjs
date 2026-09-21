@@ -99,6 +99,20 @@ for (const dir of ['ui', 'actions']) for (const name of readdirSync(join(src, di
   check(`${dir}/${name} carries no global kp`, !/\bkp\.|kpRef/.test(text))
 }
 
+console.log('\n[layers: the supported formats are read from SUPPORTED_EXT, never spelled out]')
+// registerLoader() grows SUPPORTED_EXT at runtime (the demo adds STEP), so a list typed into code is wrong for every
+//  host that registers a loader — the drop overlay and the rejection message both were. Comments may name formats.
+const withoutComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+for (const dir of ['', 'core', 'scene', 'actions', 'ui', 'hooks']) for (const [name, text] of sourcesIn(dir))
+  check(`${dir || 'src'}/${name} spells out no format list`, !/STL\s*[\/·,]\s*OBJ/i.test(withoutComments(text)))
+
+console.log('\n[layers: clearing a message is named, not set to an empty string]')
+// The empty string there means "nothing to show"; it is spelled once, in Viewport's wiring (clearError & co.).
+for (const dir of ['', 'core', 'scene', 'actions', 'ui', 'hooks']) for (const [name, text] of sourcesIn(dir)) {
+  const clearedInline = withoutComments(text).split('\n').filter(line => /set[A-Z]\w*\(''\)/.test(line) && !/clear\w+: \(\) =>/.test(line))
+  check(`${dir || 'src'}/${name} clears no message with set…('')`, !clearedInline.length, clearedInline[0]?.trim())
+}
+
 console.log('\n[layers: the worker entries stay where the build looks for them]')
 const root = readdirSync(src)
 for (const name of ['make_worker.js', 'parse_3mf.worker.js', 'Viewport.jsx'])

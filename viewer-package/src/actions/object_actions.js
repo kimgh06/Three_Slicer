@@ -12,7 +12,7 @@ const deleting = new WeakSet()
 export function makeObjectActions(deps) {
   const {
     apiRef, objectsRef, clipboardRef, paintModeRef, flushPaintRef, selectorGeomRef, registerSelectorRef,
-    setPaintMode, removeObject, refreshObjects, setError, setSliceNotice,
+    setPaintMode, removeObject, refreshObjects, setError, setSliceNotice, clearError,
     recordHistory = () => {},
   } = deps
   // Undo entries are taken HERE rather than on the buttons: each of these runs from the keyboard, the object
@@ -41,7 +41,7 @@ export function makeObjectActions(deps) {
     const snap = apiRef.current?.getSnapshot(id)
     if (!snap) return
     await flushPaintRef?.current?.()
-    recordHistory(); spawnWithPaint(snap, paintOf(id)); setError('')
+    recordHistory(); spawnWithPaint(snap, paintOf(id)); clearError()
   }
   // The copy waits for the paint write-back before it fills the clipboard, so a paste pressed meanwhile waits for
   //  the copy (`clipboardRef.copying`) — it used to paste the previous clipboard, or nothing after a first copy.
@@ -50,7 +50,7 @@ export function makeObjectActions(deps) {
     if (!id) { setError('Select an object to copy first'); return }
     const snap = apiRef.current?.getSnapshot(id)
     const copying = Promise.resolve(flushPaintRef?.current?.()).then(() => {
-      clipboardRef.current = snap && { ...snap, paint: paintOf(id) }; setError('')
+      clipboardRef.current = snap && { ...snap, paint: paintOf(id) }; clearError()
       setSliceNotice('Object copied (paste with Ctrl+V)')
     })
     clipboardRef.copying = copying
@@ -75,7 +75,7 @@ export function makeObjectActions(deps) {
   function deleteSelected() {
     const id = apiRef.current?.selectedObjectId()
     if (!id) { setError('Select an object to delete first'); return }
-    return deleteOnce(() => { removeObject(id); setError('') })
+    return deleteOnce(() => { removeObject(id); clearError() })
   }
   // The object list's row button: the same guard, for a given id.
   function deleteObject(id) { return deleteOnce(() => removeObject(id)) }
@@ -119,7 +119,7 @@ export function makeObjectActions(deps) {
     })
     refreshObjects()
     if (selectorGeomRef?.current || partPaint.some(Boolean)) registerSelectorRef?.current?.()
-    setError('')
+    clearError()
     setSliceNotice(`Split into ${parts.length} objects`)
   }
   function setGizmo(m) { if (paintModeRef.current !== 'off') setPaintMode('off'); apiRef.current?.setMode(m) }   // leave paint mode first (same path as the toolbar)

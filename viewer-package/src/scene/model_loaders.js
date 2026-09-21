@@ -65,6 +65,8 @@ async function parse3mf(buffer, name) {
 
 // Built-in formats. registerLoader() appends extensions here (the file dialog / drag-and-drop filters read this).
 export const SUPPORTED_EXT = ['stl', 'obj', '3mf', 'amf', 'ply']
+// Print jobs, not meshes: model_load routes them to the G-code preview (openGcodePlates).
+export const GCODE_EXTS = ['gcode', 'gco', 'g']
 
 // Extra loader registry. Formats needing heavy dependencies (STEP -> OCCT WASM, 7.6MB) are not bundled and are
 //  registered by the consumer — three-slicer keeps zero runtime dependencies. (Demo app example: web/viewer/src/step_loader.js)

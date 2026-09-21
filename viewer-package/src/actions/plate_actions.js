@@ -15,6 +15,7 @@ import { acquireGpuDevice } from '../scene/gpu_device.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { download, saveWindowOpen } from './export_actions.js'
 import { writeGcode3MF } from '../core/write_3mf.js'
+import { exportedGcode } from '../core/gcode_parse.js'
 
 // SL1 reconstruction tuning. Every number here is measured on the same 1095-layer archive (15-core machine,
 // click to mesh on screen), and the ones that did NOT work are recorded with them so they are not retried:
@@ -44,10 +45,12 @@ export function makePlateActions(deps) {
     runSlice, createPoolContext, kernelKindRef, progressSinkRef, setPlateRun, setSliceRate,
     ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
-    setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
+    setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice, clearError, clearSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
-    onSlicedRef,
+    onSlicedRef, extruderColorsRef,
   } = deps
+  // The saved text names its filament colours, so the file opens in them again (here and upstream).
+  const gcodeForExport = (result) => exportedGcode(result, extruderColorsRef?.current)
 
   // Hands a finished slice to the host (the Viewport `onSliced` prop). Fired where the result is cached, not where
   //  it is displayed, so switching plate tabs — which re-displays a cached result — does not re-announce it.
@@ -101,7 +104,8 @@ export function makePlateActions(deps) {
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
     // A resin result has no G-code; its export (.sl1) is built on click by exportPlateSl1 — see SliceBar.
     setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl)
-      return r.stats.sla ? '' : URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
+      if (r.stats.sla) return ''
+      return URL.createObjectURL(new Blob([gcodeForExport(r)], { type: 'text/plain' })) })
   }
   // Build and save the focused plate's SL1 archive. Built on demand — rasterizing hundreds of layer PNGs is
   //  seconds of work, and paying it on every plate focus for a file that may never be saved is the same waste
@@ -407,7 +411,7 @@ export function makePlateActions(deps) {
       setError(skipped ? 'Every sliced plate extends beyond the bed — nothing exported' : 'No slice results to export — slice first')
       return
     }
-    const gcodePlates = done.filter(([, r]) => !r.stats?.sla).map(([i, r]) => ({ index: Number(i), gcode: r.gcode, stats: r.stats }))
+    const gcodePlates = done.filter(([, r]) => !r.stats?.sla).map(([i, r]) => ({ index: Number(i), gcode: gcodeForExport(r), stats: r.stats }))
     setExporting?.('Writing…')
     try {
       if (gcodePlates.length) {
@@ -439,7 +443,7 @@ export function makePlateActions(deps) {
     }
   }
   async function onSlice(scope = 'current') {
-    setSliceMenu(false); setError(''); setSliceNotice(''); setDowngradeOffer(null)
+    setSliceMenu(false); clearError(); clearSliceNotice(); setDowngradeOffer(null)
     const idx0 = selectedPlateRef.current
     // Per plate, not once for the run: a plate override can change line_width, and the toolpath mesh built when
     //  that plate's result lands reads whatever this ref holds at the time.
@@ -527,7 +531,7 @@ export function makePlateActions(deps) {
       }
       finally { progressSinkRef.current = null; for (const ctx of extras) ctx.terminate(); setSliceRate(0) }
       setSlicing(false)
-      if (canceled) { setSliceNotice('Slice canceled' + (sliced ? ` — ${sliced} finished result(s) are kept` : '')); setError(''); }
+      if (canceled) { setSliceNotice('Slice canceled' + (sliced ? ` — ${sliced} finished result(s) are kept` : '')); clearError(); }
       else if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('All plates failed to slice (economy mode included) — try the simplified retry'); return }
       else if (failed.length) {
         // Say WHY, not just which: every reason the ladder can end on names memory, and a row of crosses does not.
@@ -535,7 +539,7 @@ export function makePlateActions(deps) {
         setError(`Plate ${failed.join(', ')} failed — the ${sliced} finished result(s) are kept (inspect/export from the tabs)`
           + (reasons.length ? `. ${reasons[0]}` : '') + (reasons.length > 1 ? ` (+${reasons.length - 1} more, see the tab tooltips)` : ''))
       }
-      else { setError(''); setDowngradeOffer(null) }
+      else { clearError(); setDowngradeOffer(null) }
       if (anyEconomy) setSliceNotice('Memory pressure — some plates finished in economy mode (no preview, G-code is fine)')
       else if (anyClassic) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
       else if (!canceled && !failed.length) setSliceNotice(`Sliced ${sliced} plate${sliced === 1 ? '' : 's'} in ${((performance.now() - started) / 1000).toFixed(1)}s with ${pool} worker${pool === 1 ? '' : 's'}`
@@ -559,7 +563,7 @@ export function makePlateActions(deps) {
           syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged) })
         if (r?.stats) log.info(`[vp-prof] kernel stages p1=${(r.stats.t_pass1_ms/1000).toFixed(1)}s surf=${(r.stats.t_surface_ms/1000).toFixed(1)}s sup=${(r.stats.t_support_ms/1000).toFixed(1)}s emit=${(r.stats.t_emit_ms/1000).toFixed(1)}s reuse=${params.reuse_stages}`)
         plateResultsRef.current[idx0] = r; refreshSlicedCount(); announceSlice(idx0, r); setSlicing(false); showPlateResult(idx0)
-        setError(''); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
+        clearError(); setDowngradeOffer(null)   // a lower rung of the ladder succeeded — do not leave the failed first attempt's banner up
         // The SLA support tree can fail while the slice itself stands — saying so beats a silently bare model.
         if (r?.stats?.support_error) setSliceNotice(`Support generation failed (${r.stats.support_error}) — the slice contains the model only`)
         if (economy) setSliceNotice('Memory pressure — finished in economy mode (no preview, G-code can still be downloaded)')
