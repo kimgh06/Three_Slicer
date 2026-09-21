@@ -2,6 +2,7 @@ import { log } from '../core/log.js'
 import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
+import { withFilamentColours } from 'three-slicer-viewer/gcode'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
@@ -202,7 +203,7 @@ export function useSlicer(deps) {
     setStats(statsFromKernel(result.stats, result.throughput))
     setOverBed(!!result.stats.over_bed)
     setLayerCount(n)
-    setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(new Blob([result.gcode], { type: 'text/plain' })) })
+    setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(new Blob([withFilamentColours(result.gcode, extruderColorsRef?.current)], { type: 'text/plain' })) })
   }
 
   useEffect(() => () => {

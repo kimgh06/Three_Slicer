@@ -15,6 +15,7 @@ import { acquireGpuDevice } from '../scene/gpu_device.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { download, saveWindowOpen } from './export_actions.js'
 import { writeGcode3MF } from '../core/write_3mf.js'
+import { resultToolColors, withFilamentColours } from '../core/gcode_parse.js'
 
 // SL1 reconstruction tuning. Every number here is measured on the same 1095-layer archive (15-core machine,
 // click to mesh on screen), and the ones that did NOT work are recorded with them so they are not retried:
@@ -46,8 +47,10 @@ export function makePlateActions(deps) {
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
-    onSlicedRef,
+    onSlicedRef, extruderColorsRef,
   } = deps
+  // The saved text names its filament colours, so the file opens in them again (here and upstream).
+  const gcodeForExport = (r) => withFilamentColours(r.gcode, resultToolColors(r.stats, extruderColorsRef?.current ?? []))
 
   // Hands a finished slice to the host (the Viewport `onSliced` prop). Fired where the result is cached, not where
   //  it is displayed, so switching plate tabs — which re-displays a cached result — does not re-announce it.
@@ -101,7 +104,8 @@ export function makePlateActions(deps) {
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
     // A resin result has no G-code; its export (.sl1) is built on click by exportPlateSl1 — see SliceBar.
     setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl)
-      return r.stats.sla ? '' : URL.createObjectURL(new Blob([r.gcode], { type: 'text/plain' })) })
+      if (r.stats.sla) return ''
+      return URL.createObjectURL(new Blob([gcodeForExport(r)], { type: 'text/plain' })) })
   }
   // Build and save the focused plate's SL1 archive. Built on demand — rasterizing hundreds of layer PNGs is
   //  seconds of work, and paying it on every plate focus for a file that may never be saved is the same waste
@@ -407,7 +411,7 @@ export function makePlateActions(deps) {
       setError(skipped ? 'Every sliced plate extends beyond the bed — nothing exported' : 'No slice results to export — slice first')
       return
     }
-    const gcodePlates = done.filter(([, r]) => !r.stats?.sla).map(([i, r]) => ({ index: Number(i), gcode: r.gcode, stats: r.stats }))
+    const gcodePlates = done.filter(([, r]) => !r.stats?.sla).map(([i, r]) => ({ index: Number(i), gcode: gcodeForExport(r), stats: r.stats }))
     setExporting?.('Writing…')
     try {
       if (gcodePlates.length) {
