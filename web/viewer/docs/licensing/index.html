@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Using Three Slicer as a Viewer (MIT) or a Slicer (AGPL) | Three Slicer</title>
+    <meta name="description" content="How to embed three-slicer-viewer as an MIT G-code and 3mf viewer, and what changes when you plug in the three-slicer kernel to slice: the one import that brings the AGPL, shown in code." />
+    <link rel="canonical" href="https://slicer.kimgh06.com/docs/licensing" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0e1216" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Three Slicer" />
+    <meta property="og:url" content="https://slicer.kimgh06.com/docs/licensing" />
+    <meta property="og:title" content="Viewer under MIT, slicing under AGPL — in code" />
+    <meta property="og:description" content="Embed the MIT viewer for G-code and 3mf files; add slicing and accept the AGPL. The import that draws the line." />
+    <meta property="og:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "headline": "Using Three Slicer as a Viewer (MIT) or a Slicer (AGPL)",
+      "description": "How to embed three-slicer-viewer under MIT, and which import brings the AGPL when you add slicing.",
+      "author": { "@type": "Person", "name": "kimgh06", "url": "https://github.com/kimgh06" },
+      "mainEntityOfPage": "https://slicer.kimgh06.com/docs/licensing",
+      "image": "https://slicer.kimgh06.com/og-cover.png",
+      "datePublished": "2026-09-21",
+      "about": [ "Software licensing", "AGPL-3.0", "MIT", "3D printing", "React" ],
+      "isPartOf": { "@type": "WebSite", "@id": "https://slicer.kimgh06.com/#website" }
+    }
+    </script>
+    <style>
+      :root {
+        --bg: #0e1216; --panel: #141a20; --text: #e9f1f7; --body: #c2ced8;
+        --muted: #8d9daa; --border: #2c353d; --code: #9fe3bd; --accent: #00ae42;
+      }
+      body { margin: 0; background: var(--bg); color: var(--body);
+             font: 16px/1.75 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px 96px; }
+      a { color: var(--accent); }
+      a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      nav.crumb { padding: 28px 0 0; font-size: 13.5px; color: var(--muted); }
+      nav.crumb a { color: var(--muted); }
+      header { padding: 40px 0 8px; border-bottom: 1px solid var(--border); }
+      .kicker { color: var(--accent); font-size: 12.5px; font-weight: 700; letter-spacing: .02em; }
+      h1 { margin: 10px 0 12px; font-size: 34px; line-height: 1.2; color: var(--text); }
+      .lede { font-size: 17px; color: var(--muted); margin: 0 0 28px; }
+      h2 { margin: 48px 0 12px; font-size: 22px; color: var(--text); line-height: 1.3; }
+      p, li { word-break: keep-all; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; color: var(--code); }
+      pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+            padding: 14px 16px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; }
+      pre code { color: var(--body); }
+      .scroll { overflow-x: auto; margin: 20px 0; }
+      table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14.5px; }
+      th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { color: var(--text); font-weight: 600; }
+      .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+             padding: 16px 20px; margin: 32px 0 8px; }
+      .toc ol { margin: 8px 0 0; padding-left: 20px; }
+      .toc li { margin: 3px 0; }
+      footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border);
+               font-size: 14px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+    </style>
+    <link rel="stylesheet" href="/src/site_nav.css" />
+  </head>
+  <body>
+    <header class="site-nav" style="--site-nav-width: 760px; --site-nav-gutter: 24px">
+      <div class="site-nav-inner">
+        <a class="site-nav-brand" href="/">Three Slicer</a>
+        <nav aria-label="Site">
+          <a href="/slice">Slicer</a>
+          <a href="/docs">Docs</a>
+          <a href="/demos">Demos</a>
+          <a href="/about">About</a>
+          <a href="https://github.com/kimgh06/Three_Slicer" rel="noopener">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <div class="wrap">
+      <nav class="crumb"><a href="/">Three Slicer</a> › <a href="/docs">Docs</a> › Licensing</nav>
+
+      <header>
+        <div class="kicker">Docs</div>
+        <h1>Using it as a viewer (MIT) or a slicer (AGPL)</h1>
+        <p class="lede">
+          <code>three-slicer-viewer</code> displays G-code, 3mf projects and models, and it is MIT. It does
+          not slice. Slicing is plugged into it from <code>three-slicer</code>, which is AGPL. This guide
+          shows the three ways to set it up and which license each one puts your application under. The
+          policy itself is on the <a href="/license">license page</a>.
+        </p>
+      </header>
+
+      <div class="toc">
+        <strong>Contents</strong>
+        <ol>
+          <li><a href="#viewer">A G-code and 3mf viewer — MIT</a></li>
+          <li><a href="#slicing">Adding slicing — AGPL</a></li>
+          <li><a href="#own-worker">Your own slicing worker</a></li>
+          <li><a href="#check">Which license am I under?</a></li>
+        </ol>
+      </div>
+
+      <h2 id="viewer">1. A G-code and 3mf viewer — MIT</h2>
+      <pre><code>npm i three-slicer-viewer</code></pre>
+      <pre><code>import Viewport from 'three-slicer-viewer'
+
+// Opens models, 3mf projects and G-code; no kernel, no presets.
+&lt;Viewport settings={settings} setSettings={setSettings} gcode={gcodeText} /&gt;</code></pre>
+      <p>
+        This is the whole viewer: model loading, the toolpath preview of any slicer's G-code,
+        <code>.gcode.3mf</code> print jobs, 3mf project open and save, and the settings panel. Without a
+        slicer plugged in, the Slice action reports that no slicer is attached. Without the extracted
+        data, the settings panel labels each field by its key. Everything here can ship in a
+        closed-source product.
+      </p>
+      <p>Without React, the reader and the renderer are available directly:</p>
+      <pre><code>import { parseGcode } from 'three-slicer-viewer/gcode'
+import { buildSegmentData, makeToolpath } from 'three-slicer-viewer/toolpath'</code></pre>
+
+      <h2 id="slicing">2. Adding slicing — AGPL</h2>
+      <pre><code>npm i three-slicer</code></pre>
+      <pre><code>import Viewport, { useSlicer } from 'three-slicer-viewer'   // MIT
+import { makeSlicerWorker } from 'three-slicer/client'      // AGPL — this import puts your app under the AGPL
+import { bundledCatalog } from 'three-slicer/settings'      // AGPL — OrcaSlicer's vendor presets
+
+// Module level: it is called as a hook, so its identity must not change between renders.
+const slicer = (deps) =&gt; useSlicer({ ...deps, makeWorker: makeSlicerWorker })
+
+&lt;Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings} /&gt;</code></pre>
+      <p>
+        <code>three-slicer/viewer</code> is the same composition prepackaged:
+        <code>import Viewport from 'three-slicer/viewer'</code> gives the viewer with the kernel and the
+        presets already plugged in. Either way, the application now contains AGPL code. If you distribute
+        it, or offer it to users over a network — a website that slices in the browser does both — its
+        complete source has to be available to those users under the AGPL.
+      </p>
+      <p>
+        The slicer at <a href="/slice">/slice</a> is built this way, and its source is public for that
+        reason.
+      </p>
+
+      <h2 id="own-worker">3. Your own slicing worker</h2>
+      <p>
+        <code>useSlicer</code> belongs to the MIT package. Its only link to a kernel is
+        <code>makeWorker</code>, a function that returns a Web Worker speaking the viewer's slicing
+        protocol:
+      </p>
+      <pre><code>import Viewport, { useSlicer } from 'three-slicer-viewer'
+
+const slicer = (deps) =&gt; useSlicer({ ...deps, makeWorker: () =&gt; new Worker(myWorkerUrl, { type: 'module' }) })
+&lt;Viewport slicer={slicer} settings={settings} setSettings={setSettings} /&gt;</code></pre>
+      <p>
+        The application's license then depends on that worker. A worker containing no AGPL code keeps the
+        application under MIT. A worker built from OrcaSlicer, PrusaSlicer or <code>three-slicer</code>
+        sources is AGPL like they are. The protocol's reference implementation is
+        <code>packages/engine/src/slicer.worker.js</code> in the repository, and it is AGPL, so read it as a
+        specification rather than copying it.
+      </p>
+
+      <h2 id="check">4. Which license am I under?</h2>
+      <div class="scroll">
+      <table>
+        <tr><th>Your application imports</th><th>Can it slice?</th><th>License</th></tr>
+        <tr><td><code>three-slicer-viewer</code> only</td><td>No — viewing only</td><td>MIT</td></tr>
+        <tr><td><code>three-slicer-viewer</code> + your own AGPL-free worker</td><td>Yes</td><td>MIT</td></tr>
+        <tr><td>Anything from <code>three-slicer</code> (<code>/client</code>, <code>/settings</code>, <code>/viewer</code>, <code>/data</code>, …)</td><td>Yes</td><td>AGPL-3.0-or-later</td></tr>
+      </table>
+      </div>
+      <p>
+        A license-boundary test in the repository fails the build if <code>three-slicer-viewer</code> ever
+        imports <code>three-slicer</code>, so installing the viewer alone never pulls AGPL code in. This
+        guide summarizes the licenses and is not legal advice.
+      </p>
+
+      <footer>
+        <span>Three Slicer · AGPL-3.0-or-later · viewer MIT</span>
+        <a href="/">Home</a>
+        <a href="/slice">Slicer</a>
+        <a href="/license">License</a>
+        <a href="/docs/orcaslicer-webassembly-port">Engineering notes</a>
+        <a href="https://github.com/kimgh06/Three_Slicer" rel="noopener">GitHub</a>
+      </footer>
+    </div>
+  </body>
+</html>
