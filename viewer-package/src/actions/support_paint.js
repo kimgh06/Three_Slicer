@@ -264,11 +264,13 @@ export function makeSupportPaint(deps) {
       //  and is drawn from there: opening the support brush must not make the material paint vanish from view.
       //  During a drag the kernel overlay is hidden (beginPaintDrag) and the held objects draw the held annotation
       //  from the store too, so each object's paint moves with that object alone.
+      //  A held object draws from the store the kind it would show if it were not held (material first), unless that
+      //  is the kind the kernel overlay already draws: a plate whose objects carry only support paint, registered
+      //  while the selector held material (a drag's commit keeps the kind), used to show nothing at all.
       let kinds = [storedPaintKind(object.paint)]
       if (held.has(object.id)) {
-        kinds = []
+        kinds = kinds.filter(kind => kind !== record.kind)
         if (paintDragRef.current && record.kind) kinds.push(record.kind)
-        if (record.kind !== 'color' && object.paint?.color?.size) kinds.push('color')
       }
       for (const kind of kinds) {
         if (!kind || !object.paint?.[kind]?.size) continue
@@ -384,13 +386,13 @@ export function makeSupportPaint(deps) {
     const worker = paintStateAwareWorker()
     if (!worker) return Promise.resolve()
     return serial(worker, async () => {
-      const heldPlate = selectorGeomRef.current?.plate
       const result = await swapTo(worker, prebuiltMerged, requestedKind)
       if (!paintDragRef.current) for (const mesh of paintOverlayRef.current?.values?.() ?? []) mesh.visible = true
       refreshStoredOverlays()
-      // The kernel's copy of the section plane is in the held plate's local frame; any swap to another plate (a tab
-      //  click, a brush change, a stroke) re-sends it, not only the stroke that crossed.
-      if (selectorGeomRef.current?.plate !== heldPlate) apiRef.current?.refreshCursor?.()
+      // The kernel's copy of the section plane is in the held plate's local frame, and it is only sent while a frame
+      //  is set (section_plane.js). So every swap that leaves the brush with a frame re-sends it — another plate, and
+      //  a brush-kind switch on the same plate, which nulled the frame while it ran.
+      if (paintModeRef.current !== 'off' && paintXformRef.current) apiRef.current?.refreshCursor?.()
       return result
     })
   }
@@ -464,7 +466,8 @@ export function makeSupportPaint(deps) {
     // Only a kernel that cannot export loses paint here now — and that must not be silent.
     if (hadPaint && !kept) setSliceNotice?.('The painted regions were reset: this kernel cannot hand its painting '
                                            + 'back, so it does not survive switching the painted mesh.')
-    const loaded = await loadStoredPaint(worker, merged, wantedKind)
+    const brushAsked = requestedKind === 'color' || requestedKind === 'supports'
+    const loaded = await loadStoredPaint(worker, merged, wantedKind, { reportDropped: !brushAsked })
     if (loaded === null) {
       // The worker answered the load with an error or died: the selector is empty while the store is not. Nothing may
       //  be written back from it (that would erase the store), no stroke may land on it, and a slice must not run on
@@ -483,7 +486,10 @@ export function makeSupportPaint(deps) {
   // One facet carries one state (see paintStateFor), and material and support paint are two independent
   //  annotations that CAN both mark the same facet. There is no representation here that holds both, so material
   //  paint wins and the support paint is reported as left out rather than half-applied.
-  function loadStoredPaint(worker, merged, requestedKind = null) {
+  //  `reportDropped`: say when material paint is loaded over objects that also carry support paint. On for every
+  //  load a brush did not ask for (a slice's 'auto', an import or a move with no kind); a brush that asked for
+  //  material knows what it opened.
+  function loadStoredPaint(worker, merged, requestedKind = null, { reportDropped = !requestedKind } = {}) {
     const objects = objectsById()
     const kind = requestedKind ?? paintKindFor(objects, merged.members)
     // Which kind the selector holds from now on — even with nothing of it to load: the overlay colour reads it
@@ -491,7 +497,7 @@ export function makeSupportPaint(deps) {
     if (selectorGeomRef.current) selectorGeomRef.current.kind = kind
     const chosen = mergedPaint(objects, merged.members, kind)
     if (!chosen) return Promise.resolve(true)   // nothing to load is a success
-    if (!requestedKind && kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
+    if (reportDropped && kind === 'color' && mergedPaint(objects, merged.members, 'supports'))
       setSliceNotice?.('These objects are painted for both material and support. One facet holds one paint state, so '
                      + 'the material painting was loaded and the support painting was left out.')
     // No overlay request follows: the reply carries `counts`, and the message listener above already asks for the

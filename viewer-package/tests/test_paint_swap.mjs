@@ -66,6 +66,7 @@ const makeScene = ({ sameBytes = false } = {}) => {
 
 const setup = (scene, { slicing = { current: false }, paintDragRef = { current: false } } = {}) => {
   let worker = new FakeSelectorWorker()
+  const notices = [], cursorRefreshes = { count: 0 }
   const refs = { selectedPlateRef: { current: 0 }, selectorGeomRef: { current: null }, paintXformRef: { current: null },
                  paintOverlayRef: { current: null }, paintModeRef: { current: 'off' }, materialExtruderRef: { current: 1 },
                  extruderColorsRef: { current: ['#111111', '#222222', '#333333'] }, paintStateCountsRef: { current: {} },
@@ -73,12 +74,12 @@ const setup = (scene, { slicing = { current: false }, paintDragRef = { current: 
   const paint = makeSupportPaint({
     ...refs,
     three: { current: { objectsGroup: { add() {}, remove() {} }, invalidate() {} } },
-    apiRef: { current: { buildMergedSTL: scene.buildMergedSTL, detachTransform() {}, refreshCursor() {}, paintClipPlanes: () => null } },
+    apiRef: { current: { buildMergedSTL: scene.buildMergedSTL, detachTransform() {}, refreshCursor() { cursorRefreshes.count++ }, paintClipPlanes: () => null } },
     getWorker: () => worker,
-    setError() {}, setPaintModeState() {}, setPaintCounts() {}, setPaintStateCounts() {}, setSliceNotice() {},
+    setError() {}, setPaintModeState() {}, setPaintCounts() {}, setPaintStateCounts() {}, setSliceNotice: (notice) => notices.push(notice),
     isSelectorSlicing: () => slicing.current, paintDragRef,
   })
-  return { paint, refs, worker: () => worker, replaceWorker: () => { worker = new FakeSelectorWorker(); return worker } }
+  return { paint, refs, notices, cursorRefreshes, worker: () => worker, replaceWorker: () => { worker = new FakeSelectorWorker(); return worker } }
 }
 const paintOf = (scene, id) => scene.objects.find(object => object.id === id).paint ?? {}
 const entries = (marks) => [...(marks ?? new Map())]
@@ -265,6 +266,47 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
   release(); await settle(); await settle()
   assert.notEqual(refs.paintXformRef.current, null, 'the swap to the support annotation lets strokes through again')
   assert.equal(refs.selectorGeomRef.current.kind, 'supports')
+}
+
+// ---- a same-plate brush-kind switch re-sends the section plane once the swap has set the frame again ----
+{
+  const scene = makeScene()
+  const { paint, refs, cursorRefreshes } = setup(scene)
+  refs.selectedPlateRef.current = 1
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  refs.paintModeRef.current = 'material'
+  paint.setPaintMode('enforcer'); refs.paintModeRef.current = 'enforcer'
+  const afterSwitch = cursorRefreshes.count                             // the switch's own refresh ran with no frame
+  await settle(); await settle()
+  assert.notEqual(refs.paintXformRef.current, null)
+  assert.ok(cursorRefreshes.count > afterSwitch, 'the swap refreshes the section plane in the frame it just set')
+}
+
+// ---- a held object whose only paint is of the kind the selector does not hold still draws it ----
+{
+  const scene = makeScene()
+  const { paint, refs } = setup(scene)
+  scene.objects[0].paint = { color: new Map([[1, HEX_STATE_2]]) }
+  scene.objects[1].paint = { supports: new Map([[2, HEX_STATE_1]]) }   // plate 1: support paint only
+  paint.setPaintMode('material'); await paint.registerSelector(); await settle()
+  paint.setPaintMode('off'); refs.paintModeRef.current = 'off'
+  refs.selectedPlateRef.current = 1
+  await paint.registerSelector(); await settle()                        // a drag's commit on plate 1: no kind
+  assert.equal(refs.selectorGeomRef.current.plate, 1)
+  assert.equal(refs.selectorGeomRef.current.kind, 'color', 'the selector keeps the material annotation')
+  const drawn = scene.objects[1].mesh.children.filter(child => child.userData?.storedPaint).length
+  assert.ok(drawn > 0, 'the support paint the selector does not hold is drawn from the store')
+}
+
+// ---- a slice that loads the material paint of objects that also carry support paint says so ----
+{
+  const scene = makeScene()
+  const { paint, refs, notices } = setup(scene)
+  scene.objects[0].paint = { color: new Map([[1, HEX_STATE_2]]), supports: new Map([[2, HEX_STATE_1]]) }
+  paint.setPaintMode('enforcer'); await paint.registerSelector(); await settle()   // a selector already exists
+  paint.setPaintMode('off'); refs.paintModeRef.current = 'off'
+  await paint.registerSelector(null, { kind: 'auto' }); await settle()
+  assert.ok(notices.some(notice => /material and support/.test(notice)), 'the left-out support paint is reported')
 }
 
 console.log('paint_swap: ok')

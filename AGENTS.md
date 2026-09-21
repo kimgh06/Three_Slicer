@@ -163,7 +163,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   Clear is a selector job too: sent straight to the worker it landed between a swap's export and load, and the load
   put the paint back; it also empties the held objects' stored marks and the remembered counts. Opening a brush of
   the other kind nulls `paintXformRef` at once: its swap queues behind any running selector job while the brush
-  switches immediately, and strokes in between were filed under the old kind.
+  switches immediately, and strokes in between were filed under the old kind. **(20)** The section plane reaches the
+  kernel only with a frame to convert it in (`section_plane.js` skips while `paintXformRef` is null), and every swap
+  that leaves an open brush with a frame re-sends it — a same-plate brush-kind switch used to leave the kernel a plane
+  converted against 0,0. A held object draws from the store the kind it would show unheld when that is not the held
+  kind (support-only paint vanished after a drag kept the selector on material). A load no brush asked for (a
+  slice's 'auto', an import, a move) reports support paint left out under material paint.
 - **The mesh-direct SL1 mask is only used for a consistently wound mesh** (`core/mesh_winding.js`, checked per export:
   720k facets in ~0.7s). It counts the surfaces above a pixel by each facet's own facing; the kernel reverses a loop
   assembled mostly backwards. They agree for consistent and fully inverted meshes and coincident copies, and not

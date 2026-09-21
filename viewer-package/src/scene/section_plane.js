@@ -47,8 +47,12 @@ export function createSectionPlane({ renderer, camera, objectsRef, workerRef, pa
   const syncKernel = (active) => {
     const worker = workerRef.current; if (!worker) return
     if (!active) { worker.postMessage({ cmd: 'paintMode', clipPlane: null }); return }
+    // The kernel clips in the held plate's local frame, so without one there is nothing correct to send: a null
+    //  transform means a swap is running (a brush-kind switch nulls it), and converting against 0,0 then left the
+    //  kernel a shifted plane on every plate but the first. The swap refreshes the plane once it sets the frame.
+    if (!paintXformRef.current) return
     const converted = kernelClipPlane([plane.normal.x, plane.normal.y, plane.normal.z], plane.constant,
-                                      paintXformRef.current ?? { cx: 0, cy: 0, minz: 0 })
+                                      paintXformRef.current)
     worker.postMessage({ cmd: 'paintMode', clipPlane: [...converted.normal, converted.offset] })
   }
 

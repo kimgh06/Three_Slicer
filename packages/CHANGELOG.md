@@ -51,6 +51,9 @@
 - A paint export the worker fails no longer discards the unsaved strokes (the swap stops instead), and Clear
   pressed during a plate switch clears the plate it lands on instead of doing nothing. Strokes made right after
   switching between the support and material brushes are no longer saved as the other kind of paint.
+- Switching between the support and material brushes with the section plane on no longer leaves the kernel a
+  shifted plane on plates past the first; support-only paint stays drawn after a drag on its plate; a slice that
+  leaves support paint out under material paint says so again.
 - Paint for a filament that is not configured (T3 painted, then the list cut to two) no longer widens the extruder
   count on a slice-all pool worker only; every path leaves it out and the slice says so.
   Every plate's paint stays drawn, not only the plate being painted.
