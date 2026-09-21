@@ -1,6 +1,6 @@
 {
   "name": "three-slicer-viewer",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "The three-slicer viewer without the slicer — model loading, G-code parsing, GPU toolpath rendering and the settings transforms, under MIT. Plug a slicer in through the `slicer` prop.",
   "license": "MIT",
   "type": "module",
