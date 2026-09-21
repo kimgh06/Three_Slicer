@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 — 2026-09-21
 
 ### Added
 
@@ -21,6 +21,13 @@
   file"). Its ▾ menu holds the viewed plate alone as a `.gcode.3mf` and the plain `.gcode`. It also works on an
   opened `.gcode.3mf`, so a print job can be saved again.
 
+- The Open button and the drop target take a plain `.gcode` / `.gco` / `.g`. It opens on the selected plate
+  through the same path a `.gcode.3mf` takes: the top bar names it and closes it. A file with no printable move is
+  refused before it opens. The demo app's own Open G-code button is gone.
+- An exported G-code states its filament colours (`; filament_colour` in the config block, where upstream reads
+  settings), so it opens in its colours here and in OrcaSlicer. A file that already states a palette keeps it; the
+  kernel's G-code itself is unchanged.
+
 ### Changed
 
 - The ring / real tower choice is the settings key `wipe_tower_real` (a viewer knob, like `sla_antialias`) instead
@@ -34,6 +41,13 @@
 
 - An opened multi-material G-code drew its model as prime tower in the Feature view: the multi-material path wrote
   no role marks, so everything after a tower's comment inherited it until the next layer.
+- A loaded G-code was drawn in the session's palette instead of its own. The Filament view reads each plate's
+  palette from its result (the file's, with the session's filling the holes), and every tool the result used gets
+  a colour, so a file with more tools than the session has filaments no longer shows T3 in three different colours
+  across the toolpath, the stats card and the legend. The G-code reader reports per-tool filament
+  (`filament_mm_by_tool`).
+- The drop overlay and the load-rejection message listed STL/OBJ/3MF/AMF/PLY by hand: neither named STEP, which the
+  demo registers, and the overlay named neither SL1 nor G-code. Both now read `SUPPORTED_EXT`.
 - The G-code reader dropped a `;TYPE:` written between a layer marker and the layer's first move (Cura's
   `;LAYER:` files, this kernel's raft layers), reading that run as wall.
 - The drop highlight stayed on after a drop the host handled itself (the demo app's `.gcode` drop): the canvas's

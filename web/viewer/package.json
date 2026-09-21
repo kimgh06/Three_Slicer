@@ -15,8 +15,8 @@
     "react-dom": "^18.3.1",
     "react-router": "^7.0.0",
     "three": "^0.160.0",
-    "three-slicer": "0.3.1",
-    "three-slicer-viewer": "0.3.1"
+    "three-slicer": "0.3.2",
+    "three-slicer-viewer": "0.3.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

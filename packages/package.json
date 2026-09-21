@@ -1,6 +1,6 @@
 {
   "name": "three-slicer",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Browser/WASM 3D-printing slicer reverse-engineered from OrcaSlicer: slicing engine (Arachne walls, tree/grid supports, multi-material), SLA resin slicing with PrusaSlicer's ported support/pad chain and .sl1 export, React viewer with GPU toolpath preview, and schema-driven settings UI.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -134,6 +134,6 @@
     "clipping"
   ],
   "dependencies": {
-    "three-slicer-viewer": "0.3.1"
+    "three-slicer-viewer": "0.3.2"
   }
 }
