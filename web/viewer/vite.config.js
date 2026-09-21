@@ -16,6 +16,9 @@ const ROUTE_HTML = {
   '/slice': '/slice/index.html',
   '/demos': '/demos/index.html',
   '/about': '/about/index.html',
+  '/license': '/license/index.html',
+  '/docs/licensing': '/docs/licensing/index.html',
+  '/docs': '/docs/index.html',
   '/docs/orcaslicer-webassembly-port': '/docs/orcaslicer-webassembly-port/index.html',
 }
 
@@ -53,6 +56,9 @@ export default defineConfig({
         demos: resolve(__dirname, 'demos/index.html'),
         about: resolve(__dirname, 'about/index.html'),
         docsWasmPort: resolve(__dirname, 'docs/orcaslicer-webassembly-port/index.html'),
+        license: resolve(__dirname, 'license/index.html'),
+        docsLicensing: resolve(__dirname, 'docs/licensing/index.html'),
+        docs: resolve(__dirname, 'docs/index.html'),
       },
     },
   },

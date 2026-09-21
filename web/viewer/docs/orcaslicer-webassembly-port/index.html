@@ -70,10 +70,23 @@
              background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
       .cta.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
     </style>
+    <link rel="stylesheet" href="/src/site_nav.css" />
   </head>
   <body>
+    <header class="site-nav" style="--site-nav-width: 760px; --site-nav-gutter: 24px">
+      <div class="site-nav-inner">
+        <a class="site-nav-brand" href="/">Three Slicer</a>
+        <nav aria-label="Site">
+          <a href="/slice">Slicer</a>
+          <a href="/docs">Docs</a>
+          <a href="/demos">Demos</a>
+          <a href="/about">About</a>
+          <a href="https://github.com/kimgh06/Three_Slicer" rel="noopener">GitHub</a>
+        </nav>
+      </div>
+    </header>
     <div class="wrap">
-      <nav class="crumb"><a href="/">Three Slicer</a> › Docs › OrcaSlicer to WebAssembly</nav>
+      <nav class="crumb"><a href="/">Three Slicer</a> › <a href="/docs">Docs</a> › OrcaSlicer to WebAssembly</nav>
 
       <header>
         <div class="kicker">Engineering notes</div>
@@ -377,6 +390,7 @@ return await (await import('./slicer_core.js')).default()</code></pre>
         <a href="/slice">Slicer</a>
         <a href="/demos">Demos</a>
         <a href="/about">About</a>
+        <a href="/license">License</a>
         <a href="https://github.com/kimgh06/Three_Slicer" rel="noopener">GitHub</a>
         <a href="https://www.npmjs.com/package/three-slicer" rel="noopener">npm</a>
       </footer>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { REPO } from './repo.js'
+import SiteNav from './SiteNav.jsx'
 
 // The demos are separate npm projects under examples/. `npm run demos` builds them into
 // public/demos/<name>/ and writes the manifest this page reads; without that step the page says so
@@ -99,6 +100,7 @@ export default function Demos() {
 
   return (
     <div className="landing demos">
+      <SiteNav current="/demos" />
       <header className="lp-head demos-head">
         <div className="lp-kicker">three-slicer · demos</div>
         <h1>Four ways to consume the package</h1>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Docs — Guides, References and Engineering Notes | Three Slicer</title>
+    <meta name="description" content="Every Three Slicer document in one place: licensing, the package READMEs and API references, the kernel parameter table, and the engineering notes on how the OrcaSlicer port was built." />
+    <link rel="canonical" href="https://slicer.kimgh06.com/docs" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0e1216" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Three Slicer" />
+    <meta property="og:url" content="https://slicer.kimgh06.com/docs" />
+    <meta property="og:title" content="Three Slicer docs" />
+    <meta property="og:description" content="Licensing, package references and engineering notes for Three Slicer." />
+    <meta property="og:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://slicer.kimgh06.com/og-cover.png" />
+    <style>
+      :root {
+        --bg: #0e1216; --panel: #141a20; --text: #e9f1f7; --body: #c2ced8;
+        --muted: #8d9daa; --border: #2c353d; --code: #9fe3bd; --accent: #00ae42;
+      }
+      body { margin: 0; background: var(--bg); color: var(--body);
+             font: 16px/1.75 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px 96px; }
+      a { color: var(--accent); }
+      a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      nav.crumb { padding: 28px 0 0; font-size: 13.5px; color: var(--muted); }
+      nav.crumb a { color: var(--muted); }
+      header { padding: 40px 0 8px; border-bottom: 1px solid var(--border); }
+      .kicker { color: var(--accent); font-size: 12.5px; font-weight: 700; }
+      h1 { margin: 10px 0 12px; font-size: 34px; line-height: 1.2; color: var(--text); }
+      .lede { font-size: 17px; color: var(--muted); margin: 0 0 28px; }
+      h2 { margin: 44px 0 6px; font-size: 20px; color: var(--text); line-height: 1.3; }
+      .section-note { margin: 0 0 14px; color: var(--muted); font-size: 14.5px; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; color: var(--code); }
+      .doc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+      .doc-list a { display: block; padding: 14px 16px; background: var(--panel); border: 1px solid var(--border);
+                    border-radius: 10px; text-decoration: none; }
+      .doc-list a:hover { border-color: var(--accent); }
+      .doc-list b { display: block; color: var(--text); font-size: 15.5px; font-weight: 600; }
+      .doc-list span { display: block; color: var(--muted); font-size: 14px; line-height: 1.6; word-break: keep-all; }
+      .doc-list small { color: var(--muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border);
+               font-size: 14px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+    </style>
+    <link rel="stylesheet" href="/src/site_nav.css" />
+  </head>
+  <body>
+    <header class="site-nav" style="--site-nav-width: 760px; --site-nav-gutter: 24px">
+      <div class="site-nav-inner">
+        <a class="site-nav-brand" href="/">Three Slicer</a>
+        <nav aria-label="Site">
+          <a href="/slice">Slicer</a>
+          <a href="/docs" aria-current="page">Docs</a>
+          <a href="/demos">Demos</a>
+          <a href="/about">About</a>
+          <a href="https://github.com/kimgh06/Three_Slicer" rel="noopener">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <div class="wrap">
+      <nav class="crumb"><a href="/">Three Slicer</a> › Docs</nav>
+
+      <header>
+        <div class="kicker">Docs</div>
+        <h1>Documentation</h1>
+        <p class="lede">
+          The pages on this site, and the reference documents kept in the repository next to the code they
+          describe. Repository documents open on GitHub.
+        </p>
+      </header>
+
+      <h2>On this site</h2>
+      <p class="section-note">Start here if you are deciding whether and how to use the packages.</p>
+      <ul class="doc-list">
+        <li><a href="/docs/licensing"><b>Using it as a viewer (MIT) or a slicer (AGPL)</b>
+          <span>The three ways to set the viewer up, and which license each one puts your application under.</span></a></li>
+        <li><a href="/license"><b>License</b>
+          <span>What is MIT, what is AGPL, where the line is, and what the AGPL asks of you.</span></a></li>
+        <li><a href="/docs/orcaslicer-webassembly-port"><b>Porting OrcaSlicer to WebAssembly — what actually broke</b>
+          <span>The engineering log: the missing PrintObject, the TBB stub, threads, the build, memory and the byte-identical gate.</span></a></li>
+        <li><a href="/demos"><b>Integration demos</b>
+          <span>Four independent projects that install the package from npm and embed it.</span></a></li>
+        <li><a href="/about"><b>About</b>
+          <span>What the project is, what it refuses to do, and how it is verified.</span></a></li>
+      </ul>
+
+      <h2>Package references</h2>
+      <p class="section-note">API documentation for the two npm packages.</p>
+      <ul class="doc-list">
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/README.md" rel="noopener"><b>three-slicer</b>
+          <span>The slicing package: install, slicing in Node and the browser, the worker, settings, multithreading.</span>
+          <small>packages/README.md · AGPL</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/viewer-package/README.md" rel="noopener"><b>three-slicer-viewer</b>
+          <span>The viewer without the slicer: the React viewer, the settings form, rendering without React.</span>
+          <small>viewer-package/README.md · MIT</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/viewer-package/VIEWER.md" rel="noopener"><b>The viewer component</b>
+          <span>Embedding <code>&lt;Viewport/&gt;</code>: layout, keyboard and mouse, undo, painting, theming and bundler notes.</span>
+          <small>viewer-package/VIEWER.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/viewer-package/COMPONENTS.md" rel="noopener"><b>The settings form</b>
+          <span><code>&lt;SettingsPanel/&gt;</code> and the schema, tab tree and toggle rules it takes.</span>
+          <small>viewer-package/COMPONENTS.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/viewer-package/TOOLPATH_SPEC.md" rel="noopener"><b>Toolpath renderer specification</b>
+          <span>What the GPU toolpath renderer must do, stated as a contract.</span>
+          <small>viewer-package/TOOLPATH_SPEC.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/engine/PARAMS.md" rel="noopener"><b>Kernel parameter reference</b>
+          <span>Every parameter the kernel accepts and the setting it comes from. Generated from the kernel source.</span>
+          <small>packages/engine/PARAMS.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/data/README.md" rel="noopener"><b>Extracted data</b>
+          <span>The config schema, UI tree, toggle rules and vendor catalogs taken from OrcaSlicer's sources.</span>
+          <small>packages/data/README.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/examples/DEMOS.md" rel="noopener"><b>Demo specs</b>
+          <span>The integration demos, each defined as a product scenario.</span>
+          <small>examples/DEMOS.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/CHANGELOG.md" rel="noopener"><b>Changelog</b>
+          <span>What changed in each published version.</span>
+          <small>packages/CHANGELOG.md</small></a></li>
+      </ul>
+
+      <h2>Licensing and provenance</h2>
+      <p class="section-note">Which code carries which license, and where it came from.</p>
+      <ul class="doc-list">
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/PROVENANCE.md" rel="noopener"><b>Provenance</b>
+          <span>Which parts are derived from OrcaSlicer or PrusaSlicer and which are not.</span>
+          <small>packages/PROVENANCE.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/RELICENSE.md" rel="noopener"><b>Relicensing the viewer</b>
+          <span>How the viewer was separated from the AGPL code and published under MIT, and the boundaries that keep it that way.</span>
+          <small>packages/RELICENSE.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/THIRD-PARTY-NOTICES.md" rel="noopener"><b>Third-party notices</b>
+          <span>Licenses of the bundled third-party code.</span>
+          <small>packages/THIRD-PARTY-NOTICES.md</small></a></li>
+      </ul>
+
+      <h2>How it was built</h2>
+      <p class="section-note">For contributors and anyone porting a native codebase to the web.</p>
+      <ul class="doc-list">
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/web/GUIDE.md" rel="noopener"><b>Reverse-engineering guide</b>
+          <span>Packaging OrcaSlicer for the web and npm, from day 1.</span>
+          <small>web/GUIDE.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/web/SPECS.md" rel="noopener"><b>Detailed specs</b>
+          <span>3MF XML, the painting codec, the expression language, shortcuts and 3D rendering.</span>
+          <small>web/SPECS.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/web/HISTORY.md" rel="noopener"><b>Development history</b>
+          <span>The stage-by-stage log of how the kernel and the viewer were built.</span>
+          <small>web/HISTORY.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/wasm-core/slasupport_port/PORT_NOTES.md" rel="noopener"><b>SLA support port notes</b>
+          <span>The PrusaSlicer 2.9.6 resin support chain, ported verbatim.</span>
+          <small>packages/wasm-core/slasupport_port/PORT_NOTES.md</small></a></li>
+        <li><a href="https://github.com/kimgh06/Three_Slicer/blob/main/packages/FRICTION.md" rel="noopener"><b>Developer-interface friction log</b>
+          <span>What integrating the package feels like, recorded from real integrations.</span>
+          <small>packages/FRICTION.md</small></a></li>
+      </ul>
+
+      <footer>
+        <span>Three Slicer · AGPL-3.0-or-later · viewer MIT</span>
+        <a href="/">Home</a>
+        <a href="/slice">Slicer</a>
+        <a href="/license">License</a>
+        <a href="/about">About</a>
+        <a href="https://github.com/kimgh06/Three_Slicer" rel="noopener">GitHub</a>
+      </footer>
+    </div>
+  </body>
+</html>

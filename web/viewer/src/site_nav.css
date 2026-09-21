@@ -1,0 +1,44 @@
+/* The site-wide top bar. One stylesheet for both kinds of page: SiteNav.jsx imports it for the React routes, and
+   the static HTML entries (about, license, docs) link it — Vite bundles a <link> in an HTML entry like an import.
+   Colours are literal because the two kinds of page name their tokens differently (--lp-* vs --*). */
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin: 0;
+  padding: 0;   /* the static pages style bare `header` elements (their page header); the bar is one too */
+  background: rgba(14, 18, 22, .92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #191f25;
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.site-nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: var(--site-nav-width, 920px);
+  height: 56px;
+  margin: 0 auto;
+  padding: 0 var(--site-nav-gutter, 28px);
+}
+.site-nav a { text-decoration: none; }
+.site-nav a:focus-visible { outline: 2px solid #00ae42; outline-offset: 3px; border-radius: 4px; }
+.site-nav-brand { color: #e9f1f7; font-weight: 700; font-size: 15px; white-space: nowrap; }
+.site-nav nav { display: flex; gap: 22px; }
+.site-nav nav a { color: #8d9daa; transition: color 140ms ease-out; }
+.site-nav nav a:hover,
+.site-nav nav a[aria-current="page"] { color: #e9f1f7; }
+
+@media (max-width: 640px) {
+  .site-nav-inner { padding: 0 16px; }
+  .site-nav nav { gap: 14px; font-size: 13.5px; }
+}
+@media (max-width: 400px) {
+  /* Five links and the name do not fit on one line below this; the name is also the Home link, so it goes. */
+  .site-nav-brand { display: none; }
+  .site-nav-inner { justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-nav nav a { transition: none; }
+}
