@@ -685,7 +685,7 @@ export default function Viewport({
   // .sl1 and G-code ride on the same picker but are not in SUPPORTED_EXT — that list is the MESH loaders', and
   //  neither is a mesh (model_load routes them to importSl1 and openGcodePlates instead).
   const PICKER_EXT = [...SUPPORTED_EXT, 'sl1', ...GCODE_EXTS]
-  const EXT_LABEL = [...SUPPORTED_EXT, 'sl1', 'gcode'].map(e => e.toUpperCase()).join(' · ')   // .gco/.g are aliases
+  const EXT_LABEL = [...SUPPORTED_EXT, 'sl1', 'gcode'].map(ext => ext.toUpperCase()).join(' · ')   // .gco/.g are aliases
 
   return (
     <ShadowHost css={THEME_CSS + shadowCss}>

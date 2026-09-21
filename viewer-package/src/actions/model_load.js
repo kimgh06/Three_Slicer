@@ -215,7 +215,7 @@ export function makeModelLoad(deps) {
 
   async function loadFiles(fileList) {
     const all = Array.from(fileList || [])
-    const gcodeFiles = openGcodePlates ? all.filter(f => GCODE_EXTS.includes(fileExt(f.name))) : []
+    const gcodeFiles = all.filter(file => openGcodePlates && GCODE_EXTS.includes(fileExt(file.name)))
     // .sl1 is not a mesh: it routes to the raster-preview import, and deliberately AFTER the mesh block below —
     //  loading meshes clears plateResultsRef, which is exactly where the import lands its result.
     const sl1Files = importSl1 ? all.filter(f => fileExt(f.name) === 'sl1') : []
@@ -223,7 +223,8 @@ export function makeModelLoad(deps) {
     const files = all.filter(f => SUPPORTED_EXT.includes(fileExt(f.name)))
     const rejected = all.length - files.length - sl1Files.length - presetFiles.length - gcodeFiles.length
     if (!files.length && !sl1Files.length && !presetFiles.length && !gcodeFiles.length) {
-      if (rejected) setError('Supported formats: STL/OBJ/3MF/AMF/PLY' + (importSl1 ? '/SL1' : '') + (openGcodePlates ? '/G-code' : '') + (loadPresetFile ? ' + preset files' : ''))
+      const formats = ['STL/OBJ/3MF/AMF/PLY', importSl1 && 'SL1', openGcodePlates && 'G-code'].filter(Boolean).join('/')
+      if (rejected) setError('Supported formats: ' + formats + ((loadPresetFile && ' + preset files') || ''))
       return
     }
     if (!files.length) {
