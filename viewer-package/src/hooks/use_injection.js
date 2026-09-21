@@ -93,7 +93,7 @@ export function useImportedGcode({
   const gcodeOnly = injectedGcode != null
 
   // The drop highlight ends with the drag, wherever the drop lands. The canvas's own onDrop clears it, but a host
-  //  that takes the drop first (a capture handler that stops propagation — the demo app does, for .gcode) leaves
+  //  that takes the drop first (a capture handler that stops propagation) leaves
   //  that handler unrun, and a drag that ends in a drop fires no dragleave: the dashed border and the "Drop here"
   //  overlay stayed on screen. The window sees the drop in its capture phase, before any host handler can stop it.
   useEffect(() => {

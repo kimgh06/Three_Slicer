@@ -5,7 +5,7 @@ import { useSliceRequest, useAutoSlice } from './hooks/use_slice_request.js'
 import { useStaleSlice } from './hooks/use_stale_slice.js'
 import { useInitialFiles } from './hooks/use_initial_files.js'
 import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlined as a string at build time
-import { SUPPORTED_EXT } from './scene/model_loaders.js'
+import { SUPPORTED_EXT, GCODE_EXTS } from './scene/model_loaders.js'
 import { MAX_PLATES } from './core/plate_layout.js'
 import { useSliceRun } from './hooks/use_slice_run.js'
 import { objectTools } from './core/toolbar_items.js'
@@ -682,10 +682,10 @@ export default function Viewport({
     filamentTypes={asList('filament_type')} filamentIds={asList('filament_settings_id')} />
 
   // registerLoader() can add formats, so this is computed at render time.
-  // .sl1 rides on the same picker but is not in SUPPORTED_EXT — that list is the MESH loaders', and an archive
-  //  of raster masks must not reach them (model_load routes it to importSl1 instead).
-  const PICKER_EXT = [...SUPPORTED_EXT, 'sl1']
-  const EXT_LABEL = PICKER_EXT.map(e => e.toUpperCase()).join(' · ')
+  // .sl1 and G-code ride on the same picker but are not in SUPPORTED_EXT — that list is the MESH loaders', and
+  //  neither is a mesh (model_load routes them to importSl1 and openGcodePlates instead).
+  const PICKER_EXT = [...SUPPORTED_EXT, 'sl1', ...GCODE_EXTS]
+  const EXT_LABEL = [...SUPPORTED_EXT, 'sl1', 'gcode'].map(e => e.toUpperCase()).join(' · ')   // .gco/.g are aliases
 
   return (
     <ShadowHost css={THEME_CSS + shadowCss}>
