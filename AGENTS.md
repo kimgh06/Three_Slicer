@@ -25,6 +25,10 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   the demo registers, and the overlay named neither SL1 nor G-code. Derive the text from the owner (`EXT_LABEL` in
   `Viewport.jsx`, `SUPPORTED_EXT` in `model_load.js`); where a value has no owner yet, make one constant and read it
   everywhere. `test_layers.mjs` fails on the format list spelled out in code.
+  A plain `''` or `0` has no owner and never changes, so it is not a constant. An empty value that carries a
+  meaning is named instead: "clear the message" is `clearError()` / `clearSliceNotice()` / `clearTriWarn()`
+  (`Viewport.jsx` wiring), not `setError('')` at each call site, and "no value" is `null`. `test_layers.mjs` fails on
+  a `set…('')` outside those definitions.
 - `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
 - Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (93 keys from an empty settings map today), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
