@@ -373,6 +373,18 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   The member also records the plate count (`<plate>` records name only plates holding objects, so an empty plate
   with an override would not come back), is read even when no `project_settings.config` was written, and the
   import keeps only overrides for plates that exist once placement is done.
+- **A `.gcode.3mf` is a print job, not a project** — upstream's "Export all plate sliced file" (`SaveStrategy
+  SkipModel | WithGcode`): no meshes, each sliced plate's G-code as `Metadata/plate_N.gcode` named by a `gcode_file`
+  entry on its `<plate>` record, an uppercase-hex MD5 beside it (a Bambu printer checks it; `core/md5.js`, because
+  `crypto.subtle` has no MD5), and the estimate in `slice_info.config`. `writeGcode3MF` writes it; the reader tells
+  it apart by CONTENT (a `gcode_file` whose member exists), never by the file name. Opening one does not create a
+  second path: the plates become `useImportedGcode`'s `{plate: text}` map, and Viewport hands `gcode ?? that map`
+  to `useInjection` and to every slice guard as their `gcode`, so nothing re-slices over it or invalidates it —
+  the same rule as the host's `gcode` prop, which wins while set. While one is open the viewer is preview-only
+  (Prepare and Slice refused), as upstream is; a model load or the top bar's close ends it and takes its plates'
+  results with it. Injected G-code is placed by the bed CORNER (`origin - bed/2`), not the plate origin a kernel
+  slice uses, which is why `followPlateLayout` moves display offsets by the origin DELTA — setting them to the new
+  origin put every injected plate half a bed off (measured the first time a `.gcode.3mf` grew the grid).
 - **An all-plates run is a queue drained by K workers, and the selector worker is one of them.** `slice_pool.js`
   sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
   `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,

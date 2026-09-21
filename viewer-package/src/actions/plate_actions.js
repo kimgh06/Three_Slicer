@@ -14,6 +14,7 @@ import { meshWindingConsistent } from '../core/mesh_winding.js'
 import { acquireGpuDevice } from '../scene/gpu_device.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { download, saveWindowOpen } from './export_actions.js'
+import { writeGcode3MF } from '../core/write_3mf.js'
 
 // SL1 reconstruction tuning. Every number here is measured on the same 1095-layer archive (15-core machine,
 // click to mesh on screen), and the ones that did NOT work are recorded with them so they are not retried:
@@ -384,15 +385,15 @@ export function makePlateActions(deps) {
       setExporting?.(null)
     }
   }
-  // Shares the host's export hook with the 3mf/STL writers — a host that takes one save should take all of them.
-  function downloadGcode(gcode, name) { download(gcode, name, 'text/plain', onExport) }
   const _sleep = (ms) => new Promise(r => setTimeout(r, ms))
   // plateResultsRef is a ref, so the UI does not refresh on its own — mirror the count into state wherever it changes.
   function refreshSlicedCount() {
     setSlicedPlateCount(Object.values(plateResultsRef.current).filter(r => r && !r.error && (r.gcode || r.stats?.sla)).length)
   }
-  // Saves the G-code of every sliced plate at once — only when the user explicitly asks (never automatically).
-  //  Browsers throttle back-to-back downloads, so the files are spaced out.
+  // Saves every sliced plate at once — only when the user explicitly asks (never automatically). The FFF plates go
+  //  into ONE .gcode.3mf (write_3mf.js writeGcode3MF, upstream's "Export all plate sliced file"), which a browser
+  //  saves as one download instead of a throttled row of them, and which this viewer and OrcaSlicer both reopen as
+  //  a multi-plate print. A resin plate has no G-code, so it still saves as its own .sl1 archive.
   async function exportAllGcode() {
     setSliceMenu(false)
     const sliced = Object.entries(plateResultsRef.current)
@@ -406,13 +407,36 @@ export function makePlateActions(deps) {
       setError(skipped ? 'Every sliced plate extends beyond the bed — nothing exported' : 'No slice results to export — slice first')
       return
     }
-    for (const [i, r] of done) {
-      if (r.stats?.sla) await exportPlateSl1(Number(i))
-      else downloadGcode(r.gcode, `plate_${Number(i) + 1}.gcode`)
-      await _sleep(350)
-    }
+    const gcodePlates = done.filter(([, r]) => !r.stats?.sla).map(([i, r]) => ({ index: Number(i), gcode: r.gcode, stats: r.stats }))
+    setExporting?.('Writing…')
+    try {
+      if (gcodePlates.length) {
+        const bytes = await writeGcode3MF(gcodePlates, settings, { plateCount: plateCountRef.current })
+        let name = 'plates.gcode.3mf'
+        if (gcodePlates.length === 1) name = `plate_${gcodePlates[0].index + 1}.gcode.3mf`
+        await download(bytes, name, 'model/3mf', onExport)
+      }
+    } catch (e) { setError('G-code export failed: ' + (e?.message || e)); return }
+    finally { setExporting?.(null) }
+    for (const [i, r] of done) if (r.stats?.sla) { await exportPlateSl1(Number(i)); await _sleep(350) }
     setSliceNotice(`Exported ${done.length} plate(s)`
       + (skipped ? ` — skipped ${skipped} that extend beyond the bed` : ''))
+  }
+  // The focused plate alone as a .gcode.3mf — upstream's "Export plate sliced file", in the Export button's menu.
+  //  The button itself is "Export all sliced file" (exportAllGcode): a user who sliced two plates and pressed Export
+  //  got one of them. Built on click, not prefilled like the plain link: the zip is work the user may never want.
+  async function exportPlateGcode3mf(idx = selectedPlateRef.current) {
+    const r = plateResultsRef.current[idx]
+    if (!r || r.error || !r.gcode || r.stats?.over_bed) return
+    setExporting?.('Writing…')
+    try {
+      const bytes = await writeGcode3MF([{ index: idx, gcode: r.gcode, stats: r.stats }], settings, { plateCount: plateCountRef.current })
+      await download(bytes, `plate_${idx + 1}.gcode.3mf`, 'model/3mf', onExport)
+    } catch (e) {
+      setError('G-code export failed: ' + (e?.message || e))
+    } finally {
+      setExporting?.(null)
+    }
   }
   async function onSlice(scope = 'current') {
     setSliceMenu(false); setError(''); setSliceNotice(''); setDowngradeOffer(null)
@@ -585,5 +609,5 @@ export function makePlateActions(deps) {
     showPlateResult(i)
   }
 
-  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
+  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
 }

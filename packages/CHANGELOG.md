@@ -12,6 +12,14 @@
   Upstream has no place for either and ignores the member, so OrcaSlicer still opens the file on the global preset.
 - The kernel can tag every extrusion run with upstream's `;TYPE:` (`gcode_role_tags`, opt-in; the viewer turns it
   on), from the same role the preview draws. A saved G-code read back as text colours as the slice did.
+- "Export all" writes one `.gcode.3mf` (upstream's "Export all plate sliced file") instead of one `.gcode` download
+  per plate: each plate's G-code as `Metadata/plate_N.gcode` with its MD5, the estimate in `slice_info.config`, no
+  meshes. Opening one (drop, picker or `files`) puts every plate's G-code back on its plate and makes the viewer
+  preview-only until it is closed from the top bar or a model is loaded. The `gcode` prop also takes a
+  `{ plateIndex: text }` map. A resin plate still exports as its own `.sl1`.
+- The sidebar's Export G-code button saves every sliced plate in one `.gcode.3mf` (upstream's "Export all sliced
+  file"). Its ▾ menu holds the viewed plate alone as a `.gcode.3mf` and the plain `.gcode`. It also works on an
+  opened `.gcode.3mf`, so a print job can be saved again.
 
 ### Changed
 
@@ -28,6 +36,11 @@
   no role marks, so everything after a tower's comment inherited it until the next layer.
 - The G-code reader dropped a `;TYPE:` written between a layer marker and the layer's first move (Cura's
   `;LAYER:` files, this kernel's raft layers), reading that run as wall.
+- The drop highlight stayed on after a drop the host handled itself (the demo app's `.gcode` drop): the canvas's
+  own handler never ran and a drop fires no `dragleave`. The window's capture phase now clears it.
+- Injected G-code moved half a bed off its plate whenever the plate grid was re-laid out (adding a plate, editing
+  the bed): the re-layout set every display offset to the plate origin, dropping the bed-corner offset injected
+  G-code carries. Offsets now move by the origin's delta.
 - Two objects on the same spot sliced to nothing. The kernel slices the merge of every object as one mesh and filled
   the layer loops even-odd, so coincident shells counted as "inside twice". Segments are now oriented by the facet
   normal and filled NonZero, upstream's Regular slicing mode, in the FFF, multi-material and SLA paths. Measured: a
