@@ -22,8 +22,20 @@ export interface ParseGcodeResult {
   }
 }
 
-/** A result's own palette (`stats.colors`) with the session palette filling its holes. */
-export function resultToolColors(stats: { colors?: (string | null)[] } | null | undefined, sessionColors?: string[]): (string | undefined)[]
+/**
+ * A result's colour list, one entry per tool: its own palette (`stats.colors`), then the session palette, then the
+ * categorical stand-in for a tool neither names. What the toolpath is drawn in and what an export states.
+ */
+export function resultToolColors(
+  stats: { colors?: (string | null)[]; filament_mm_by_tool?: number[] } | null | undefined,
+  sessionColors?: string[] | null,
+): string[]
+
+/** A result's G-code as it is saved: `withFilamentColours` over `resultToolColors`. */
+export function exportedGcode(
+  result: { gcode: string; stats?: { colors?: (string | null)[]; filament_mm_by_tool?: number[] } },
+  sessionColors?: string[] | null,
+): string
 
 /** Appends `; filament_colour = …` unless the text already states a palette. */
 export function withFilamentColours(gcode: string, colors: (string | null | undefined)[]): string

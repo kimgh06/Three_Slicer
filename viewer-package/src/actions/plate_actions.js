@@ -15,7 +15,7 @@ import { acquireGpuDevice } from '../scene/gpu_device.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { download, saveWindowOpen } from './export_actions.js'
 import { writeGcode3MF } from '../core/write_3mf.js'
-import { resultToolColors, withFilamentColours } from '../core/gcode_parse.js'
+import { exportedGcode } from '../core/gcode_parse.js'
 
 // SL1 reconstruction tuning. Every number here is measured on the same 1095-layer archive (15-core machine,
 // click to mesh on screen), and the ones that did NOT work are recorded with them so they are not retried:
@@ -50,7 +50,7 @@ export function makePlateActions(deps) {
     onSlicedRef, extruderColorsRef,
   } = deps
   // The saved text names its filament colours, so the file opens in them again (here and upstream).
-  const gcodeForExport = (r) => withFilamentColours(r.gcode, resultToolColors(r.stats, extruderColorsRef?.current ?? []))
+  const gcodeForExport = (result) => exportedGcode(result, extruderColorsRef?.current)
 
   // Hands a finished slice to the host (the Viewport `onSliced` prop). Fired where the result is cached, not where
   //  it is displayed, so switching plate tabs — which re-displays a cached result — does not re-announce it.

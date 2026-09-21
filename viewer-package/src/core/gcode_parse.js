@@ -12,6 +12,7 @@
 
 import { DEFAULT_FILAMENT_DIAMETER, DEFAULT_LAYER_HEIGHT } from './viewer_defaults.js'
 import { ROLE, encodeRole } from './toolpath_encoding.js'
+import { TOOL_COLOR } from './toolpath_palette.js'
 
 const EPS = 1e-6
 // Upstream's highest real tool id (GCodeProcessor::process_T). Bambu start/end G-code carries T255, T1000, T1001,
@@ -28,13 +29,26 @@ const colourList = (value) => value.split(/[;,]/).map(entry => {
   return '#' + match[1].toUpperCase()
 })
 
-// The file's own colours with the session palette filling the holes, one entry per tool either side has.
-//  G-code colours belong to the ARTIFACT (upstream's G-code viewer reads them from the file, GCodeProcessor.cpp
-//  :3291), so a loaded file is drawn in them; a result without them (every kernel slice) keeps the session palette.
-export function resultToolColors(stats, sessionColors = []) {
-  const own = Array.isArray(stats?.colors) ? stats.colors : []
-  const length = Math.max(own.length, sessionColors.length)
-  return Array.from({ length }, (_unused, index) => own[index] || sessionColors[index])
+// The categorical colour computeColors falls back to for a tool no palette names, as a hex string.
+const toolHex = (index) => '#' + TOOL_COLOR[index % TOOL_COLOR.length]
+  .map(channel => Math.round(channel * 255).toString(16).padStart(2, '0')).join('')
+
+// The one colour list of a result: what its toolpath is drawn in, what both legends show and what its export
+//  states. The file's own colours come first — G-code colours belong to the file (upstream's G-code viewer reads
+//  them from it, GCodeProcessor.cpp:3291) — then the session palette, then the categorical stand-in. Every tool the
+//  result extruded with gets an entry: a file can use more tools than the session has filaments, and T3 used to be
+//  green on the toolpath, grey in the stats card and missing from the view legend.
+export function resultToolColors(stats, sessionColors) {
+  let own = []
+  if (Array.isArray(stats?.colors)) own = stats.colors
+  const session = sessionColors ?? []
+  const length = Math.max(own.length, session.length, stats?.filament_mm_by_tool?.length ?? 0)
+  return Array.from({ length }, (_unused, index) => own[index] || session[index] || toolHex(index))
+}
+
+// A result's G-code as it is saved: with the colour list above stated in it.
+export function exportedGcode(result, sessionColors) {
+  return withFilamentColours(result.gcode, resultToolColors(result.stats, sessionColors))
 }
 
 // Appends the palette to G-code that does not state one, so an exported file opens in its own colours here and in

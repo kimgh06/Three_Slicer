@@ -7,10 +7,6 @@ import { makeToolpath } from 'three-slicer-viewer'
 import { computeColors } from 'three-slicer-viewer'
 import { ROLE } from '../core/toolpath_encoding.js'
 import { resultToolColors } from '../core/gcode_parse.js'
-import { TOOL_COLOR } from '../core/toolpath_palette.js'
-
-// The categorical colour computeColors falls back to for a tool no palette names, as a hex string for the legends.
-const toolHex = (index) => '#' + TOOL_COLOR[index % TOOL_COLOR.length].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('')
 
 // Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -110,13 +106,8 @@ export function makeToolpathView(deps) {
     }
   }
   // A plate whose result carries its own palette (a loaded G-code file) is drawn in it; the rest in the session's.
-  //  Every tool the result extruded with gets an entry — a file can use more tools than the session has filaments,
-  //  and the toolpath, the view legend and the stats card must then agree on the stand-in colour.
   function plateToolColors(idx) {
-    const stats = plateResultsRef.current[idx]?.stats
-    const colors = resultToolColors(stats, extruderColorsRef?.current ?? [])
-    const count = Math.max(colors.length, stats?.filament_mm_by_tool?.length ?? 0)
-    return Array.from({ length: count }, (_unused, index) => colors[index] || toolHex(index))
+    return resultToolColors(plateResultsRef.current[idx]?.stats, extruderColorsRef?.current)
   }
   function plateCtx(idx, ctx) { return { ...ctx, toolColors: plateToolColors(idx) } }
   // Recomputes the color texture for the current view type — applied to every plate; legend/range follow the focused plate.
