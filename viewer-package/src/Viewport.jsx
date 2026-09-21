@@ -387,7 +387,7 @@ export default function Viewport({
   // ---- Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once) ----
   const {
     disposePlateToolpath, clearToolpaths, buildPlateToolpath, ensurePlateToolpaths,
-    applyViewColors, rebuildToolpaths, applyLayerRange,
+    applyViewColors, rebuildToolpaths, applyLayerRange, plateToolColors,
   } = makeToolpathView({ ...wiring, three })
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
@@ -656,7 +656,7 @@ export default function Viewport({
       layerLo={layerLo} layerHi={layerHi} segCount={segCount} singleLayer={singleLayer}
       onLayerLo={onLo} onLayerHi={onHi} onToggleSingle={toggleSingle}
       showTravel={showTravel} onToggleTravel={onToggleTravel}
-      colorRange={colorRange} roleLegend={roleLegend} extruderColors={extruderColors}
+      colorRange={colorRange} roleLegend={roleLegend} extruderColors={plateToolColors(selectedPlateRef.current)}
       moveScrub={!stats?.sla && showPanel('moveBar') ? moveScrub : null} />
   )
   // The per-tool filament split and the purge total are kernel stats of the focused plate's cached result
@@ -678,7 +678,7 @@ export default function Viewport({
   const bedOverText = overflowText(bedOverShown)
 
   const statsBlock = <StatsCard stats={statsWithTools} overBed={overBed} overBedText={bedOverText}
-    overBedModel={stats?.overBedModel !== false} extruderColors={extruderColors}
+    overBedModel={stats?.overBedModel !== false} extruderColors={plateToolColors(selectedPlateRef.current)}
     filamentTypes={asList('filament_type')} filamentIds={asList('filament_settings_id')} />
 
   // registerLoader() can add formats, so this is computed at render time.

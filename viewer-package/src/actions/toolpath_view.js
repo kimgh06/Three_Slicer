@@ -6,6 +6,11 @@ import { buildSegmentData, roleRatios } from 'three-slicer-viewer'
 import { makeToolpath } from 'three-slicer-viewer'
 import { computeColors } from 'three-slicer-viewer'
 import { ROLE } from '../core/toolpath_encoding.js'
+import { resultToolColors } from '../core/gcode_parse.js'
+import { TOOL_COLOR } from '../core/toolpath_palette.js'
+
+// The categorical colour computeColors falls back to for a tool no palette names, as a hex string for the legends.
+const toolHex = (index) => '#' + TOOL_COLOR[index % TOOL_COLOR.length].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('')
 
 // Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
@@ -48,7 +53,7 @@ export function makeToolpathView(deps) {
     toolpathGroup.add(group)
     ctl.setTravelVisible(showTravelRef.current)
     ctl.setLayerRange(0, Math.max(0, layers.length - 1))            // unfocused default: full range
-    const cc = computeColors(seg, viewTypeRef.current, viewCtx())   // apply the current view type colors
+    const cc = computeColors(seg, viewTypeRef.current, plateCtx(idx, viewCtx()))   // apply the current view type colors
     ctl.setColors(cc.color)
     const entry = { group, ctl, seg, layers }   // layers = source reference (used to detect a re-slice)
     plateTpRef.current[idx] = entry
@@ -104,11 +109,21 @@ export function makeToolpathView(deps) {
       tempFirst: S('nozzle_temperature_initial_layer') ?? S('nozzle_temperature'),
     }
   }
+  // A plate whose result carries its own palette (a loaded G-code file) is drawn in it; the rest in the session's.
+  //  Every tool the result extruded with gets an entry — a file can use more tools than the session has filaments,
+  //  and the toolpath, the view legend and the stats card must then agree on the stand-in colour.
+  function plateToolColors(idx) {
+    const stats = plateResultsRef.current[idx]?.stats
+    const colors = resultToolColors(stats, extruderColorsRef?.current ?? [])
+    const count = Math.max(colors.length, stats?.filament_mm_by_tool?.length ?? 0)
+    return Array.from({ length: count }, (_unused, index) => colors[index] || toolHex(index))
+  }
+  function plateCtx(idx, ctx) { return { ...ctx, toolColors: plateToolColors(idx) } }
   // Recomputes the color texture for the current view type — applied to every plate; legend/range follow the focused plate.
   function applyViewColors() {
     const ctx = viewCtx()
-    for (const e of Object.values(plateTpRef.current)) {
-      const cc = computeColors(e.seg, viewTypeRef.current, ctx)
+    for (const [idx, e] of Object.entries(plateTpRef.current)) {
+      const cc = computeColors(e.seg, viewTypeRef.current, plateCtx(Number(idx), ctx))
       e.ctl.setColors(cc.color)
       if (e.ctl === toolpathRef.current)
         setColorRange({ min: cc.min, max: cc.max, label: cc.label, unit: cc.unit, cont: cc.cont })
@@ -134,5 +149,5 @@ export function makeToolpathView(deps) {
   }
   function applyLayerRange() { toolpathRef.current?.setLayerRange(layerLoRef.current, layerHiRef.current) }
 
-  return { disposePlateToolpath, clearToolpaths, buildPlateToolpath, ensurePlateToolpaths, viewCtx, applyViewColors, rebuildToolpaths, applyLayerRange }
+  return { disposePlateToolpath, clearToolpaths, buildPlateToolpath, ensurePlateToolpaths, viewCtx, applyViewColors, rebuildToolpaths, applyLayerRange, plateToolColors }
 }

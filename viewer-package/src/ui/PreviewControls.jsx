@@ -42,12 +42,12 @@ export default function PreviewControls({
       {filamentView ? (
         // Swatches only, no share percentage: buildSegmentData accumulates extruded length per feature type
         //  (typeLengths) and never per tool, so a "% per extruder" here would be made up. The millimetres per tool
-        //  are the stats card's job. The colors come from TOOL_COLOR because that is exactly what computeColors
-        //  paints the segments with — an extruderColors swatch would show the user's picker color, not the toolpath.
+        //  are the stats card's job. The swatch is whatever computeColors paints the segments with: the plate's
+        //  palette (extruderColors — the focused result's own, or the session's) and TOOL_COLOR where it has none.
         <div className="role-legend" data-testid="view-legend">
           {Array.from({ length: extruderCount }, (_unused, index) => (
             <span key={index} className="role-item">
-              <i style={{ background: rgb(TOOL_COLOR[index % TOOL_COLOR.length]) }} />
+              <i style={{ background: extruderColors?.[index] || rgb(TOOL_COLOR[index % TOOL_COLOR.length]) }} />
               T{index + 1}
             </span>
           ))}
