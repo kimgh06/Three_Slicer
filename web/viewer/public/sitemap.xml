@@ -25,4 +25,19 @@
     <lastmod>2026-09-01</lastmod>
     <priority>0.8</priority>
   </url>
+  <url>
+    <loc>https://slicer.kimgh06.com/license</loc>
+    <lastmod>2026-09-21</lastmod>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://slicer.kimgh06.com/docs</loc>
+    <lastmod>2026-09-21</lastmod>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://slicer.kimgh06.com/docs/licensing</loc>
+    <lastmod>2026-09-21</lastmod>
+    <priority>0.7</priority>
+  </url>
 </urlset>
