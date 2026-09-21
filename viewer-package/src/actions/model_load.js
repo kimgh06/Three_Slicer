@@ -223,7 +223,7 @@ export function makeModelLoad(deps) {
     const files = all.filter(f => SUPPORTED_EXT.includes(fileExt(f.name)))
     const rejected = all.length - files.length - sl1Files.length - presetFiles.length - gcodeFiles.length
     if (!files.length && !sl1Files.length && !presetFiles.length && !gcodeFiles.length) {
-      const formats = ['STL/OBJ/3MF/AMF/PLY', importSl1 && 'SL1', openGcodePlates && 'G-code'].filter(Boolean).join('/')
+      const formats = [...SUPPORTED_EXT.map(ext => ext.toUpperCase()), importSl1 && 'SL1', openGcodePlates && 'G-code'].filter(Boolean).join('/')
       if (rejected) setError('Supported formats: ' + formats + ((loadPresetFile && ' + preset files') || ''))
       return
     }

@@ -733,7 +733,7 @@ export default function Viewport({
                 <button className="eh-btn" onClick={openFilePicker} data-testid="empty-pick" title={`Pick a ${EXT_LABEL} file (multiple allowed)`}>Choose file</button>
               </div>
             )}
-            {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here (STL/OBJ/3MF/AMF/PLY)</div>}
+            {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here ({EXT_LABEL})</div>}
             {ctxMenu && (
               <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} canPaste={!!clipboardRef.current}
                 selectedCount={selectedIds.length}

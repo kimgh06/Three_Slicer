@@ -3,6 +3,7 @@
 // The scene is faked the way test_3mf_project.mjs fakes it; the loader and the parser run for real.
 import assert from 'node:assert'
 import { makeModelLoad } from '../src/actions/model_load.js'
+import { SUPPORTED_EXT } from '../src/scene/model_loaders.js'
 import { resultToolColors, exportedGcode, parseGcode } from '../src/core/gcode_parse.js'
 import { TOOL_COLOR } from '../src/core/toolpath_palette.js'
 
@@ -53,6 +54,13 @@ function fakeLoader({ withGcodePath = true } = {}) {
   await loader.loadFiles([new File([PRINTABLE], 'job.gcode')])
   assert.match(errors[0] ?? '', /^Supported formats: /, 'the file is rejected')
   assert.doesNotMatch(errors[0], /G-code/, 'and G-code is not offered as a format')
+}
+// The format list is read from SUPPORTED_EXT, so a format registerLoader() adds is named too (STEP, in the demo).
+{
+  const { loader, errors } = fakeLoader()
+  SUPPORTED_EXT.push('step')
+  try { await loader.loadFiles([new File(['x'], 'notes.txt')]) } finally { SUPPORTED_EXT.pop() }
+  assert.match(errors[0] ?? '', /\/STEP\//, 'a registered format is listed')
 }
 console.log('  ok: Open/drop routes .gcode/.gco/.g to openGcodePlates, refuses a non-G-code file')
 
