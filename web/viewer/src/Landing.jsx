@@ -214,11 +214,15 @@ export default function Landing() {
     <div className="landing">
       <header className="lp-head">
         <div className="lp-kicker">three-slicer · Browser/WASM 3D printing slicer</div>
-        <h1>Web Three Slicer</h1>
+        {/* Googlebot indexes this rendered page, not index.html's pre-render fallback (createRoot clears it),
+            so the heading and the opening copy say what the <title> and the JSON-LD say: an online slicer. */}
+        <h1>Three Slicer — an online 3D printing slicer that runs in your browser</h1>
         <p className="lp-lede">Slice STL to G-code right in your browser — nothing installs, nothing uploads.</p>
-        <p>Under the hood: an OrcaSlicer-based WASM slicing engine, React viewer and settings panel, shipped as a
-          single npm package. Filament printers slice to G-code; resin printers route through PrusaSlicer&rsquo;s
-          ported support and pad chain to an <code>.sl1</code> archive.</p>
+        <p>Three Slicer converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code directly in the browser, using
+          a WebAssembly build of the OrcaSlicer kernel. There is nothing to install and no account, and nothing is
+          uploaded to a server — the slicing runs on your own machine, in the tab. Filament printers slice to
+          G-code; resin printers route through PrusaSlicer&rsquo;s ported support and pad chain to
+          an <code>.sl1</code> archive.</p>
         <div className="lp-cta">
           <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
           <Link className="lp-btn" to="/demos">Demos</Link>
@@ -250,6 +254,68 @@ export default function Landing() {
       <main>
         <LiveSlicer />
 
+        <section className="lp-section" aria-labelledby="features-title">
+          <div className="lp-section-head">
+            <h2 id="features-title">What it does</h2>
+            <p>Everything below runs in this browser tab — import, arrange, slice, preview and export, with the full OrcaSlicer option set.</p>
+          </div>
+          <dl className="lp-feat">
+            {GROUPS.map(([label, items]) => (
+              <div key={label} className="lp-row">
+                <dt>{label}</dt>
+                <dd>{items.map((t, i) => (
+                  <span key={t}>{i > 0 && <i className="lp-dot">·</i>}{t}</span>
+                ))}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
+        <section className="lp-section" aria-labelledby="faq-title">
+          <div className="lp-section-head">
+            <h2 id="faq-title">Questions</h2>
+          </div>
+          <dl className="lp-faq">
+            {FAQ.map(([q, a]) => (
+              <div key={q}>
+                <dt>{q}</dt>
+                <dd>{a}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
+        <section className="lp-section" aria-labelledby="built-title">
+          <div className="lp-section-head">
+            <h2 id="built-title">How it was built</h2>
+          </div>
+          <p>
+            <a href="/docs/orcaslicer-webassembly-port">Porting OrcaSlicer to WebAssembly — what actually broke</a>:
+            the missing <code>PrintObject</code>, a TBB header stub that runs serial by default, COOP/COEP
+            cross-origin isolation and the two kernel builds behind it, the partial-link build groups, and the
+            byte-identical G-code gate the whole port is checked against. <a href="/about">About the project</a> covers
+            what it deliberately does not do, how the output is verified, and what AGPL-3.0 means for using it.
+          </p>
+        </section>
+
+        <section className="lp-section" aria-labelledby="demos-title">
+          <div className="lp-section-head">
+            <h2 id="demos-title">Integration Demos</h2>
+            <p>Four real integrations, each an independent project installing <code>three-slicer</code> from npm.
+              Cards open the standalone builds; <Link to="/demos">the gallery</Link> shows them side by side with
+              their sources.</p>
+          </div>
+          <div className="lp-route-grid">
+            {DEMOS.map(([name, title, sells, blurb]) => (
+              <a key={name} className="lp-route-card lp-demo-card" href={`${import.meta.env.BASE_URL}demos/${name}/`}>
+                <span className="lp-demo-sells">{sells}</span>
+                <h3>{title}</h3>
+                <p>{blurb}</p>
+              </a>
+            ))}
+          </div>
+        </section>
+
         <section className="lp-section" aria-labelledby="install-title">
           <div className="lp-section-head">
             <h2 id="install-title">Install</h2>
@@ -276,55 +342,6 @@ export default function Landing() {
               </article>
             ))}
           </div>
-        </section>
-
-        <section className="lp-section" aria-labelledby="demos-title">
-          <div className="lp-section-head">
-            <h2 id="demos-title">Integration Demos</h2>
-            <p>Four real integrations, each an independent project installing <code>three-slicer</code> from npm.
-              Cards open the standalone builds; <Link to="/demos">the gallery</Link> shows them side by side with
-              their sources.</p>
-          </div>
-          <div className="lp-route-grid">
-            {DEMOS.map(([name, title, sells, blurb]) => (
-              <a key={name} className="lp-route-card lp-demo-card" href={`${import.meta.env.BASE_URL}demos/${name}/`}>
-                <span className="lp-demo-sells">{sells}</span>
-                <h3>{title}</h3>
-                <p>{blurb}</p>
-              </a>
-            ))}
-          </div>
-        </section>
-
-        <section className="lp-section" aria-labelledby="features-title">
-          <div className="lp-section-head">
-            <h2 id="features-title">Demo Surface</h2>
-            <p>This deployment is a real browser demo that consumes the package by its workspace name.</p>
-          </div>
-          <dl className="lp-feat">
-            {GROUPS.map(([label, items]) => (
-              <div key={label} className="lp-row">
-                <dt>{label}</dt>
-                <dd>{items.map((t, i) => (
-                  <span key={t}>{i > 0 && <i className="lp-dot">·</i>}{t}</span>
-                ))}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
-        <section className="lp-section" aria-labelledby="faq-title">
-          <div className="lp-section-head">
-            <h2 id="faq-title">Questions</h2>
-          </div>
-          <dl className="lp-faq">
-            {FAQ.map(([q, a]) => (
-              <div key={q}>
-                <dt>{q}</dt>
-                <dd>{a}</dd>
-              </div>
-            ))}
-          </dl>
         </section>
 
         <section className="lp-section lp-license" aria-label="License">
