@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { REPO, REPO_URL } from './repo.js'
+import SiteNav from './SiteNav.jsx'
 
 // The live embed below mounts the real <Viewport/>, so the same guard Prepare.jsx uses applies here:
 // Googlebot's renderer has no WebGL, and mounting there would blank the one page that carries the
@@ -21,11 +22,11 @@ const Viewport = React.lazy(() => import('three-slicer/viewer'))
 // The generator of record is packages/types/gen_settings_types.mjs — it prints the same count.
 const OPTION_COUNT = 976
 
-// npm and GitHub live in the CTA row — this row holds only destinations the buttons do not.
+// The quiet row under the buttons: destinations neither the buttons nor the top bar (SiteNav) already hold.
 const LINKS = [
-  ['Community', `${REPO_URL}/discussions`, 'questions · ideas · show and tell'],
-  ['Issues', `${REPO_URL}/issues`, 'bug reports'],
-  ['Integration specs', `${REPO_URL}/tree/main/examples`, 'the demo specs and sources'],
+  ['npm', 'https://www.npmjs.com/package/three-slicer'],
+  ['Community', `${REPO_URL}/discussions`],
+  ['Issues', `${REPO_URL}/issues`],
 ]
 
 // Every figure is measured from the shipped artifacts (schema key count from gen_settings_types,
@@ -212,6 +213,7 @@ function LiveSlicer() {
 export default function Landing() {
   return (
     <div className="landing">
+      <SiteNav current="/" />
       <header className="lp-head">
         <div className="lp-kicker">three-slicer · Browser/WASM 3D printing slicer</div>
         {/* Googlebot indexes this rendered page, not index.html's pre-render fallback (createRoot clears it),
@@ -225,23 +227,14 @@ export default function Landing() {
           an <code>.sl1</code> archive.</p>
         <div className="lp-cta">
           <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
-          <Link className="lp-btn" to="/demos">Demos</Link>
-          {/* A static HTML entry, not a router route — a plain <a>, so the browser fetches that document
+          {/* /docs is a static HTML entry, not a router route — a plain <a>, so the browser fetches that document
               rather than the router matching nothing and rendering blank. */}
-          <a className="lp-btn" href="/docs/orcaslicer-webassembly-port">How it was built</a>
-          <a className="lp-btn" href="/about">About</a>
-          <a className="lp-btn" href="https://www.npmjs.com/package/three-slicer" target="_blank" rel="noreferrer">npm package</a>
-          <a className="lp-btn" href={REPO_URL} target="_blank" rel="noreferrer">
-            GitHub
-            <img className="lp-badge" src={`https://img.shields.io/github/stars/${REPO}?style=social`} alt="GitHub stars" width="80" height="20" />
-          </a>
+          <a className="lp-btn" href="/docs">Docs</a>
+          <Link className="lp-btn" to="/demos">Demos</Link>
         </div>
         <nav className="lp-links" aria-label="Project links">
-          {LINKS.map(([label, href, meta]) => (
-            <a key={label} href={href} target="_blank" rel="noreferrer">
-              <span>{label}</span>
-              <small>{meta}</small>
-            </a>
+          {LINKS.map(([label, href]) => (
+            <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
           ))}
         </nav>
         <ul className="lp-stats" aria-label="Measured scope">
@@ -346,10 +339,13 @@ export default function Landing() {
 
         <section className="lp-section lp-license" aria-label="License">
           <p>three-slicer AGPL-3.0-or-later · three-slicer-viewer MIT · based on OrcaSlicer · runs in the browser or Node with no server</p>
-          <Link to="/slice">Start slicing</Link>
-          <Link to="/demos">See the demos</Link>
-          <a href="/docs/orcaslicer-webassembly-port">How the port works</a>
-          <a href="/about">About the project</a>
+          <nav className="lp-license-links" aria-label="More">
+            <Link to="/slice">Start slicing</Link>
+            <Link to="/demos">Demos</Link>
+            <a href="/docs">Docs</a>
+            <a href="/license">License</a>
+            <a href="/about">About</a>
+          </nav>
         </section>
       </main>
 
@@ -357,8 +353,9 @@ export default function Landing() {
         <span>Source</span>
         <a href={REPO_URL} target="_blank" rel="noreferrer">{REPO}</a>
         <a href={`${REPO_URL}/discussions`} target="_blank" rel="noreferrer">Community</a>
-        <a href="/docs/orcaslicer-webassembly-port">Engineering notes</a>
+        <a href="/docs">Docs</a>
         <a href="/about">About</a>
+        <a href="/license">License</a>
       </footer>
     </div>
   )
