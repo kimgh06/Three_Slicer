@@ -35,6 +35,10 @@
       "types": "./types/toggle.d.ts",
       "default": "./src/settings/toggle_eval.js"
     },
+    "./paint": {
+      "types": "./types/paint.d.ts",
+      "default": "./src/core/paint_tools.js"
+    },
     "./components": {
       "types": "./types/components.d.ts",
       "default": "./dist/components.js"
@@ -49,6 +53,7 @@
     "VIEWER.md",
     "data",
     "dist",
+    "src/core/paint_tools.js",
     "src/data.js",
     "src/settings",
     "types",

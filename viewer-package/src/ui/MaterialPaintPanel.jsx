@@ -1,5 +1,6 @@
 import React from 'react'
 import { THEME } from '../core/theme.js'
+import { ANGLE_FILL_TOOLS, FILL_TOOLS } from '../core/paint_tools.js'
 
 // Chip labels sit on the filament's own colour, which spans black PLA to white PETG — pick the ink per chip
 //  instead of hard-coding one, or the label disappears on half of any real palette.
@@ -33,7 +34,7 @@ export const PAINT_TOOLS = [
   ['bucket',   'bucket',   "Click once to flood everything sharing the clicked spot's current mark"],
   ['triangle', 'triangle', 'Click to mark exactly one facet'],
 ]
-export const isFillTool = (tool) => tool === 'smart' || tool === 'bucket' || tool === 'triangle'
+export const isFillTool = (tool) => FILL_TOOLS.has(tool)
 
 // Upstream offers the axis lock as two mutually exclusive checkboxes (Vertical / Horizontal — GLGizmoMmuSegmentation
 // .cpp:541). Three buttons say the same thing with the "neither" state on screen, which matters here because the
@@ -72,7 +73,7 @@ export function PaintToolRow({ tool = 'brush', onTool, cursor = 'circle', onCurs
         </>
       )}
       {/* "Triangle" is bucket fill with the propagation off, so it never consults the angle — no slider for it. */}
-      {(tool === 'smart' || tool === 'bucket') && (
+      {ANGLE_FILL_TOOLS.has(tool) && (
         <label className="bp-radius">Fill angle {fillAngle}°
           <input type="range" min="1" max="90" step="1" value={fillAngle}
             onChange={e => onFillAngle?.(parseFloat(e.target.value))} data-testid="paint-fill-angle" />

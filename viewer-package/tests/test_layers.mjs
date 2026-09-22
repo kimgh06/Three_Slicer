@@ -19,6 +19,7 @@ import assert from 'node:assert'
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { FILL_TOOLS } from '../src/core/paint_tools.js'
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const src = join(here, 'src')
@@ -103,14 +104,26 @@ console.log('\n[layers: the supported formats are read from SUPPORTED_EXT, never
 // registerLoader() grows SUPPORTED_EXT at runtime (the demo adds STEP), so a list typed into code is wrong for every
 //  host that registers a loader — the drop overlay and the rejection message both were. Comments may name formats.
 const withoutComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
-for (const dir of ['', 'core', 'scene', 'actions', 'ui', 'hooks']) for (const [name, text] of sourcesIn(dir))
+// Every folder of src/ that holds app code, '' being src/ itself — the scope of the spelled-out-value checks below.
+const SOURCE_DIRS = ['', 'core', 'scene', 'actions', 'ui', 'hooks']
+for (const dir of SOURCE_DIRS) for (const [name, text] of sourcesIn(dir))
   check(`${dir || 'src'}/${name} spells out no format list`, !/STL\s*[\/·,]\s*OBJ/i.test(withoutComments(text)))
 
 console.log('\n[layers: clearing a message is named, not set to an empty string]')
 // The empty string there means "nothing to show"; it is spelled once, in Viewport's wiring (clearError & co.).
-for (const dir of ['', 'core', 'scene', 'actions', 'ui', 'hooks']) for (const [name, text] of sourcesIn(dir)) {
+for (const dir of SOURCE_DIRS) for (const [name, text] of sourcesIn(dir)) {
   const clearedInline = withoutComments(text).split('\n').filter(line => /set[A-Z]\w*\(''\)/.test(line) && !/clear\w+: \(\) =>/.test(line))
   check(`${dir || 'src'}/${name} clears no message with set…('')`, !clearedInline.length, clearedInline[0]?.trim())
+}
+
+console.log('\n[layers: the fill tools are read from FILL_TOOLS, never spelled out]')
+// The brush input, both panels and the slicer worker each held their own copy of this set (core/paint_tools.js).
+const fillToolName = `'(${[...FILL_TOOLS].join('|')})'`
+const fillToolList = new RegExp(`${fillToolName}[^\\n]*(?!'\\1')${fillToolName}`)   // two DIFFERENT names on one line
+for (const dir of SOURCE_DIRS) for (const [name, text] of sourcesIn(dir)) {
+  if (dir === 'core' && name === 'paint_tools.js') continue
+  const spelled = withoutComments(text).split('\n').filter(line => fillToolList.test(line))
+  check(`${dir || 'src'}/${name} spells out no fill-tool list`, !spelled.length, spelled[0]?.trim())
 }
 
 console.log('\n[layers: the worker entries stay where the build looks for them]')

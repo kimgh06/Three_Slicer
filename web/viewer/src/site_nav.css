@@ -27,12 +27,18 @@
 .site-nav-brand { color: #e9f1f7; font-weight: 700; font-size: 15px; white-space: nowrap; }
 .site-nav nav { display: flex; gap: 22px; }
 .site-nav nav a { color: #8d9daa; transition: color 140ms ease-out; }
+.site-nav nav a:has(.site-nav-badge) { display: inline-flex; align-items: center; gap: 6px; }
+.site-nav-badge { display: block; }
 .site-nav nav a:hover,
 .site-nav nav a[aria-current="page"] { color: #e9f1f7; }
 
 @media (max-width: 640px) {
   .site-nav-inner { padding: 0 16px; }
   .site-nav nav { gap: 14px; font-size: 13.5px; }
+}
+@media (max-width: 480px) {
+  /* The star badge is the first thing to go: below this it pushes the links off the right edge (measured at 420). */
+  .site-nav-badge { display: none; }
 }
 @media (max-width: 400px) {
   /* Five links and the name do not fit on one line below this; the name is also the Home link, so it goes. */
