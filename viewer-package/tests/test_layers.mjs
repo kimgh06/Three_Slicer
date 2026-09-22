@@ -113,6 +113,15 @@ for (const dir of ['', 'core', 'scene', 'actions', 'ui', 'hooks']) for (const [n
   check(`${dir || 'src'}/${name} clears no message with set…('')`, !clearedInline.length, clearedInline[0]?.trim())
 }
 
+console.log('\n[layers: the fill tools are read from FILL_TOOLS, never spelled out]')
+// The brush input, both panels and the slicer worker each held their own copy of this set (core/paint_tools.js).
+const fillToolList = /'(smart|bucket|triangle)'[^\n]*'(?!\1')(smart|bucket|triangle)'/   // two DIFFERENT names on one line
+for (const dir of ['', 'core', 'scene', 'actions', 'ui', 'hooks']) for (const [name, text] of sourcesIn(dir)) {
+  if (dir === 'core' && name === 'paint_tools.js') continue
+  const spelled = withoutComments(text).split('\n').filter(line => fillToolList.test(line))
+  check(`${dir || 'src'}/${name} spells out no fill-tool list`, !spelled.length, spelled[0]?.trim())
+}
+
 console.log('\n[layers: the worker entries stay where the build looks for them]')
 const root = readdirSync(src)
 for (const name of ['make_worker.js', 'parse_3mf.worker.js', 'Viewport.jsx'])

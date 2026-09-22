@@ -71,5 +71,12 @@ const failing = await send({ cmd: 'importPaint', facets: 'not an Int32Array', he
 assert.ok(failing.some(answer => answer.type === 'error' && answer.requestId === 999), 'an error reply echoes the requestId')
 console.log('  ok legacy replies unchanged; errors name their request')
 
+// The fill tools come from the viewer's one list (`three-slicer-viewer/paint`); a copy here drifted from it unseen.
+const { readFileSync } = await import('node:fs')
+const workerSource = readFileSync(fileURLToPath(new URL('../src/slicer.worker.js', import.meta.url)), 'utf8')
+assert.ok(workerSource.includes("from 'three-slicer-viewer/paint'"), 'the worker reads FILL_TOOLS from three-slicer-viewer/paint')
+assert.ok(!/const FILL_TOOLS\s*=/.test(workerSource), 'the worker defines no FILL_TOOLS of its own')
+console.log('  ok fill tools read from three-slicer-viewer/paint')
+
 console.log('\nworker_replies: ok')
 process.exit(0)
