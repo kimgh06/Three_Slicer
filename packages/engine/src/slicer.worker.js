@@ -18,6 +18,7 @@
 import { assertLegacySlaFallback, parseSlaJob } from './sla_request.js'
 import { withSliceWarnings } from './warnings.js'
 import { withSliceThroughput } from './throughput.js'
+import { FILL_TOOLS } from 'three-slicer-viewer/paint'
 
 // The kernel parses `params` as JSON text, so the raw protocol used to require a string — while the direct handle
 //  and createSlicerClient both take an object and stringify it for you. One object, two shapes, and the difference
@@ -110,7 +111,6 @@ const strokeFrom = (message) =>
 // The fill modes the kernel's fill_preview takes (selector_bridge.h FILL_*), by the tool name the protocol uses.
 const FILL_PREVIEW_MODE = { smart: 0, bucket: 1, triangle: 2 }
 
-const FILL_TOOLS = new Set(['smart', 'bucket', 'triangle'])
 const applyFill = (Module, message, state) => {
   const angle = Number.isFinite(message.angle) ? message.angle : 30
   if (message.tool === 'smart') {
