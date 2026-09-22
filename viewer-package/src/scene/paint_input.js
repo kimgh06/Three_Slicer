@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { createBrushCursor } from './brush_cursor.js'
 import { SUPPORT_OVERLAY_COLOR, UNPAINTED_COLOR } from '../core/paint_colors.js'
 import { mergedFacetOf } from '../core/paint_store.js'
+import { FILL_TOOLS } from '../core/paint_tools.js'
 
 // The painting half of the pointer handling: the raycast -> kernel-coordinate conversion, the brush cursor preview,
 // the stroke's own state (anchor, previous sample) and the wheel bindings. Split out of use_three_scene.js when the
@@ -10,7 +11,6 @@ import { mergedFacetOf } from '../core/paint_store.js'
 //
 // Upstream reference: GLGizmoPainterBase::gizmo_event (GLGizmoPainterBase.cpp:658).
 
-const FILL_TOOLS = new Set(['smart', 'bucket', 'triangle'])
 const RADIUS_MIN = 1, RADIUS_MAX = 15, RADIUS_STEP = 0.5
 const FILL_ANGLE_MIN = 1, FILL_ANGLE_MAX = 90, FILL_ANGLE_STEP = 1
 
