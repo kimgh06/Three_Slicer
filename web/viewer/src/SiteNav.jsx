@@ -1,5 +1,5 @@
 import React from 'react'
-import { REPO_URL } from './repo.js'
+import { REPO, REPO_URL } from './repo.js'
 import './site_nav.css'
 
 // The top bar of the React routes. The static pages (about, license, docs) carry the same markup written out,
@@ -20,7 +20,12 @@ export default function SiteNav({ current }) {
         <a className="site-nav-brand" href="/">Three Slicer</a>
         <nav aria-label="Site">
           {ITEMS.map(([label, href]) => (
-            <a key={label} href={href} aria-current={current === href && 'page'}>{label}</a>
+            <a key={label} href={href} aria-current={current === href && 'page'}>
+              {label}
+              {href === REPO_URL && (
+                <img className="site-nav-badge" src={`https://img.shields.io/github/stars/${REPO}?style=social`} alt="GitHub stars" width="80" height="20" />
+              )}
+            </a>
           ))}
         </nav>
       </div>
