@@ -71,6 +71,16 @@ if (existsSync(dockerfile) && existsSync(webPath)) {
   check(`the web app has the '${script}' script the Dockerfile runs`, Boolean(web.scripts?.[script]))
 }
 
+console.log('\n[lockstep: the badge reads the version rather than repeating it]')
+// The toolbar shows a build number, which is a third place the version could be written down. It is inlined
+//  from package.json by vite's `define`, so a bump moves it too; a number typed into either file would be a
+//  copy that goes stale silently — the badge would name a build nobody shipped.
+const versionSrc = readFileSync(join(here, 'src', 'core', 'version.js'), 'utf8')
+const viteConfig = readFileSync(join(here, 'vite.config.js'), 'utf8')
+check('the badge source spells out no version number', !/\d+\.\d+\.\d+/.test(versionSrc))
+check('...and reads the injected global', versionSrc.includes('__VIEWER_VERSION__'))
+check('the build injects it from package.json', /define:[^}]*__VIEWER_VERSION__:\s*JSON\.stringify\(pkg\.version\)/.test(viteConfig))
+
 console.log('\n[lockstep: the licenses are what the split assumed]')
 check(`${permissive.name} is permissively licensed`, permissive.license === 'MIT', permissive.license)
 check(`${agpl.name} is still AGPL`, /^AGPL-3\.0/.test(agpl.license || ''), agpl.license)

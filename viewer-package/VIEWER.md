@@ -256,6 +256,7 @@ opt-out only, everything on unless you say `false`, an unknown key stays on.
 | `filePicker` | The file dialog never opens, from any of the buttons that open it. |
 | `contextMenu` | No right-click menu. The browser's own menu stays suppressed over the canvas either way — OrbitControls preventDefaults `contextmenu` itself. |
 | `logs` | No console output, from the component or from the slice worker. |
+| `versionBadge` | The build number at the right end of the status bar is not drawn. It is there so a bug report can name a build; turn it off when the viewer is embedded as part of your own product. `panels.status: false` hides it too, since it rides that bar. |
 
 ### Read-only panels
 
