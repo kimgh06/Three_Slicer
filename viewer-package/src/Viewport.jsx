@@ -31,7 +31,7 @@ import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } fro
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
 import {
-  TopBar, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
+  TopBar, VersionBadge, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, TowerCard, writeTowerPosition,
 } from './ui/index.js'
 import { DEFAULT_BED, DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
@@ -787,7 +787,7 @@ export default function Viewport({
               plateRun={plateRun} onSelect={selectPlate} onAdd={addPlate} onDelete={deletePlate} />
           )}
 
-          {ok && showPanel('status') && <div className="vp-status" data-testid="vp-status">{status}</div>}
+          {ok && showPanel('status') && <div className="vp-status" data-testid="vp-status"><VersionBadge on={feature('versionBadge')} />{status}</div>}
         </div>
 
         {/* S4 right sidebar */}
