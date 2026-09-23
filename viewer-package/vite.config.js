@@ -1,10 +1,16 @@
 import { defineConfig } from 'vite'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
 // Library build — transpiles JSX only; everything else stays external.
 export default defineConfig({
   root: dirname(fileURLToPath(import.meta.url)),   // pins entry/outDir even when run from the repo root via --config
+  // src/core/version.js reads this. The value is inlined from package.json so the version badge has one owner;
+  //  importing package.json instead would bundle scripts and dependencies into dist for one string.
+  define: { __VIEWER_VERSION__: JSON.stringify(pkg.version) },
   build: {
     lib: {
       // The workers are entries rather than bundled imports: make_worker.js reaches each by a dist-relative URL,

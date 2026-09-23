@@ -169,7 +169,7 @@ export interface ViewportProps {
  *   way: OrbitControls preventDefaults `contextmenu` itself.
  * - `logs` — console diagnostics, from the component and from the slice worker.
  */
-export type ViewportFeature = 'shortcuts' | 'warmup' | 'drop' | 'filePicker' | 'contextMenu' | 'logs'
+export type ViewportFeature = 'shortcuts' | 'warmup' | 'drop' | 'filePicker' | 'contextMenu' | 'logs' | 'versionBadge'
 
 /**
  * The panels that accept `'readonly'` as well as `true`/`false` — the right column and the cards in it. Everything

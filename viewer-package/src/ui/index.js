@@ -3,6 +3,7 @@
 // parse_3mf worker entry (routing that through a barrel would drag all of core/ into the worker chunk).
 // Nothing inside ui/ imports this file: a folder that imports its own barrel is how import cycles start.
 export { default as TopBar } from './TopBar.jsx'
+export { default as VersionBadge } from './VersionBadge.jsx'
 export { default as GizmoRail } from './GizmoRail.jsx'
 export { default as ObjectToolbar } from './ObjectToolbar.jsx'
 export { default as ContextMenu } from './ContextMenu.jsx'
