@@ -10,6 +10,9 @@
 #include <emscripten/val.h>
 #include <vector>
 
+// One extrusion of the classic wall generator (classic_bridge.cpp): a perimeter loop, or an open thin-wall path.
+struct ClassicWall { Path pl; bool loop; int inset; float w; };
+
 // Layer data (2-pass)
 struct LayerData {
   double z=0; int idx=0; double h=0;
@@ -20,7 +23,10 @@ struct LayerData {
   Paths supBase, supIface;       // support body (sparse) / interface (solid)
   // Stages 18/19 -> WP3: real tree support toolpaths (TreePath: width + the upstream role/height/mm3_per_mm)
   std::vector<TreePath> supTree;
-  Paths thin;                    // thin-wall (narrower than 2w) regions — handled with a single center line
+  // Classic wall generator (the port of upstream process_classic): loops and thin walls in upstream's print order, and
+  //  the variable-width gap fill. `walls` above holds the same loops grouped by depth, for spiral mode and the layer length.
+  std::vector<ClassicWall> classicWalls;
+  std::vector<TreePath> classicGapFill;
   Paths island;                  // region travels stay inside (contour −w/2) — precomputed in PASS1 (parallel), moved at emission
   std::vector<arachne_bridge::WLine> arachneWalls;  // stage 7: the real Arachne variable-width walls (arachne mode)
 };
