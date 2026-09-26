@@ -63,7 +63,8 @@ export function makeCylinderSTL(r, h, seg) {
   return trisToSTL(tris)
 }
 // Models for stage 5 -------------------------------------------------------------
-// Thin cross (thin wall): a thick hub (3x3, >=2w) with 4 thin arms (0.6mm ≈ 1.5w). Hub = 2 wall loops, arms = a single center line.
+// Thin cross (thin wall): a thick hub (3x3, >=2w) with 4 thin arms (0.6mm ≈ 1.5w). Hub = 2 wall loops; an arm gets one
+//  outer loop by default and a medial-axis thin wall with detect_thin_wall, as upstream's process_classic does.
 export function makeCrossSTL() {
   const hub = 3, arm = 0.6, len = 5, h = 3
   return trisToSTL([
@@ -301,10 +302,40 @@ const rRing = Module.slice(new Uint8Array(makeRingSTL()), JSON.stringify(params)
 ok(!rRing.error && typeTotal(rRing, 7) > 0, `gap-fill on 2.5w ring (type7=${rRing.error ? 'ERR' : typeTotal(rRing, 7)})`)
 ok(typeTotal(r, 7) === 0, `solid cube has no gap-fill (type7=${typeTotal(r, 7)})`)
 
-// (2) Thin wall (Arachne-lite): a thin cross -> the arms carry a center line (type8), and the thick hub keeps 2 wall loops.
+// (2) Thin wall (classic, the port of upstream process_classic): a 0.6mm arm is wide enough for one outer loop, so by
+//  default it is walled like everything else (no type8); detect_thin_wall collapses it to a medial-axis thin wall (type8).
 const rCross = Module.slice(new Uint8Array(makeCrossSTL()), JSON.stringify(params), () => {})
-ok(!rCross.error && typeTotal(rCross, 8) > 0, `thin cross → thin-wall centerline (type8=${rCross.error ? 'ERR' : typeTotal(rCross, 8)})`)
+ok(!rCross.error && typeTotal(rCross, 8) === 0, `thin cross, detect_thin_wall off → arms walled, no thin wall (type8=${rCross.error ?? typeTotal(rCross, 8)})`)
+const rCrossThin = Module.slice(new Uint8Array(makeCrossSTL()), JSON.stringify({ ...params, detect_thin_wall: true }), () => {})
+ok(!rCrossThin.error && typeTotal(rCrossThin, 8) > 0, `thin cross, detect_thin_wall on → medial-axis thin walls (type8=${rCrossThin.error ?? typeTotal(rCrossThin, 8)})`)
 ok(typeTotal(r, 8) === 0, `solid cube has no thin-wall (type8=${typeTotal(r, 8)})`)
+
+// (2b) [thin wall orientation] A thin plate prints the same wall length however it is turned on the bed. The classic
+//  path used to fill a region narrower than 2w with ONE straight line along the bbox's x or y axis, so a plate turned
+//  30deg got a ~1mm stub across it (measured on a 20mm plate: 20mm of thin wall at 0deg, 1.2-1.6mm at 30deg).
+{
+  const plateSTL = (thickness, degrees) => {
+    const angle = degrees * Math.PI / 180, c = Math.cos(angle), sn = Math.sin(angle)
+    const turn = t => t.map(([x, y, z]) => [x * c - y * sn, x * sn + y * c, z])
+    return trisToSTL(boxTris(-10, -thickness / 2, 0, 20, thickness, 4).map(turn))
+  }
+  const midWallLength = (result) => {
+    const layer = result.layers[Math.floor(result.layers.length / 2)].paths
+    let length = 0
+    for (let k = 0; k < layer.length; k += 8) {
+      const role = layer[k + 3] & 15
+      if (role === 1 || role === 8) length += Math.hypot(layer[k + 4] - layer[k], layer[k + 5] - layer[k + 1])
+    }
+    return length
+  }
+  for (const thickness of [0.6, 0.8]) for (const detect_thin_wall of [false, true]) {
+    const p0 = { ...params, detect_thin_wall }
+    const straight = midWallLength(Module.slice(new Uint8Array(plateSTL(thickness, 0)), JSON.stringify(p0), () => {}))
+    const turned = midWallLength(Module.slice(new Uint8Array(plateSTL(thickness, 30)), JSON.stringify(p0), () => {}))
+    ok(straight > 15 && Math.abs(turned / straight - 1) < 0.05,
+       `[thin wall orientation] ${thickness}mm plate, detect_thin_wall=${detect_thin_wall}: wall length 0deg ${straight.toFixed(2)} vs 30deg ${turned.toFixed(2)}`)
+  }
+}
 // Does the thick hub get a second wall: wall_loops 2 yields more wall segments than 1 (added only on the hub)
 const rCross1 = Module.slice(new Uint8Array(makeCrossSTL()), JSON.stringify({ ...params, wall_loops: 1 }), () => {})
 ok(typeTotal(rCross, 1) > typeTotal(rCross1, 1),
