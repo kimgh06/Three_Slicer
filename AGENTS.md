@@ -374,6 +374,15 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   default order, and the infill reaches into the walls by the overlap: cube E +0.75%, table +1.4%, wall positions
   unchanged), and arachne mode is untouched, including its own fill and gap-fill approximation. The multi-material
   path (`slice_mm.cpp`) still offsets its walls by w itself.
+- **Arc fitting is upstream's `ArcFitter`** (`arcfit_bridge.cpp`, called from `GW::extrude_run` at upstream's per-role
+  tolerance: 0.04mm sparse infill, 0.0375mm support and raft, `resolution` otherwise). The kernel's own fitter accepted
+  a run when its VERTICES lay on one circle, so a zigzag whose turning points sit on a round boundary became one arc:
+  the preview (drawn from the stream) looked right while the exported G-code, and the print, did not (measured on a
+  Benchy with the Bambu Lab A1 mini defaults, which turn arc fitting on: 19871 G-code segments off the real path by
+  more than 0.05mm before, 30 after, worst 0.072mm). `[arc fidelity]` in `test.mjs` pins it. One difference is left:
+  upstream simplifies slice contours by 0.0025mm (`PrintObjectSlice.cpp:172`, "has influence on arc fitting") and
+  PASS1 by `resolution`, so a coarsely faceted round wall here can sit just past the arc tolerance and stay straight
+  moves where upstream would fit it.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
   `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and
