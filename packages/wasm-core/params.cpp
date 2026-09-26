@@ -234,6 +234,16 @@ Params parse_params(const std::string& j) {
   p.wipe_tower_real               = jbool(j,"wipe_tower_real",p.wipe_tower_real);
   p.prime_tower_width             = jget(j,"prime_tower_width",p.prime_tower_width);
   p.wall_generator                = jstr(j,"wall_generator",p.wall_generator);
+  p.detect_thin_wall              = jbool(j,"detect_thin_wall",p.detect_thin_wall);
+  p.wall_sequence                 = jstr(j,"wall_sequence",p.wall_sequence);
+  p.wall_direction                = jstr(j,"wall_direction",p.wall_direction);
+  p.filter_out_gap_fill           = jget(j,"filter_out_gap_fill",p.filter_out_gap_fill);
+  p.gap_infill_speed              = jarr(j,"gap_infill_speed");
+  p.infill_wall_overlap           = jget(j,"infill_wall_overlap",p.infill_wall_overlap);
+  p.top_bottom_infill_wall_overlap = jget(j,"top_bottom_infill_wall_overlap",p.top_bottom_infill_wall_overlap);
+  p.precise_outer_wall            = jbool(j,"precise_outer_wall",p.precise_outer_wall);
+  p.only_one_wall_first_layer     = jbool(j,"only_one_wall_first_layer",p.only_one_wall_first_layer);
+  p.alternate_extra_wall          = jbool(j,"alternate_extra_wall",p.alternate_extra_wall);
   p.pe_lite                       = jbool(j,"pe_lite",p.pe_lite);
   p.extrusion_rate_slope_segment_length = jget(j,"extrusion_rate_slope_segment_length",p.extrusion_rate_slope_segment_length);
   p.pe_external_perimeter_only    = jbool(j,"pe_external_perimeter_only",p.pe_external_perimeter_only);
