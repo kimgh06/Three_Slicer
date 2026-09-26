@@ -20,7 +20,6 @@ double vwalls_len(const std::vector<Paths>& ws);
 int fan_S(int i, const Params& p);
 void sort_monotonic(Paths& lines, double angleDeg);   // (defined in geom_helpers.cpp) for zigzag ordering
 struct DPt { double x, y; };
-bool circle_from3(DPt a, DPt b, DPt c, double& cx, double& cy, double& r);
 // Seam context (aligned = the previous layer's seam, random = a deterministic LCG)
 struct SeamCtx { double lastX=0, lastY=0; bool has=false; uint32_t rng=1; };
 void rotate_seam(Path& p, int mode, SeamCtx& sc, double nozX, double nozY);

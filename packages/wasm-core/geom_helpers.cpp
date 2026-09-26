@@ -171,16 +171,6 @@ void sort_monotonic(Paths& lines, double angleDeg) {
     return pa < pb;
   });
 }
-// Circumcircle of 3 points (center, r) — for arc fitting
-bool circle_from3(DPt a, DPt b, DPt c, double& cx, double& cy, double& r) {
-  double d = 2.0*(a.x*(b.y-c.y)+b.x*(c.y-a.y)+c.x*(a.y-b.y));
-  if (std::fabs(d) < 1e-9) return false;
-  double aa=a.x*a.x+a.y*a.y, bb=b.x*b.x+b.y*b.y, cc=c.x*c.x+c.y*c.y;
-  cx = (aa*(b.y-c.y)+bb*(c.y-a.y)+cc*(a.y-b.y))/d;
-  cy = (aa*(c.x-b.x)+bb*(a.x-c.x)+cc*(b.x-a.x))/d;
-  r  = std::hypot(a.x-cx, a.y-cy);
-  return true;
-}
 static uint32_t lcg(uint32_t& s){ s = s*1664525u + 1013904223u; return s; }
 // Seam modes: 0=back (max Y) 1=nearest (closest to the nozzle) 2=aligned (previous seam) 3=random, -1=no rotation
 void rotate_seam(Path& p, int mode, SeamCtx& sc, double nozX, double nozY) {
