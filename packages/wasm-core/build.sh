@@ -43,6 +43,7 @@ ARACHNE_SRC="
   $AP/Geometry/VoronoiUtils.cpp $AP/Geometry/Voronoi.cpp
   $AP/Geometry/VoronoiUtilsCgal.cpp
   classic_bridge.cpp
+  arcfit_bridge.cpp
   $AP/Geometry/MedialAxis.cpp
 
   $AP/clipper.cpp
