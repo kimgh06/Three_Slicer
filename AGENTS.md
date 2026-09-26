@@ -358,6 +358,22 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `printerKeys` union must not be used as "what the printer owns" against a preset: it holds `layer_height`
   because two resin rows set it, and guarding it blanketly meant no FFF quality preset could change the layer
   height (measured); `applyProcessPreset` guards only the picked row's own keys.
+- **The classic wall generator is upstream's `process_classic`, not a kernel approximation** (`classic_bridge.cpp`,
+  the only TU where the classic path meets Slic3r types; `MedialAxis.cpp` verbatim beside it). It replaced an
+  "Arachne-lite" that filled any region narrower than 2w with ONE straight line along the bbox's x or y axis, so a
+  thin wall turned on the bed printed as a stub: a 20mm x 0.8mm plate got 20mm of wall at 0deg and 1.6mm at 30deg
+  (measured with the Bambu Lab A1 mini defaults, whose process preset sets `wall_generator: classic`; the schema
+  default is arachne). `[thin wall orientation]` in `test.mjs` pins it. What comes from upstream as written: the
+  Flow spacing offsets, BBS's narrow external loop, `detect_thin_wall` medial-axis thin walls, loop nesting and the
+  `traverse_loops` order, `wall_sequence` / `wall_direction`, medial-axis gap fill with `filter_out_gap_fill`, and
+  the infill area with `infill_wall_overlap` (25% `top_bottom_infill_wall_overlap` on the first and topmost layer).
+  Left out, each for want of the subsystem it feeds (listed in the file header): overhang wall splitting and
+  everything keyed on it, fuzzy skin, `only_one_wall_top`'s top-surface split (needs the upper layer inside the
+  parallel PASS1), `counterbore_hole_bridging`, the first-layer outer-brim reverse (no `brim_type`). Two consequences
+  that look like regressions and are not: golden moved (the inner wall now prints before the outer one, upstream's
+  default order, and the infill reaches into the walls by the overlap: cube E +0.75%, table +1.4%, wall positions
+  unchanged), and arachne mode is untouched, including its own fill and gap-fill approximation. The multi-material
+  path (`slice_mm.cpp`) still offsets its walls by w itself.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
   `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and
