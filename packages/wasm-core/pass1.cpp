@@ -5,6 +5,7 @@
 #include "slice_ctx.h"
 
 #include "arachne_bridge.h"
+#include "classic_bridge.h"
 #include "clip_util.h"
 #include "emit.h"
 #include "slice_planes.h"
@@ -46,6 +47,69 @@ ModelPrep prepare_model(std::vector<Tri>& tris, const Params& p, bool reuseGeom)
                                           || maxy > p.bed_depth*0.5 || miny < -p.bed_depth*0.5;
   if (reuseGeom) over_bed = g_scache.over_bed;
   return { cx, cy, height, over_bed };
+}
+
+// The classic wall generator: the port of upstream PerimeterGenerator::process_classic (classic_bridge.cpp). It fills
+//  ld.classicWalls (loops and thin walls in print order), ld.walls (the same loops by depth), ld.classicGapFill and
+//  ld.fill (upstream's fill_surfaces, the infill area with the wall overlap applied).
+static void classic_walls(LayerData& ld, const Params& p, int i, int N) {
+  const int nraft = std::max(0, p.raft_layers);
+  const bool firstLayer = (i == 0 && nraft == 0);   // the same first-layer rule the emission applies to its widths
+  classic_bridge::Config config;
+  config.ext_perimeter_width = p.outer_wall_line_width;
+  config.perimeter_width     = p.inner_wall_line_width;
+  config.solid_infill_width  = p.internal_solid_infill_line_width;
+  if (firstLayer) {
+    config.ext_perimeter_width = p.initial_layer_line_width;
+    config.perimeter_width     = p.initial_layer_line_width;
+    config.solid_infill_width  = p.initial_layer_line_width;
+  }
+  config.layer_height              = ld.h;
+  config.nozzle_diameter           = p.nozzle_diameter;
+  config.wall_loops                = p.wall_loops;
+  config.layer_id                  = i + nraft;      // upstream numbers object layers after the raft
+  config.raft_layers               = nraft;
+  config.detect_thin_wall          = p.detect_thin_wall;
+  config.has_gap_fill              = p.has_gap_fill();
+  config.filter_out_gap_fill       = p.filter_out_gap_fill;
+  config.wall_sequence             = classic_bridge::InnerOuter;
+  if (p.wall_sequence == "outer wall/inner wall")  config.wall_sequence = classic_bridge::OuterInner;
+  if (p.wall_sequence == "inner-outer-inner wall") config.wall_sequence = classic_bridge::InnerOuterInner;
+  config.wall_counter_clockwise    = (p.wall_direction != "cw");
+  config.precise_outer_wall        = p.precise_outer_wall;
+  config.only_one_wall_first_layer = p.only_one_wall_first_layer;
+  config.alternate_extra_wall      = p.alternate_extra_wall;
+  config.sparse_infill_density     = p.infill_density * 100.0;
+  config.spiral_vase               = p.spiral_mode;
+  config.resolution                = p.gcode_resolution;
+  config.arc_fitting               = p.enable_arc_fitting;
+  config.infill_wall_overlap       = p.infill_wall_overlap;
+  config.top_bottom_infill_wall_overlap = p.top_bottom_infill_wall_overlap;
+  config.is_top_layer              = (i == N - 1);
+
+  std::vector<classic_bridge::IPath> contour;
+  contour.reserve(ld.contour.size());
+  for (const Path& path : ld.contour) {
+    classic_bridge::IPath points; points.reserve(path.size());
+    for (const IntPoint& point : path) points.emplace_back(point.x(), point.y());
+    contour.push_back(std::move(points));
+  }
+  classic_bridge::Result result = classic_bridge::generate(contour, config);
+
+  auto to_path = [](const classic_bridge::IPath& points) {
+    Path path; path.reserve(points.size());
+    for (const classic_bridge::IPoint& point : points) path.push_back(IntPoint((cInt)point.first, (cInt)point.second));
+    return path;
+  };
+  for (const classic_bridge::Extrusion& extrusion : result.walls) {
+    ld.classicWalls.push_back({ to_path(extrusion.points), extrusion.closed, extrusion.inset, (float)extrusion.width });
+    if (!extrusion.closed) continue;
+    if ((int)ld.walls.size() <= extrusion.inset) ld.walls.resize(extrusion.inset + 1);
+    ld.walls[extrusion.inset].push_back(ld.classicWalls.back().pl);
+  }
+  for (const classic_bridge::Extrusion& extrusion : result.gap_fill)
+    ld.classicGapFill.push_back({ to_path(extrusion.points), (float)extrusion.width, 0, (float)ld.h, 0.0f });
+  for (const classic_bridge::IPath& points : result.fill) ld.fill.push_back(to_path(points));
 }
 
 bool pass1_run(SliceCtx& C) {
@@ -112,14 +176,17 @@ bool pass1_run(SliceCtx& C) {
       }
       if (!ld.contour.empty()) {
         ld.island = offset_paths(ld.contour, -w*0.5);   // travel guard region — moved here (parallel) from the serial offset in the emission loop
-        // Thin wall (Arachne-lite): detect regions narrower than 2w where the wall offset would vanish -> one center line instead of walls.
-        //  Walls are generated only from the thick core (morph_open, width >= 2w) -> prevents double extrusion on thin parts.
-        //  ⚠ Not full Arachne (a variable-width skeleton) — a single center line approximation.
+        if (p.wall_generator != "arachne") {
+          classic_walls(ld, p, i, N);
+        } else {
+        // Arachne mode keeps the walls and fill it had before the classic port: the fill comes from these offsets, and
+        //  ld.walls is the emission fallback for a layer Arachne returns nothing for. The thick core (morph_open, width
+        //  >= 2w) is what the offsets start from, so a region narrower than 2w leaves no hole in the fill.
         Paths wallBase = ld.contour;
         Paths core = morph_open(ld.contour, w);
         Paths thin = clip_paths(ld.contour, core, ctDifference);
         thin = offset_paths(offset_paths(thin, -w*0.15), w*0.15);   // remove sliver noise below 0.3w
-        if (!thin.empty() && paths_area(thin) > w*w) { ld.thin = thin; wallBase = core; }
+        if (!thin.empty() && paths_area(thin) > w*w) wallBase = core;
         Paths last = wallBase;
         for (int wl=0; wl<p.wall_loops; ++wl) {
           Paths wpaths = offset_paths(wallBase, -(w*0.5 + wl*w));
@@ -128,7 +195,7 @@ bool pass1_run(SliceCtx& C) {
         }
         if (!last.empty()) ld.fill = offset_paths(last, -(w*0.5));
         // Stage 7: in arachne mode -> generate variable-width walls with the real ported WallToolPaths (walls only; fill stays classic).
-        if (p.wall_generator == "arachne") {
+        {
           // [Ultra-dense contour guard] Feeding the raw slice contours of a 3M-triangle model (tens of thousands of points per layer) directly
           //  kills the ported Arachne (SkeletalTrapezoidation) with a wild pointer trap (measured: immediately on layer 0,
           //  a raw OOB with no ASAN report; classic finishes the same model). Upstream OrcaSlicer passes contours that went through resolution
@@ -163,7 +230,7 @@ bool pass1_run(SliceCtx& C) {
             fflush(stderr);
           }
           ld.arachneWalls = arachne_bridge::generate_walls(polys, w, p.wall_loops, ld.h);
-          ld.thin.clear();   // arachne handles thin regions directly as variable-width walls -> the classic thin-wall path is disabled
+        }
         }
       }
       L[i] = std::move(ld);
