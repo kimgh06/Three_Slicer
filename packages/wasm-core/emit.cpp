@@ -71,7 +71,7 @@ void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float typ
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
     gw.travel(pts[0].x, pts[0].y, fTravel);
     for (size_t i=1;i<pts.size();++i) push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, z, type);
-    gw.extrude_run(pts, fPrint);
+    gw.extrude_run(pts, fPrint, type);
     if (updateSeam) { sc.lastX=pts[0].x; sc.lastY=pts[0].y; sc.has=true; }
   }
   if (anyRun) gw.pe_end_run();
@@ -91,7 +91,7 @@ void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, fl
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
     gw.travel(pts[0].x, pts[0].y, fTravel);
     for (size_t i=1;i<pts.size();++i) push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, z, type);
-    gw.extrude_run(pts, fPrint);
+    gw.extrude_run(pts, fPrint, type);
   }
   if (anyRun) gw.pe_end_run();
 }
@@ -120,7 +120,7 @@ void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<TreePath>& 
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
     gw.travel(pts[0].x, pts[0].y, fTravel);
     for (size_t i=1;i<pts.size();++i) push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, z, type);
-    gw.extrude_run(pts, fPrint);
+    gw.extrude_run(pts, fPrint, type);
   }
   if (curRole >= 0) gw.pe_end_run();
   g_seg_w_cur = (float)p.line_width; gw.set_e_per_mm(h, p);   // restore the default width/E

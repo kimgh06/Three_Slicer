@@ -27,7 +27,7 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
     std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
 
     // --- Emission path: unpack the compute_pre results (aliases so the emission code stays untouched) ---
-    Paths& gapLines = pre.gapLines;       std::vector<ThinRun>& thinRuns = pre.thinRuns;
+    Paths& gapLines = pre.gapLines;
     Paths& solidLines = pre.solidLines;   Paths& topLines = pre.topLines;
     Paths& bridgeLines = pre.bridgeLines; Paths& sparseLines = pre.sparseLines;
     Paths& supI = pre.supI; Paths& supB = pre.supB; Paths& flExtra = pre.flExtra;
@@ -63,6 +63,18 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
       gw.raw("; walls (Arachne — real ported WallToolPaths, variable width)");
       emit_arachne_walls(gw, tp, ld.arachneWalls, zE, ld.h, p, fPrint, fTravel);
       gw.set_e_per_mm(ld.h, p); g_seg_w_cur=(float)w;   // restore the default width/flow (for the infill that follows)
+    } else if (p.wall_generator != "arachne") {
+      // The classic generator's walls in upstream's print order (classic_bridge.cpp): each loop at the width upstream
+      //  gave it (BBS's narrow external loop is thinner than outer_wall_line_width), thin walls at their own width.
+      for (const ClassicWall& wall : ld.classicWalls) {
+        if (!wall.loop) {
+          emit_lines_vw(gw, tp, std::vector<TreePath>{ { wall.pl, wall.w, 0, (float)ld.h, 0.0f } }, zE, ld.h, p, 8.0f, fPrint, fTravel);
+          continue;
+        }
+        setW(wall.w);
+        if (wall.inset == 0 && scarfOn) emit_scarf_loop(gw, tp, wall.pl, zE, ld.h, fPrint, fTravel, seamMode, seamCtx);
+        else emit_loops(gw, tp, Paths{wall.pl}, zE, 1.0f, fPrint, fTravel, seamMode, seamCtx, wall.inset == 0);  // record the seam only for the outer wall
+      }
     } else {
       for (size_t wi=0; wi<ld.walls.size(); ++wi) {
         setW(wi==0 ? wOuter : wInner);   // stage 21: outer wall (wi==0) = outer_wall_line_width, inner walls = inner_wall_line_width
@@ -70,12 +82,9 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
         else                    emit_loops(gw, tp, ld.walls[wi], zE, 1.0f, fPrint, fTravel, seamMode, seamCtx, wi==0);  // record the seam only for the outer wall (wi==0)
       }
     }
-    if (!thinRuns.empty()) {
-      gw.raw("; thin-wall (Arachne-lite: single centerline, NOT full Arachne)");
-      gw.pe_reset();                                 // low-flow thin walls are excluded from PE flow matching (avoids abrupt cross-section changes)
-      double saved = gw.e_per_mm;
-      for (auto& tr : thinRuns) { gw.e_per_mm = saved * tr.flow; emit_lines(gw, tp, tr.line, zE, 8.0f, fPrint, fTravel); }
-      gw.e_per_mm = saved; gw.pe_reset();
+    if (!ld.classicGapFill.empty()) {
+      gw.raw("; gap-fill");
+      emit_lines_vw(gw, tp, ld.classicGapFill, zE, ld.h, p, 7.0f, fPrint, fTravel);
     }
     setW(firstL ? p.initial_layer_line_width : p.line_width);   // stage 21: gap/bridge use the default width
     if (!gapLines.empty()) { gw.raw("; gap-fill"); emit_lines(gw, tp, gapLines, zE, 7.0f, fPrint, fTravel); }

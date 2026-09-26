@@ -192,6 +192,19 @@ struct Params {
   double prime_tower_width=30.0;                        //  width of the real WipeTower (mm). Separate from the square ring width (15).
   // New in stage 7 (the real Arachne port)
   std::string wall_generator="classic";                // classic|arachne (arachne = the real ported WallToolPaths)
+  // The classic wall generator (classic_bridge.cpp, the port of upstream process_classic). Each default is upstream's
+  //  schema default, because a key the settings map leaves out has to slice the way upstream does.
+  bool   detect_thin_wall=false;                        // detect_thin_wall: medial-axis thin walls where one loop does not fit
+  std::string wall_sequence="inner wall/outer wall";   // wall_sequence (inner wall/outer wall | outer wall/inner wall | inner-outer-inner wall)
+  std::string wall_direction="ccw";                    // wall_direction (ccw | cw)
+  double filter_out_gap_fill=0.0;                       // filter_out_gap_fill (mm): gap fill shorter than this is dropped
+  std::vector<double> gap_infill_speed;                 // gap_infill_speed (mm/s, per extruder): a first entry of 0 turns gap fill off (upstream has_gap_fill); empty = the schema's 30
+  bool   has_gap_fill() const { return forTool(gap_infill_speed, 0, 30.0) > 0; }   // PerimeterGenerator.cpp:1205, the wall filament's entry
+  double infill_wall_overlap=15.0;                      // infill_wall_overlap (percent)
+  double top_bottom_infill_wall_overlap=25.0;           // top_bottom_infill_wall_overlap (percent, first and topmost layer)
+  bool   precise_outer_wall=true;                       // precise_outer_wall
+  bool   only_one_wall_first_layer=false;               // only_one_wall_first_layer
+  bool   alternate_extra_wall=false;                    // alternate_extra_wall
   // New in stage 8 (the real PressureEqualizer port)
   //  ⚠ pe_lite=true by default: the real PE only adjusts flow in g-code carrying OrcaSlicer's ;_EXTRUDE_SET_SPEED tags, and
   //    this mini kernel emits plain g-code, so the real PE passes through (no-op). Hence the effective PE-lite is

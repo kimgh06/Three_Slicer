@@ -19,6 +19,9 @@ cd "$(dirname "$0")"
 AP=arachne_port/libslic3r
 
 # --- Arachne port sources (upstream verbatim + documented minimal edits) ---
+#  classic_bridge.cpp is the classic wall generator (a port of PerimeterGenerator::process_classic); it needs the medial
+#  axis (MedialAxis.cpp, verbatim) for thin walls and gap fill. MedialAxis calls Voronoi::annotate_inside_outside, which
+#  VoronoiOffset.cpp provides from the tree support group (same header, identical in both ports).
 ARACHNE_SRC="
   arachne_bridge.cpp
   $AP/Arachne/WallToolPaths.cpp
@@ -39,6 +42,9 @@ ARACHNE_SRC="
   $AP/Surface.cpp $AP/ArcFitter.cpp $AP/libslic3r.cpp $AP/Geometry.cpp
   $AP/Geometry/VoronoiUtils.cpp $AP/Geometry/Voronoi.cpp
   $AP/Geometry/VoronoiUtilsCgal.cpp
+  classic_bridge.cpp
+  arcfit_bridge.cpp
+  $AP/Geometry/MedialAxis.cpp
 
   $AP/clipper.cpp
   third_party/deps_src/clipper/clipper_z.cpp

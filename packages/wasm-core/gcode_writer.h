@@ -2,6 +2,7 @@
 //  Header-only (like clip_util.h / slice_planes.h): GW's members are all defined inside the struct,
 //  and the fixed-point formatters they call keep their original `static inline` linkage.
 #pragma once
+#include "arcfit_bridge.h"
 #include "clip_util.h"
 #include "geom_helpers.h"
 #include "params.h"
@@ -67,6 +68,7 @@ struct GW {
   double offX=128.0, offY=128.0;   // G-code XY offset = bed/2
   int    lastFan=-1;               // current cooling fan value (M106 only on change)
   bool   arc_fitting=false;        // G2/G3 arc fitting
+  double arc_resolution=0.01;     // the print's `resolution` (mm): the arc fitting tolerance outside sparse infill and support
   double scarf_len=10.0;           // length of the scarf seam ramp (mm)
   // Stage 6: PE-lite (limit on the volumetric flow change rate between adjacent extrusions)
   double pe_slope=0.0;             // mm³/s² (0=off)
@@ -299,44 +301,40 @@ struct GW {
   // Cooling fan (M106 emitted only on change)
   void set_fan(int S) { if (S==lastFan) return; lastFan=S; if (dry) return; std::snprintf(buf,sizeof buf,"M106 S%d",S); raw(buf); }
   // Emit a continuous polyline (pts[0] = current position). G2/G3 with arc_fitting, otherwise G1.
-  void extrude_run(const std::vector<DPt>& pts, int fPrint) {
+  //  The arcs are upstream's ArcFitter (arcfit_bridge.cpp) at upstream's per-role tolerance (LayerRegion::simplify_path,
+  //  Layer::simplify_support_path): SPARSE_INFILL_RESOLUTION for sparse infill, SUPPORT_RESOLUTION for support and raft,
+  //  the print's `resolution` for everything else. `type` is the toolpath type the caller emits (emit.cpp).
+  void extrude_run(const std::vector<DPt>& pts, int fPrint, float type) {
     if (dry) { if (pts.size()>1) { px=pts.back().x; py=pts.back().y; curF=fPrint; } return; }
     if (!arc_fitting) { for (size_t i=1;i<pts.size();++i) extrude(pts[i].x,pts[i].y,fPrint); return; }
-    // try_arc swallows the points it turns into one G2/G3, so they never reach extrude() and its note_xy. Noting
-    //  every input point here instead keeps the extent honest: the arc was fitted to these points to within the
-    //  fitting tolerance, so it cannot reach materially past them.
+    // An arc stands for the points it was fitted to, so they never reach extrude() and its note_xy. Noting every
+    //  input point here keeps the extent honest: the arc stays within the fitting tolerance of them.
     for (const DPt& q : pts) note_xy(q.x, q.y);
-    size_t i=0, n=pts.size();
-    while (i+1<n) { size_t j=try_arc(pts,i,fPrint); if (j>i) i=j; else { extrude(pts[i+1].x,pts[i+1].y,fPrint); ++i; } }
-  }
-  // Approximate an arc starting at pts[i] (>=5 points, deviation <=0.05mm, r 0.1~200, <=~155°) -> on success emit G2/G3 and return the end index
-  size_t try_arc(const std::vector<DPt>& pts, size_t i, int fPrint) {
-    const double RMIN=0.1, RMAX=200.0, MAXDEV=0.05;
-    size_t n=pts.size(); if (i+4>=n) return i;
-    size_t bestE=i; double bcx=0,bcy=0,br=0;
-    for (size_t e=i+4; e<n; ++e) {
-      size_t mid=i+(e-i)/2; double cx,cy,r;
-      if (!circle_from3(pts[i],pts[mid],pts[e],cx,cy,r)) break;
-      if (r<RMIN||r>RMAX) break;
-      bool okAll=true;
-      for (size_t k=i;k<=e;++k){ if (std::fabs(std::hypot(pts[k].x-cx,pts[k].y-cy)-r)>MAXDEV){okAll=false;break;} }
-      if (!okAll) break;
-      double a0=std::atan2(pts[i].y-cy,pts[i].x-cx), a1=std::atan2(pts[e].y-cy,pts[e].x-cx), sw=a1-a0;
-      while(sw>PI)sw-=2*PI; while(sw<-PI)sw+=2*PI;
-      if (std::fabs(sw)>2.7) break;                 // avoid full-circle (360°) arcs
-      bestE=e; bcx=cx; bcy=cy; br=r;
+    double tolerance = arc_resolution;
+    if ((int)type == 2) tolerance = 0.04;                          // SPARSE_INFILL_RESOLUTION (libslic3r.h)
+    if ((int)type == 5 || (int)type == 6) tolerance = 0.0375;      // SUPPORT_RESOLUTION
+    std::vector<std::pair<double,double>> points; points.reserve(pts.size());
+    for (const DPt& q : pts) points.emplace_back(q.x, q.y);
+    std::vector<arcfit_bridge::Move> moves;
+    arcfit_bridge::fit(points, tolerance, moves);
+    for (const arcfit_bridge::Move& move : moves) {
+      if (move.kind == arcfit_bridge::Linear) {
+        for (size_t k=move.start+1; k<=move.end && k<pts.size(); ++k) extrude(pts[k].x, pts[k].y, fPrint);
+        continue;
+      }
+      if (move.length < 1e-9) continue;                            // upstream GCode.cpp skips a zero-length arc
+      extrude_arc(pts[move.end], move.centerX, move.centerY, move.length, move.kind == arcfit_bridge::ArcCounterClockwise, fPrint);
     }
-    if (bestE < i+4) return i;
-    DPt a=pts[i], c=pts[bestE];
-    double a0=std::atan2(a.y-bcy,a.x-bcx), a1=std::atan2(c.y-bcy,c.x-bcx), sw=a1-a0;
-    while(sw>PI)sw-=2*PI; while(sw<-PI)sw+=2*PI;
-    bool ccw = sw>0;                                 // CCW → G3, CW → G2
-    double arcLen=std::fabs(sw)*br, dE=e_per_mm*arcLen; filament+=dE; ++segments;
-    double I=bcx-a.x, J=bcy-a.y;
-    if (fPrint!=curF){ std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",ccw?"G3":"G2",c.x+offX,c.y+offY,I,J,dE,fPrint); curF=fPrint; }
-    else            { std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   ccw?"G3":"G2",c.x+offX,c.y+offY,I,J,dE); }
-    raw(buf); px=c.x; py=c.y;
-    return bestE;
+  }
+  // One G2/G3 from the current position to `end` around (centerX, centerY), E from upstream's arc length.
+  void extrude_arc(DPt end, double centerX, double centerY, double length, bool counterClockwise, int fPrint) {
+    double dE = e_per_mm*length; filament+=dE; ++segments;
+    double I=centerX-px, J=centerY-py;
+    const char* command = "G2";
+    if (counterClockwise) command = "G3";
+    if (fPrint!=curF){ std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",command,end.x+offX,end.y+offY,I,J,dE,fPrint); curF=fPrint; }
+    else            { std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   command,end.x+offX,end.y+offY,I,J,dE); }
+    raw(buf); px=end.x; py=end.y;
   }
 };
 

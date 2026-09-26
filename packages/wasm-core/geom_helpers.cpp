@@ -32,22 +32,6 @@ std::vector<Paths> split_components(const Paths& in){
   for (PolyNode* n : tree.Childs) collect_component(n, out);
   return out;
 }
-// Center line approximation for a component: one straight line along the bbox major axis through the centroid, clipped to the component.
-//  Exact for thin straight bars. On failure (curves, …) it falls back to rectilinear along the major axis.
-Paths centerline_of(const Paths& comp, double w){
-  if (comp.empty()) return {};
-  double minx,miny,maxx,maxy; bbox_of(comp,minx,miny,maxx,maxy);
-  double W=maxx-minx, H=maxy-miny, ang=(W>=H)?0.0:90.0;
-  double cx=(minx+maxx)/2, cy=(miny+maxy)/2, a=ang*PI/180.0, dx=std::cos(a), dy=std::sin(a);
-  double diag=std::hypot(W,H)+2.0;
-  Path ln;
-  ln.push_back(IntPoint((cInt)std::llround((cx-dx*diag)*SCALE),(cInt)std::llround((cy-dy*diag)*SCALE)));
-  ln.push_back(IntPoint((cInt)std::llround((cx+dx*diag)*SCALE),(cInt)std::llround((cy+dy*diag)*SCALE)));
-  Paths lns; lns.push_back(ln);
-  Paths out = clip_open(lns, comp);
-  if (out.empty()) out = infill_clipped(comp, ang, std::max(w, 1e-3));   // fallback
-  return out;
-}
 // One layer of tree-lite shrink: components narrower than 2·minR are kept (minimum pillar), otherwise shrunk by -shrink and merged.
 // Stage 33: approximation of the upstream SupportGridPattern (SupportMaterial.cpp:637~) — snaps the support region to a grid.
 //  Upstream rasterizes the polygons at extrusion-width resolution and seed-fills macro blocks of support_spacing size, so that
@@ -186,16 +170,6 @@ void sort_monotonic(Paths& lines, double angleDeg) {
     double pa=(A[0].x()*INV)*nx+(A[0].y()*INV)*ny, pb=(B[0].x()*INV)*nx+(B[0].y()*INV)*ny;
     return pa < pb;
   });
-}
-// Circumcircle of 3 points (center, r) — for arc fitting
-bool circle_from3(DPt a, DPt b, DPt c, double& cx, double& cy, double& r) {
-  double d = 2.0*(a.x*(b.y-c.y)+b.x*(c.y-a.y)+c.x*(a.y-b.y));
-  if (std::fabs(d) < 1e-9) return false;
-  double aa=a.x*a.x+a.y*a.y, bb=b.x*b.x+b.y*b.y, cc=c.x*c.x+c.y*c.y;
-  cx = (aa*(b.y-c.y)+bb*(c.y-a.y)+cc*(a.y-b.y))/d;
-  cy = (aa*(c.x-b.x)+bb*(a.x-c.x)+cc*(b.x-a.x))/d;
-  r  = std::hypot(a.x-cx, a.y-cy);
-  return true;
 }
 static uint32_t lcg(uint32_t& s){ s = s*1664525u + 1013904223u; return s; }
 // Seam modes: 0=back (max Y) 1=nearest (closest to the nozzle) 2=aligned (previous seam) 3=random, -1=no rotation

@@ -12,10 +12,8 @@
 
 // Per-layer precomputation for PASS2 (geometry separation, infill line generation) — kept apart from emission (serial, gw/seam state).
 //  It holds only deterministic per-layer independent work, so mt builds can precompute it on workers (identical results, verified with golden).
-struct ThinRun { Paths line; double flow; };
 struct EmitPre {
   Paths gapLines, solidLines, topLines, bridgeLines, sparseLines, supI, supB, flExtra, ironLines;
-  std::vector<ThinRun> thinRuns;
   bool brim=false; int fPrint=0, fBridge=0, fSup=0;
 };
 
