@@ -18,6 +18,7 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
   gw.offX        = p.bed_width  * 0.5;
   gw.offY        = p.bed_depth  * 0.5;
   gw.arc_fitting = p.enable_arc_fitting;
+  gw.arc_resolution = p.gcode_resolution;
   gw.scarf_len   = p.scarf_length;
   gw.pe_slope    = (p.pe_lite ? std::max(0.0, p.max_volumetric_extrusion_rate_slope) : 0.0);   // in-kernel PE-lite only when pe_lite; else real PE post-processes
   gw.filament_area = PI * p.filament_diameter * p.filament_diameter / 4.0;
