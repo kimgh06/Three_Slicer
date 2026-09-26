@@ -59,12 +59,21 @@ const PASSTHROUGH_NUM = [
   //  rather than silently dropping them.
   'outer_wall_filament_id', 'inner_wall_filament_id', 'sparse_infill_filament_id',
   'top_surface_filament_id', 'bottom_surface_filament_id', 'internal_solid_filament_id',
+  // Read by the kernel's classic wall generator (wall_generator = classic).
+  'filter_out_gap_fill',
 ]
-const PASSTHROUGH_BOOL = ['independent_support_layer_height']
+const PASSTHROUGH_BOOL = ['independent_support_layer_height',
+  'detect_thin_wall', 'precise_outer_wall', 'only_one_wall_first_layer', 'alternate_extra_wall']
+// coPercent options. A 3mf import delivers "15%" while the schema default is the bare 15, so the sign is stripped and
+//  the kernel gets the number of percent either way.
+const PASSTHROUGH_PERCENT = ['infill_wall_overlap', 'top_bottom_infill_wall_overlap']
+// coEnum options the kernel reads by their upstream spelling.
+const PASSTHROUGH_STR = ['wall_sequence', 'wall_direction']
 // Per-filament vectors, one entry per filament, passed positionally like every other per-extruder array.
 //  filament_map is which physical extruder each filament sits in; density and cost turn extruded millimetres into
-//  the grams and currency the G-code footer reports.
-const PASSTHROUGH_NUM_VECTOR = ['filament_map', 'filament_density', 'filament_cost']
+//  the grams and currency the G-code footer reports. gap_infill_speed is per extruder rather than per filament; the
+//  kernel reads its first entry, the wall filament's on the single-material path.
+const PASSTHROUGH_NUM_VECTOR = ['filament_map', 'filament_density', 'filament_cost', 'gap_infill_speed']
 // Material identity. The kernel needs the type for the two decisions upstream makes by material name (PETG's
 //  extra unretract, TPU on the first layer) and the settings id for the footer.
 const PASSTHROUGH_STR_VECTOR = ['filament_type', 'filament_settings_id']
@@ -309,6 +318,12 @@ export function deriveKernelParams(settings, opts) {
       if (Number.isFinite(value)) passthrough[key] = value
     }
     for (const key of PASSTHROUGH_BOOL) if (present(key)) passthrough[key] = bool(key, false)
+    for (const key of PASSTHROUGH_PERCENT) {
+      if (!present(key)) continue
+      const value = Number(String(S(key)).replace('%', ''))
+      if (Number.isFinite(value)) passthrough[key] = value
+    }
+    for (const key of PASSTHROUGH_STR) if (present(key)) passthrough[key] = String(S(key))
     for (const key of PASSTHROUGH_NUM_VECTOR) {
       if (!present(key)) continue
       const raw = settings[key]
