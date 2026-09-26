@@ -265,14 +265,50 @@ ok(layerFeed(rFast.gcode, 10) === 3600, `no-slowdown layer10 feed=${layerFeed(rF
 ok(layerFeed(r.gcode, 10) < 3600 && layerFeed(r.gcode, 10) >= 1200, `slowdown layer10 feed=${layerFeed(r.gcode, 10)} (<3600, >=1200 floor)`)
 
 // (5) Arc fitting: cylinder -> G2/G3 present + extrusion volume preserved within ±1%
+//  gcode_resolution 0.0125 (upstream's RESOLUTION): upstream's ArcFitter also checks each chord against the circle, and
+//  this 64-facet r=10 wall's chords sag 0.012mm from it, past the default 0.01mm, where the walls stay straight moves as
+//  upstream prints them.
 const cyl = makeCylinderSTL(10, 6, 64)
 writeFileSync(join(here, 'cylinder.stl'), cyl)
-const rArcOff = Module.slice(new Uint8Array(cyl), JSON.stringify({ ...params, enable_arc_fitting: false }), () => {})
-const rArcOn  = Module.slice(new Uint8Array(cyl), JSON.stringify({ ...params, enable_arc_fitting: true }), () => {})
+const rArcOff = Module.slice(new Uint8Array(cyl), JSON.stringify({ ...params, gcode_resolution: 0.0125, enable_arc_fitting: false }), () => {})
+const rArcOn  = Module.slice(new Uint8Array(cyl), JSON.stringify({ ...params, gcode_resolution: 0.0125, enable_arc_fitting: true }), () => {})
 ok(/^G[23] /m.test(rArcOn.gcode), `arc fitting on → G2/G3 present (${(rArcOn.gcode.match(/^G[23] /gm) || []).length} arcs)`)
 ok(!/^G[23] /m.test(rArcOff.gcode), 'arc fitting off → no G2/G3')
 const arcDev = Math.abs(rArcOn.stats.filament_mm - rArcOff.stats.filament_mm) / rArcOff.stats.filament_mm
 ok(arcDev < 0.01, `arc extrusion within ±1% (Δ=${(arcDev * 100).toFixed(3)}%)`)
+// [arc fidelity] Every arc the G-code text carries follows the path it stands for. The kernel's own fitter accepted a
+//  run when its VERTICES lay on one circle, so the sparse-infill zigzag inside this cylinder, whose turning points sit
+//  on the round boundary, became arcs along the wall (measured with crosshatch, whose lines are one connected run:
+//  worst 0.66mm; on a Benchy with support, beyond 1mm). Upstream's ArcFitter (arcfit_bridge.cpp) checks the segments
+//  too. The bound is the largest fitting tolerance (0.04mm, sparse infill) plus the chord sag of the parser's sampling.
+{
+  const { parseGcode: parseGcodeText } = await import('../../../viewer-package/src/core/gcode_parse.js')
+  const bed = 200
+  const arcResult = Module.slice(new Uint8Array(cyl), JSON.stringify({ ...params, enable_arc_fitting: true, sparse_infill_pattern: 'crosshatch', bed_width: bed, bed_depth: bed }), () => {})
+  const parsed = parseGcodeText(arcResult.gcode)
+  const segmentDistance = (px, py, ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay, lengthSquared = dx * dx + dy * dy
+    let t = 0
+    if (lengthSquared > 0) t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared))
+    return Math.hypot(px - ax - t * dx, py - ay - t * dy)
+  }
+  let worst = 0
+  for (let layerIndex = 0; layerIndex < arcResult.layers.length; layerIndex++) {
+    const stream = arcResult.layers[layerIndex].paths, text = parsed.layers[layerIndex].paths
+    for (let k = 0; k < text.length; k += 8) {
+      if (!(text[k + 3] & 15)) continue
+      const midX = (text[k] + text[k + 4]) / 2 - bed / 2, midY = (text[k + 1] + text[k + 5]) / 2 - bed / 2
+      let nearest = Infinity
+      for (let q = 0; q < stream.length; q += 8) {
+        if (!(stream[q + 3] & 15)) continue
+        nearest = Math.min(nearest, segmentDistance(midX, midY, stream[q], stream[q + 1], stream[q + 4], stream[q + 5]))
+      }
+      worst = Math.max(worst, nearest)
+    }
+  }
+  ok(parsed.layers.length === arcResult.layers.length && worst < 0.1,
+     `[arc fidelity] arc-fitted G-code stays on the toolpath (worst ${worst.toFixed(3)}mm < 0.1mm)`)
+}
 
 // (6) Seam position: back = fixed, random = scattered (and deterministic)
 const firstWallStart = (layer) => { const p = layer.paths; for (let i = 0; i < p.length; i += 8) if (p[i + 3] === 1) return [p[i], p[i + 1]]; return null }
