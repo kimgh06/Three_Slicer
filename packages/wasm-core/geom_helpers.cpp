@@ -32,22 +32,6 @@ std::vector<Paths> split_components(const Paths& in){
   for (PolyNode* n : tree.Childs) collect_component(n, out);
   return out;
 }
-// Center line approximation for a component: one straight line along the bbox major axis through the centroid, clipped to the component.
-//  Exact for thin straight bars. On failure (curves, …) it falls back to rectilinear along the major axis.
-Paths centerline_of(const Paths& comp, double w){
-  if (comp.empty()) return {};
-  double minx,miny,maxx,maxy; bbox_of(comp,minx,miny,maxx,maxy);
-  double W=maxx-minx, H=maxy-miny, ang=(W>=H)?0.0:90.0;
-  double cx=(minx+maxx)/2, cy=(miny+maxy)/2, a=ang*PI/180.0, dx=std::cos(a), dy=std::sin(a);
-  double diag=std::hypot(W,H)+2.0;
-  Path ln;
-  ln.push_back(IntPoint((cInt)std::llround((cx-dx*diag)*SCALE),(cInt)std::llround((cy-dy*diag)*SCALE)));
-  ln.push_back(IntPoint((cInt)std::llround((cx+dx*diag)*SCALE),(cInt)std::llround((cy+dy*diag)*SCALE)));
-  Paths lns; lns.push_back(ln);
-  Paths out = clip_open(lns, comp);
-  if (out.empty()) out = infill_clipped(comp, ang, std::max(w, 1e-3));   // fallback
-  return out;
-}
 // One layer of tree-lite shrink: components narrower than 2·minR are kept (minimum pillar), otherwise shrunk by -shrink and merged.
 // Stage 33: approximation of the upstream SupportGridPattern (SupportMaterial.cpp:637~) — snaps the support region to a grid.
 //  Upstream rasterizes the polygons at extrusion-width resolution and seed-fills macro blocks of support_spacing size, so that

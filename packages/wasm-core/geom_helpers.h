@@ -12,7 +12,6 @@
 double paths_area(const Paths& ps);
 Paths morph_open(const Paths& in, double r);
 std::vector<Paths> split_components(const Paths& in);
-Paths centerline_of(const Paths& comp, double w);
 Paths grid_snap(const Paths& region, double cell);
 Paths tree_taper(const Paths& in, double shrink, double minR);
 Paths build_sparse(const Paths& region, const std::string& pat, double base, double spacing, int layerIdx, double z, double lineW, double density);
