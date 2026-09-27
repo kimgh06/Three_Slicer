@@ -61,9 +61,16 @@ const PASSTHROUGH_NUM = [
   'top_surface_filament_id', 'bottom_surface_filament_id', 'internal_solid_filament_id',
   // Read by the kernel's classic wall generator (wall_generator = classic).
   'filter_out_gap_fill',
+  // Upstream's flow multipliers (GCode.cpp:7343-7390): the print-wide one and each role's own (emit.cpp role_flow_ratio).
+  'print_flow_ratio', 'top_solid_infill_flow_ratio', 'bottom_solid_infill_flow_ratio', 'bridge_flow', 'brim_flow_ratio',
+  'scarf_joint_flow_ratio', 'outer_wall_flow_ratio', 'inner_wall_flow_ratio', 'sparse_infill_flow_ratio',
+  'internal_solid_infill_flow_ratio', 'gap_fill_flow_ratio', 'support_flow_ratio', 'support_interface_flow_ratio',
+  'first_layer_flow_ratio',
 ]
 const PASSTHROUGH_BOOL = ['independent_support_layer_height',
-  'detect_thin_wall', 'precise_outer_wall', 'only_one_wall_first_layer', 'alternate_extra_wall']
+  'detect_thin_wall', 'precise_outer_wall', 'only_one_wall_first_layer', 'alternate_extra_wall',
+  // thick_bridges picks upstream's round bridge thread; set_other_flow_ratios turns the per-role ratios on.
+  'thick_bridges', 'set_other_flow_ratios']
 // coPercent options. A 3mf import delivers "15%" while the schema default is the bare 15, so the sign is stripped and
 //  the kernel gets the number of percent either way.
 const PASSTHROUGH_PERCENT = ['infill_wall_overlap', 'top_bottom_infill_wall_overlap']
@@ -72,8 +79,9 @@ const PASSTHROUGH_STR = ['wall_sequence', 'wall_direction']
 // Per-filament vectors, one entry per filament, passed positionally like every other per-extruder array.
 //  filament_map is which physical extruder each filament sits in; density and cost turn extruded millimetres into
 //  the grams and currency the G-code footer reports. gap_infill_speed is per extruder rather than per filament; the
-//  kernel reads its first entry, the wall filament's on the single-material path.
-const PASSTHROUGH_NUM_VECTOR = ['filament_map', 'filament_density', 'filament_cost', 'gap_infill_speed']
+//  kernel reads its first entry, the wall filament's on the single-material path. filament_max_volumetric_speed caps
+//  every extrusion's speed as upstream does (GCode.cpp:7492).
+const PASSTHROUGH_NUM_VECTOR = ['filament_map', 'filament_density', 'filament_cost', 'gap_infill_speed', 'filament_max_volumetric_speed']
 // Material identity. The kernel needs the type for the two decisions upstream makes by material name (PETG's
 //  extra unretract, TPU on the first layer) and the settings id for the footer.
 const PASSTHROUGH_STR_VECTOR = ['filament_type', 'filament_settings_id']
@@ -200,6 +208,21 @@ export function serializeProjectSettings(settings) {
   return out
 }
 
+
+// Issue 63: the custom G-code the kernel expands with upstream's PlaceholderParser (custom_gcode.cpp). The kernel
+//  gets the flattened settings it expands them against only when one of these holds text, which keeps every caller
+//  without a template on the raw path, byte-identical to before. The settings go in the form a 3mf's
+//  project_settings.config stores (serializeProjectSettings), as one JSON string: the kernel's flat key search
+//  never looks inside a string value, so no key in it can be taken for a kernel parameter the map omits.
+export const CUSTOM_GCODE_KEYS = ['machine_start_gcode', 'machine_end_gcode', 'filament_end_gcode']
+
+function placeholderConfig(settings, plate) {
+  const hasText = key => [settings?.[key]].flat().some(value => String(value ?? '').trim() !== '')
+  if (!CUSTOM_GCODE_KEYS.some(hasText)) return {}
+  // upstream's Print::get_plate_number_formatted: the 1-based plate, zero-padded to two digits
+  const plateNumber = String(plate + 1).padStart(2, '0')
+  return { placeholder_config: JSON.stringify({ ...serializeProjectSettings(settings), $plate_number: plateNumber }) }
+}
 
 // Right-panel settings values -> kernel parameters (derived from schema keys)
 //  opts.plate: which plate's entry to take from per-plate array options (wipe_tower_x/y — upstream coFloats,
@@ -407,6 +430,7 @@ export function deriveKernelParams(settings, opts) {
     //  to it would rewrite the emitted G-code for every caller. The kernel keeps its own preamble when these are empty.
     machine_start_gcode: String(settings?.machine_start_gcode ?? ''),
     machine_end_gcode: String(settings?.machine_end_gcode ?? ''),
+    ...placeholderConfig(settings, plate),
     enable_support: bool('enable_support'),
     support_threshold_angle: num('support_threshold_angle'),
     support_top_z_distance: num('support_top_z_distance'),
