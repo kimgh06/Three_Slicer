@@ -79,6 +79,10 @@ struct Params {
   double bed_width=256.0, bed_depth=256.0;             // bed size (offset = bed/2)
   double bed_height=0.0;                                // printable_height (mm). 0 = no ceiling (backwards compatible)
   std::string machine_start_gcode, machine_end_gcode;   // printer profile custom G-code. Empty = the mini-kernel's own preamble/footer only
+  // Issue 63: the flattened settings as a JSON object of upstream option strings (plus "$model_name", "$plate_name",
+  //  "$plate_number"), sent as ONE escaped string so the flat key search above never finds a key inside it. Present =
+  //  the custom G-code templates are expanded by upstream's PlaceholderParser (custom_gcode.cpp); absent = the raw path.
+  std::string placeholder_config;
   // New in stage 4 (path and G-code level)
   std::string sparse_infill_pattern="rectilinear";     // rectilinear|grid|triangles|zigzag|gyroid
   double fan_speed=100.0;                               // fan_speed (%)
@@ -91,6 +95,14 @@ struct Params {
   // New in stage 5 (gap fill · thin wall · scarf · pressure advance · tree-lite · bridge)
   std::string seam_slope_type="none";                   // none|external|all -> scarf seam (external/all = on)
   double scarf_length=10.0;                              // length of the scarf z/flow ramp (mm)
+  // Upstream's flow multipliers (GCode.cpp:7343-7390, LayerRegion::bridging_flow). All 1 / off by default, and the
+  //  host sends them only when its settings hold them, so a caller without them gets the G-code it always got.
+  double print_flow_ratio=1.0, top_solid_infill_flow_ratio=1.0, bottom_solid_infill_flow_ratio=1.0, bridge_flow=1.0,
+         brim_flow_ratio=1.0, scarf_joint_flow_ratio=1.0;
+  bool   thick_bridges=false, set_other_flow_ratios=false;
+  double outer_wall_flow_ratio=1.0, inner_wall_flow_ratio=1.0, sparse_infill_flow_ratio=1.0,
+         internal_solid_infill_flow_ratio=1.0, gap_fill_flow_ratio=1.0, support_flow_ratio=1.0,
+         support_interface_flow_ratio=1.0, first_layer_flow_ratio=1.0;
   bool   enable_pressure_advance=false;                 // enable_pressure_advance[0]
   double pressure_advance=0.02;                          // pressure_advance[0]
   std::string support_style="grid";                     // grid|tree_lite
@@ -161,6 +173,7 @@ struct Params {
   //  makes by material name (PETG's extra unretract, TPU on the first layer).
   std::vector<std::string> filament_type, filament_settings_id;
   std::vector<double> filament_density;      // g/cm3, per filament
+  std::vector<double> filament_max_volumetric_speed;   // mm³/s, per filament; empty = no cap (GW::capped_feed)
   std::vector<double> filament_cost;         // currency per kg, per filament
   // Upstream always writes the per-filament totals and the config dump. Here they are opt-in, because every byte the
   //  default path emits is pinned by golden.mjs — the viewer turns them on, so the shipped app matches upstream
