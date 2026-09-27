@@ -80,7 +80,7 @@ struct Params {
   double bed_height=0.0;                                // printable_height (mm). 0 = no ceiling (backwards compatible)
   std::string machine_start_gcode, machine_end_gcode;   // printer profile custom G-code. Empty = the mini-kernel's own preamble/footer only
   // Issue 63: the flattened settings as a JSON object of upstream option strings (plus "$model_name", "$plate_name",
-  //  "$plate_number"), sent as ONE escaped string so the flat key search above never finds a key inside it. Present =
+  //  "$plate_number"), sent as a single escaped string so the flat key search above never finds a key inside it. Present =
   //  the custom G-code templates are expanded by upstream's PlaceholderParser (custom_gcode.cpp); absent = the raw path.
   std::string placeholder_config;
   // New in stage 4 (path and G-code level)

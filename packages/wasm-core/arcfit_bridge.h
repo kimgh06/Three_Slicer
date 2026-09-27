@@ -1,5 +1,5 @@
 // Arc fitting bridge: plain-type interface to upstream's ArcFitter (OrcaSlicer src/libslic3r/ArcFitter.cpp, ported
-// verbatim in arachne_port/). gcode_writer.h includes ONLY this header, keeping the kernel's ClipperLib apart from
+// verbatim in arachne_port/). gcode_writer.h includes only this header, keeping the kernel's ClipperLib apart from
 // the port's Slic3r types, the same isolation arachne_bridge.h and classic_bridge.h give their generators.
 #pragma once
 #include <cstddef>

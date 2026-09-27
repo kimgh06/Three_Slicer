@@ -1,5 +1,5 @@
 // Classic wall generator bridge: plain-type interface to the port of upstream PerimeterGenerator::process_classic
-// (OrcaSlicer src/libslic3r/PerimeterGenerator.cpp). pass1.cpp includes ONLY this header, keeping the kernel's
+// (OrcaSlicer src/libslic3r/PerimeterGenerator.cpp). pass1.cpp includes only this header, keeping the kernel's
 // ClipperLib apart from the port's Slic3r::ClipperLib, the same isolation arachne_bridge.h gives Arachne.
 // Coordinates cross the boundary as integers: the kernel's SCALE (1e6 per mm) equals the port's SCALING_FACTOR (1e-6),
 // so no point is rounded on the way in or out.

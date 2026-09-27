@@ -15,7 +15,7 @@
 struct EmitPre {
   Paths gapLines, solidLines, topLines, bridgeLines, sparseLines, supI, supB, flExtra, ironLines;
   // Split out only when their flow ratio is not 1 (issue 63 round 1): upstream's exposed top (erTopSolidInfill) and
-  //  bottom (erBottomSurface) of THIS layer, and the brim rings, which otherwise ride in flExtra with the skirt.
+  //  bottom (erBottomSurface) of the current layer, and the brim rings, which otherwise ride in flExtra with the skirt.
   Paths topExposedLines, bottomLines, brimLoops;
   bool brim=false; int fPrint=0, fBridge=0, fSup=0;
 };

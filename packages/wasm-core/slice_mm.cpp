@@ -225,7 +225,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   }
 
   GW gw; gw.s.reserve(1<<16);
-  // Issue 63: with the flattened settings present the custom start G-code is expanded AFTER emission, from the facts
+  // Issue 63: with the flattened settings present the custom start G-code is expanded after emission, from the facts
   //  the emission itself produced (tools that printed, tool changes, the tower's extent, the first layer's paths),
   //  and spliced in at startAt. This path is batch-only (gw.s is returned whole), so nothing has left yet.
   const bool customGcode = custom_gcode_active(p);

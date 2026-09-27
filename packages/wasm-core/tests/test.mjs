@@ -347,7 +347,7 @@ ok(!rCrossThin.error && typeTotal(rCrossThin, 8) > 0, `thin cross, detect_thin_w
 ok(typeTotal(r, 8) === 0, `solid cube has no thin-wall (type8=${typeTotal(r, 8)})`)
 
 // (2b) [thin wall orientation] A thin plate prints the same wall length however it is turned on the bed. The classic
-//  path used to fill a region narrower than 2w with ONE straight line along the bbox's x or y axis, so a plate turned
+//  path used to fill a region narrower than 2w with one straight line along the bbox's x or y axis, so a plate turned
 //  30deg got a ~1mm stub across it (measured on a 20mm plate: 20mm of thin wall at 0deg, 1.2-1.6mm at 30deg).
 {
   const plateSTL = (thickness, degrees) => {

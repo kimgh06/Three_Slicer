@@ -360,7 +360,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   height (measured); `applyProcessPreset` guards only the picked row's own keys.
 - **The classic wall generator is upstream's `process_classic`, not a kernel approximation** (`classic_bridge.cpp`,
   the only TU where the classic path meets Slic3r types; `MedialAxis.cpp` verbatim beside it). It replaced an
-  "Arachne-lite" that filled any region narrower than 2w with ONE straight line along the bbox's x or y axis, so a
+  "Arachne-lite" that filled any region narrower than 2w with one straight line along the bbox's x or y axis, so a
   thin wall turned on the bed printed as a stub: a 20mm x 0.8mm plate got 20mm of wall at 0deg and 1.6mm at 30deg
   (measured with the Bambu Lab A1 mini defaults, whose process preset sets `wall_generator: classic`; the schema
   default is arachne). `[thin wall orientation]` in `test.mjs` pins it. What comes from upstream as written: the
@@ -378,7 +378,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   settings** (issue 63: vendor start G-code reached a Bambu Lab printer as `M140 S[bed_temperature_initial_layer_single]`).
   `deriveKernelParams` emits `placeholder_config` only when one of `CUSTOM_GCODE_KEYS` (`settings_core.js`) holds
   text, so every caller without a template stays on the raw path and golden is unchanged. It is the effective map in
-  project_settings.config form (`serializeProjectSettings`) as ONE escaped JSON string: the kernel's flat key search
+  project_settings.config form (`serializeProjectSettings`) as a single escaped JSON string: the kernel's flat key search
   (`jfind_val`) never looks inside a string, so a key the map omits cannot be read out of it. The parser is upstream
   verbatim (`treesupport_port/libslic3r/PlaceholderParser.cpp`, in the tree-support group for the real `Flow`); the
   bridge (`custom_gcode_bridge_impl.cpp`) loads the settings with `load_string_map` (unknown keys skipped — the port's
@@ -408,7 +408,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   multi-material paths, and `GW::capped_feed` caps every extrusion entry point, the dry run included so the chained
   `curF` matches a real emit. A feature that keeps its width changes ratio through `GW::set_role_flow`, which rescales
   the current flow: recomputing it from the float ribbon width moved E with every ratio at 1. Two shapes follow
-  upstream rather than the kernel's surface model: the top and bottom ratios apply to THIS layer's exposed top and
+  upstream rather than the kernel's surface model: the top and bottom ratios apply to the current layer's exposed top and
   bottom (`pass2.cpp` splits them out of the shell region only when the ratio is not 1), and a thick bridge is a round
   thread of nozzle * sqrt(`bridge_flow`) (`LayerRegion::bridging_flow`). Not read, for want of the feature they scale:
   `internal_bridge_flow`, `overhang_flow_ratio`, `bridge_line_width`; spiral mode keeps role ratio 1.
