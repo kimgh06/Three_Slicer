@@ -1,6 +1,7 @@
 // Plate-parallel slicing (src/core/slice_pool.js): the worker-count policy and the run bookkeeping.
 // The policy numbers are measured (see the module header); this pins that the code says what the measurement said.
 //   run: node viewer-package/tests/test_slice_pool.mjs
+import { isTypedRefusal } from '../src/core/slice_errors.js'
 import { resolveWorkerCount, memoryWorkerCap, makePlateRun, patchPlate, runSummary, PLATE_STATES } from '../src/core/slice_pool.js'
 
 let failures = 0
@@ -56,6 +57,12 @@ check('rate sums the busy plates only', s.rate === 30)
 check('counts', s.done === 1 && s.failed === 1 && s.busy === 1 && s.total === 3)
 const e = runSummary(null)
 check('no run is all zeros', e.progress === 0 && e.rate === 0 && e.total === 0)
+
+console.log('\n[the slice ladder does not retry a typed kernel refusal]')
+check('a custom G-code error is a refusal', isTypedRefusal(new Error('CUSTOM_GCODE_ERROR: machine_start_gcode: Parsing error at line 1')))
+check('an SLA capability code is a refusal', isTypedRefusal('SLA_UNSUPPORTED_HOLLOWING: hollowing is not available in this kernel'))
+check('cancellation is not', !isTypedRefusal(new Error('canceled')))
+check('a dead worker is not (it gets the classic/economy retries)', !isTypedRefusal(new Error('Worker terminated (likely out of memory): x')))
 
 console.log(failures ? `\n${failures} failure(s)` : '\nall ok')
 process.exit(failures ? 1 : 0)

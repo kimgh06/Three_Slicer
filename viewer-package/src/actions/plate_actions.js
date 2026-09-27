@@ -5,6 +5,7 @@ import { MAX_PLATES } from '../core/plate_layout.js'
 import { effectiveSettings, truncatePlateSettings } from '../core/plate_settings.js'
 import { slaPreviewPayload } from '../core/sla_preview.js'
 import { resolveWorkerCount, makePlateRun, patchPlate, runSummary, PLATE_STATES } from '../core/slice_pool.js'
+import { isTypedRefusal } from '../core/slice_errors.js'
 import { makeSL1 } from '../core/sl1_write.js'
 import { parseSl1, sl1DisplayAffine, sl1SettingsFrom } from '../core/sl1_read.js'
 import { makeSlaReconstructWorker, makeSlaSliceWorker, makeSl1EncodeWorker } from '../make_worker.js'
@@ -574,6 +575,9 @@ export function makePlateActions(deps) {
         if (why.includes('canceled')) { setSliceNotice('Slice canceled'); return }
         // The paint did not load: a downgrade would not help, and "economy failed too" would say something false.
         if (why.includes('plate paint')) { setError('Slice stopped: ' + why + ' — try again.'); return }
+        // A typed kernel refusal (a custom G-code error, an unsupported SLA option) was not retried and a downgrade
+        //  would fail the same way, so neither the economy wording nor the offer applies (core/slice_errors.js).
+        if (isTypedRefusal(e)) { setError('Slice failed: ' + why); return }
         setDowngradeOffer({ scope: 'current' }); setError('Slice failed (economy mode failed too): ' + e.message)
       }
     }

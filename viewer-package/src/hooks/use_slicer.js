@@ -7,6 +7,7 @@ import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-vi
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
+import { isTypedRefusal } from '../core/slice_errors.js'
 import { poolPaintAction, paintedExtruderCount, paintBeyondFilaments } from '../core/paint_store.js'
 
 // Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
@@ -384,6 +385,7 @@ export function useSlicer(deps) {
     try { const r = await ctx.sliceOne(buf, JSON.stringify(params)); return { r, economy: !!(r.stats && r.stats.economy) } }
     catch (e1) {
       if (isCancel(e1)) throw e1   // G002: cancellation propagates without retrying
+      if (isTypedRefusal(e1)) throw e1   // decided by the input: a retry fails the same way (core/slice_errors.js)
       // A pool worker's death is the POOL's problem, not this plate's: it died of the memory the other workers
       //  are holding, and retrying classic and economy under the same pressure is two more heaps for nothing.
       //  The run re-queues the plate for the selector worker once the pool has drained (plate_actions.js).
