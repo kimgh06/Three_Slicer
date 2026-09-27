@@ -454,10 +454,8 @@ PRINTER_KEYS = [
     #  set it, against 28 machine profiles). Claiming them here would let a printer pick block a quality preset.
     # Geometry / hardware — the bed and nozzle the viewer draws and the kernel slices against
     'printable_area', 'printable_height', 'nozzle_diameter', 'z_hop', 'extruder_offset',
-    # NB: machine_start_gcode / machine_end_gcode are deliberately absent. 256 of the 264 distinct vendor pairs are
-    #  templates ("M140 S[bed_temperature_initial_layer]", "{if max_layer_z < printable_height}…"), and the kernel has
-    #  no PlaceholderParser to expand them — emitting them verbatim produces invalid G-code. The kernel accepts both
-    #  options, so a host can still supply literal G-code; wiring the vendor profiles needs the parser first.
+    # The custom G-code (machine_start_gcode, …) and every machine option it reads are added by extract_printers
+    #  from _custom_gcode_keys: the kernel expands the templates with upstream's PlaceholderParser (issue 63).
 ]
 
 def _coerce(value, ctype):
@@ -496,11 +494,76 @@ def _kernel_keys(schema):
         raise SystemExit(f'{path} lists no schema keys; run node packages/types/gen_kernel_params.mjs first')
     return keys
 
+def _custom_gcode_keys(schema):
+    """Issue 63: the option keys a printer's custom G-code can read, which a preset has to carry for the kernel to
+    expand the templates against the preset's own values instead of the schema defaults. Derived from three owners,
+    never typed out here:
+      - the template options themselves, CUSTOM_GCODE_KEYS in settings_core.js (what deriveKernelParams gates on);
+      - every variable the vendor templates use: the names inside [..] and the identifiers inside {..}, so a word in
+        a G-code comment does not become a column;
+      - the options custom_gcode_bridge_impl.cpp reads to compute its variables (its quoted option names), plus the
+        per-plate bed temperatures it reaches through get_bed_temp_key(curr_bed_type).
+    Only schema keys survive, so a variable the parser computes (total_layer_count, …) is not a column, and the
+    *_settings_id keys are left to the picker, which writes the picked preset's name there itself (PrinterCard,
+    FilamentCard) — as a column the preset's own name makes every row distinct."""
+    core_path = os.path.join(REPO, 'viewer-package', 'src', 'settings', 'settings_core.js')
+    with open(core_path, encoding='utf-8') as fh:
+        m = re.search(r'CUSTOM_GCODE_KEYS\s*=\s*\[([^\]]*)\]', fh.read())
+    template_keys = []
+    if m: template_keys = re.findall(r"'([a-z0-9_]+)'", m.group(1))
+    if not template_keys:
+        raise SystemExit(f'{core_path}: CUSTOM_GCODE_KEYS not found')
+    bridge_path = os.path.join(REPO, 'packages', 'wasm-core', 'treesupport_port', 'libslic3r', 'custom_gcode_bridge_impl.cpp')
+    with open(bridge_path, encoding='utf-8') as fh:
+        keys = set(template_keys) | set(re.findall(r'"([a-z0-9_]+)"', fh.read()))
+    keys |= {k for k in schema if re.search(r'_plate_temp(_initial_layer)?$', k)}
+    root = os.path.join(SRC, 'resources', 'profiles')
+    for dirpath, _dirs, files in os.walk(root):
+        for fn in files:
+            if not fn.endswith('.json'): continue
+            try:
+                with open(os.path.join(dirpath, fn), encoding='utf-8') as fh: prof = json.load(fh)
+            except (ValueError, OSError): continue
+            if not isinstance(prof, dict): continue
+            for key in template_keys:
+                texts = prof.get(key)
+                if not isinstance(texts, list): texts = [texts]
+                for text in texts:
+                    if not isinstance(text, str): continue
+                    keys.update(re.findall(r'\[([a-z_][a-z0-9_]*)', text))
+                    for expression in re.findall(r'\{([^{}]*)\}', text):
+                        keys.update(re.findall(r'[a-z_][a-z0-9_]*', expression))
+    return sorted(k for k in keys if k in schema and not k.endswith('_settings_id'))
+
+def _intern_text(table, schema):
+    """Issue 63: store every multi-line text value (the schema's `multiline` options — custom G-code, notes) once, in
+    table['text'], and put its index in the rows. A start G-code is shared by every nozzle variant of a machine, so
+    the rows repeated it: measured on printers.json, machine_start_gcode took 1962588 bytes over 1008 rows for 251
+    distinct values (600478 bytes). Readers resolve the index through `textKeys` (settings.js rowSettings)."""
+    text_keys = [k for k in table['keys'] if (schema.get(k) or {}).get('multiline')]
+    if not text_keys: return table
+    columns = [table['keys'].index(k) for k in text_keys]
+    text, index = [], {}
+    for row in table['sets']:
+        for column in columns:
+            if column >= len(row) or row[column] is None: continue
+            signature = json.dumps(row[column], ensure_ascii=False)
+            if signature not in index:
+                index[signature] = len(text); text.append(row[column])
+            row[column] = index[signature]
+    table['textKeys'] = text_keys
+    table['text'] = text
+    return table
+
+def _preset_keys(schema):
+    """What a process or filament preset carries: the kernel's keys and the ones its custom G-code reads."""
+    return sorted(set(_kernel_keys(schema)) | set(_custom_gcode_keys(schema)))
+
 def extract_processes(schema):
     """Print (process) presets — where the print-side accelerations and speeds live. Joined to printers by the
     profile's own `compatible_printers` list, which names machine profiles exactly as printers.json keys them."""
     root = os.path.join(SRC, 'resources', 'profiles')
-    kernel_keys = _kernel_keys(schema)
+    kernel_keys = _preset_keys(schema)
     if not os.path.isdir(root) or not kernel_keys: return {'keys': [], 'sets': [], 'presets': [], 'byPrinter': {}}
     profiles = {}
     for vendor in sorted(os.listdir(root)):
@@ -563,7 +626,7 @@ def extract_filaments(schema):
     Preset names are globally unique across vendors (verified: 6282 instantiable profiles, 0 collisions), so the
     name-keyed lookup the process presets use holds here too."""
     root = os.path.join(SRC, 'resources', 'profiles')
-    kernel_keys = _kernel_keys(schema)
+    kernel_keys = _preset_keys(schema)
     empty = {'keys': [], 'sets': [], 'presets': [], 'byPrinter': {}, 'defaultsByModel': {}}
     if not os.path.isdir(root) or not kernel_keys: return empty
 
@@ -649,6 +712,13 @@ def extract_filaments(schema):
 def extract_printers(schema):
     root = os.path.join(SRC, 'resources', 'profiles')
     if not os.path.isdir(root): return {'keys': PRINTER_KEYS, 'sets': [], 'byVendor': {}}
+    # Issue 63: plus the custom G-code keys upstream files under the printer preset (Preset::printer_options, read
+    #  from Preset.cpp by extract_preset_keys). The machine model's default_bed_type rides on the entry instead of a
+    #  column: upstream writes it to curr_bed_type when the printer is picked (Plater.cpp:3306-3325), a project
+    #  option and not a printer preset key, and the bed temperature a template prints follows it.
+    printer_options = set(extract_preset_keys(schema)['printer'])
+    printer_keys = PRINTER_KEYS + [k for k in _custom_gcode_keys(schema) if k in printer_options and k not in PRINTER_KEYS]
+    model_bed_type = {}
     # Load every machine profile first: `inherits` points at a sibling profile by name and chains up to 5 deep
     profiles = {}   # (vendor, name) -> dict
     for vendor in sorted(os.listdir(root)):
@@ -660,6 +730,8 @@ def extract_printers(schema):
                 with open(os.path.join(mdir, fn), encoding='utf-8') as fh: prof = json.load(fh)
             except (ValueError, OSError): continue
             if isinstance(prof, dict) and prof.get('name'): profiles[(vendor, prof['name'])] = prof
+            if isinstance(prof, dict) and prof.get('type') == 'machine_model' and prof.get('default_bed_type'):
+                model_bed_type[prof.get('name', '')] = prof['default_bed_type']
 
     def resolve(vendor, prof, keys, depth=0):
         """Flatten the inherits chain down to the given keys, in the schema's own representation."""
@@ -679,9 +751,10 @@ def extract_printers(schema):
     for (vendor, name), prof in sorted(profiles.items()):
         # Abstract "…_common" parents carry no printer_model/variant — they exist only to be inherited
         if not (prof.get('printer_model') or prof.get('printer_variant')): continue
-        vals = resolve(vendor, prof, PRINTER_KEYS)
+        vals = resolve(vendor, prof, printer_keys)
         if not vals: continue
-        row = [vals.get(k) for k in PRINTER_KEYS]
+        bed_type = model_bed_type.get(resolve(vendor, prof, ['printer_model']).get('printer_model', ''), '')
+        row = [vals.get(k) for k in printer_keys]
         sig = json.dumps(row, sort_keys=True)
         if sig not in index:
             index[sig] = len(sets); sets.append(row)
@@ -697,8 +770,8 @@ def extract_printers(schema):
             while cur is not None and depth < 10 and not default_preset:
                 default_preset = cur.get('default_print_profile') or ''
                 cur = profiles.get((vendor, cur.get('inherits'))); depth += 1
-        by_vendor.setdefault(vendor, {})[name] = [nozzle, index[sig], model, default_preset]
-    return {'keys': PRINTER_KEYS, 'sets': sets, 'byVendor': by_vendor}
+        by_vendor.setdefault(vendor, {})[name] = [nozzle, index[sig], model, default_preset, bed_type]
+    return {'keys': printer_keys, 'sets': sets, 'byVendor': by_vendor}
 
 # ---------------------------------------------------------------- SLA printers (PrusaSlicer vendor bundles)
 # The keys an SLA machine sets on top of the shared geometry keys. Appended to printers.json `keys`; the FFF
@@ -727,12 +800,13 @@ def _parse_ini_sections(text):
         cur[k.strip()] = v.strip()
     return sections
 
-def extract_sla_printers(sch_ref):
+def extract_sla_printers(sch_ref, fff_keys):
     """PrusaSlicer's SLA vendor bundles (INI, inherits-chained) -> the column layout extract_printers builds.
-    Orca ships no SLA machines at all, so this is the only source the resin printer picker can have."""
+    Orca ships no SLA machines at all, so this is the only source the resin printer picker can have.
+    fff_keys is extract_printers' own column list, which the SLA keys are appended to."""
     base = os.path.join(PRUSA, 'resources', 'profiles')
     if not os.path.isdir(base): return None
-    all_keys = PRINTER_KEYS + SLA_PRINTER_KEYS
+    all_keys = fff_keys + SLA_PRINTER_KEYS
     sets, index, by_vendor, tech_by_vendor, resins = [], {}, {}, {}, []
     for fname in sorted(os.listdir(base)):
         if not fname.endswith('.ini'): continue
@@ -1030,7 +1104,7 @@ if __name__ == '__main__':
     pr = extract_printers(sch)
     # SLA machines ride in the same artifact: keys appended (FFF rows stay short), set rows offset, new vendors,
     #  plus the per-vendor technology map the printer picker filters on.
-    sla_pr = extract_sla_printers(sch)
+    sla_pr = extract_sla_printers(sch, pr['keys'])
     if sla_pr:
         base_sets = len(pr['sets'])
         pr['keys'] = pr['keys'] + SLA_PRINTER_KEYS
@@ -1040,6 +1114,7 @@ if __name__ == '__main__':
         pr['techByVendor'] = sla_pr['techByVendor']
         pr['resins'] = sla_pr['resins']
         print(f"sla printers: +{sum(len(v) for v in sla_pr['byVendor'].values())} across {len(sla_pr['byVendor'])} vendors; {len(sla_pr['resins'])} resin materials")
+    _intern_text(pr, sch)
     json.dump(pr, open(os.path.join(OUT, 'printers.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
     nprinters = sum(len(v) for v in pr['byVendor'].values())
 
@@ -1049,13 +1124,13 @@ if __name__ == '__main__':
     # Emitted as a JS module, not JSON: this one is dynamically imported, and a dynamic JSON import needs
     #  `with { type: 'json' }` in Node while that same attribute makes browsers reject Vite's text/javascript
     #  response. A plain module satisfies both and still code-splits.
-    proc = extract_processes(sch)
+    proc = _intern_text(extract_processes(sch), sch)
     with open(os.path.join(OUT, 'processes.js'), 'w', encoding='utf-8') as fh:
         fh.write('// Generated by web/extract_all.py — do not edit. See types/data/processes.js.d.ts.\nexport default ')
         json.dump(proc, fh, ensure_ascii=False, separators=(',', ':'))
         fh.write('\n')
 
-    fil = extract_filaments(sch)          # a JS module for the same reason as processes.js above
+    fil = _intern_text(extract_filaments(sch), sch)   # a JS module for the same reason as processes.js above
     with open(os.path.join(OUT, 'filaments.js'), 'w', encoding='utf-8') as fh:
         fh.write('// Generated by web/extract_all.py — do not edit. See types/data/filaments.js.d.ts.\nexport default ')
         json.dump(fil, fh, ensure_ascii=False, separators=(',', ':'))
