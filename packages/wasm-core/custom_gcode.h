@@ -12,6 +12,9 @@ struct Params;
 struct GW;
 struct LayerData;
 
+// The templates expanded here are machine_start_gcode, machine_end_gcode and filament_end_gcode. The host sends the
+//  settings when one of them has text (CUSTOM_GCODE_KEYS, settings_core.js); test_custom_gcode.mjs fails when the
+//  two lists differ.
 bool custom_gcode_active(const Params& p);
 
 // The start block, expanded: the temperature lines upstream writes around it and the template itself.

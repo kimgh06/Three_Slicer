@@ -6,6 +6,7 @@
 // the kernel usable, the multi-material path's spliced start block, and st == mt.
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
+import { CUSTOM_GCODE_KEYS } from '../../../viewer-package/src/settings/settings_core.js'
 
 let failures = 0
 const ok = (condition, message) => {
@@ -23,8 +24,9 @@ function trisToSTL(tris) {
   for (const t of tris) { off += 12; for (const p of t) { buf.writeFloatLE(p[0],off); buf.writeFloatLE(p[1],off+4); buf.writeFloatLE(p[2],off+8); off += 12 } buf.writeUInt16LE(0,off); off += 2 }
   return new Uint8Array(buf)
 }
-// A 20 x 20 x 4 mm cube centred on the plate-local origin, as the viewer sends it.
-const cube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 4))
+// A cube centred on the plate-local origin, as the viewer sends it.
+const CUBE_SIZE = 20
+const cube = trisToSTL(boxTris(-CUBE_SIZE / 2, -CUBE_SIZE / 2, 0, CUBE_SIZE, CUBE_SIZE, 4))
 
 const START = [
   'M140 S[bed_temperature_initial_layer_single]',
@@ -75,9 +77,11 @@ ok(startBlock.includes('filament PETG nozzle 220'), 'vector variables index by t
 const layerCount = Number(/; layers (\d+)/.exec(startBlock)?.[1])
 ok(layerCount === expanded.stats.layers, `total_layer_count = the slice's layer count (${layerCount} vs ${expanded.stats.layers})`)
 const [minX, minY, maxX] = (/; first layer min ([-\d.]+) ([-\d.]+) max ([-\d.]+)/.exec(startBlock) ?? []).slice(1).map(Number)
-// The cube spans 80..100 on the 180 mm bed; the skirt's centreline sits skirt_distance + w/2 outside it.
-ok(Math.abs(minX - (80 - 2 - 0.21)) < 0.01 && Math.abs(minY - (80 - 2 - 0.21)) < 0.01 && Math.abs(maxX - (100 + 2 + 0.21)) < 0.01,
-   `first_layer_print_min/max hold the skirt's extent (min ${minX}, ${minY}, max ${maxX})`)
+// The skirt's centreline sits skirt_distance + w/2 outside the cube, which is centred on the bed.
+const skirtReach = CUBE_SIZE / 2 + params.skirt_distance + params.line_width / 2
+const expectedMin = params.bed_width / 2 - skirtReach, expectedMax = params.bed_width / 2 + skirtReach
+ok(Math.abs(minX - expectedMin) < 0.01 && Math.abs(minY - expectedMin) < 0.01 && Math.abs(maxX - expectedMax) < 0.01,
+   `first_layer_print_min/max hold the skirt's extent (min ${minX}, ${minY}, max ${maxX}; expected ${expectedMin}..${expectedMax})`)
 ok(!/\[[a-z_][a-z_0-9]*\]|\{[^}\n]*\}/.test(startBlock), 'nothing is left unexpanded in the start block')
 const preStart = gcode.slice(0, gcode.indexOf('; machine_start_gcode (printer profile, expanded)'))
 ok(!/^M140 |^M190 /m.test(preStart), 'the start G-code sets the bed, so no bed temperature is written before it')
@@ -96,6 +100,19 @@ console.log('[streamed] the worker slices through the layer sink; the chunks joi
   try { streamed = slicer.slice(cube, JSON.stringify(withConfig({})), () => {}) } finally { slicer.clear_layer_sink() }
   ok(!streamed.error && streamed.stats.streamed, `streams (${streamed.error ?? 'no error'})`)
   ok(chunks.join('') === gcode, `streamed chunks == batch G-code (${chunks.join('').length} vs ${gcode.length} bytes)`)
+}
+
+console.log('[CUSTOM_GCODE_KEYS] every key the host gates on is one the kernel expands')
+// settings_core.js decides when to send the settings by these keys and custom_gcode.cpp names the templates it
+//  expands; the two sides are in different languages, so this is what keeps them the same list.
+for (const key of CUSTOM_GCODE_KEYS) {
+  const template = `; marker ${key} [total_layer_count]`
+  const onlyThis = { ...settings, machine_start_gcode: '', machine_end_gcode: '', filament_end_gcode: [''] }
+  if (key === 'filament_end_gcode') onlyThis[key] = [template]
+  else onlyThis[key] = template
+  const run = slice({ ...params, machine_start_gcode: onlyThis.machine_start_gcode, machine_end_gcode: onlyThis.machine_end_gcode,
+                      placeholder_config: JSON.stringify(onlyThis) })
+  ok(new RegExp(`; marker ${key} \\d+`).test(run.gcode ?? ''), `${key} is expanded by the kernel`)
 }
 
 console.log('[upstream temperature rule] template without temperatures')

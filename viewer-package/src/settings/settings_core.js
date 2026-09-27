@@ -214,6 +214,7 @@ export function serializeProjectSettings(settings) {
 //  without a template on the raw path, byte-identical to before. The settings go in the form a 3mf's
 //  project_settings.config stores (serializeProjectSettings), as one JSON string: the kernel's flat key search
 //  never looks inside a string value, so no key in it can be taken for a kernel parameter the map omits.
+//  The kernel names the same templates in custom_gcode.cpp; test_custom_gcode.mjs checks each key here is expanded there.
 export const CUSTOM_GCODE_KEYS = ['machine_start_gcode', 'machine_end_gcode', 'filament_end_gcode']
 
 function placeholderConfig(settings, plate) {

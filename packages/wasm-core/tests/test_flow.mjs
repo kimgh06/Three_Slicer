@@ -23,10 +23,10 @@ function trisToSTL(tris) {
 const cube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 4))
 // A 6 mm post under a 20 mm slab: the slab's underside is a bridge.
 const table = trisToSTL([...boxTris(-3, -3, 0, 6, 6, 10), ...boxTris(-10, -10, 10, 20, 20, 4)])
-const FILAMENT_AREA = Math.PI * 1.75 ** 2 / 4
 const base = { layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2, infill_density: 0.15,
   nozzle_diameter: 0.4, filament_diameter: 1.75, nozzle_temp: 210, bed_temp: 60, bed_width: 220, bed_depth: 220,
   skirt_loops: 1, skirt_distance: 2, gcode_role_tags: true, wall_generator: 'classic' }
+const FILAMENT_AREA = Math.PI * base.filament_diameter ** 2 / 4
 
 // Every extrusion G1/G2/G3 longer than 1 mm: { layer, role, ePerMm, flow (mm³/s) }.
 function extrusions(gcode) {
@@ -96,7 +96,7 @@ console.log('[bridge_flow] the bridge section, regular or a round thread (thick_
   const scaled = slice(table, { ...base, bridge_flow: 0.8 })
   ok(near(bridge(scaled.moves) / bridge(plain.moves), 0.8), `bridge E/mm x${(bridge(scaled.moves) / bridge(plain.moves)).toFixed(3)}`)
   const thick = slice(table, { ...base, bridge_flow: 0.8, thick_bridges: true })
-  const expected = Math.PI * (0.4 * Math.sqrt(0.8)) ** 2 / 4 / FILAMENT_AREA
+  const expected = Math.PI * (base.nozzle_diameter * Math.sqrt(0.8)) ** 2 / 4 / FILAMENT_AREA
   ok(near(bridge(thick.moves), expected, 0.002), `thick bridge E/mm ${bridge(thick.moves).toFixed(5)} = pi/4 (0.4 sqrt 0.8)^2 / filament area`)
 }
 
