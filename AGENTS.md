@@ -374,6 +374,45 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   default order, and the infill reaches into the walls by the overlap: cube E +0.75%, table +1.4%, wall positions
   unchanged), and arachne mode is untouched, including its own fill and gap-fill approximation. The multi-material
   path (`slice_mm.cpp`) still offsets its walls by w itself.
+- **A printer's custom G-code is expanded by upstream's PlaceholderParser, and only when the host sends the
+  settings** (issue 63: vendor start G-code reached a Bambu Lab printer as `M140 S[bed_temperature_initial_layer_single]`).
+  `deriveKernelParams` emits `placeholder_config` only when one of `CUSTOM_GCODE_KEYS` (`settings_core.js`) holds
+  text, so every caller without a template stays on the raw path and golden is unchanged. It is the effective map in
+  project_settings.config form (`serializeProjectSettings`) as ONE escaped JSON string: the kernel's flat key search
+  (`jfind_val`) never looks inside a string, so a key the map omits cannot be read out of it. The parser is upstream
+  verbatim (`treesupport_port/libslic3r/PlaceholderParser.cpp`, in the tree-support group for the real `Flow`); the
+  bridge (`custom_gcode_bridge_impl.cpp`) loads the settings with `load_string_map` (unknown keys skipped — the port's
+  config is older than the profiles) and sets the variables in `GCode::_do_export`'s order from plain `Facts` the kernel
+  computes: the first layer's outline (skirt, brim, raft), layer count, tools used, tool changes, the tower's extent.
+  The multi-material path computes them after emission and splices the start block in (it is batch-only). Around the
+  start block the kernel follows upstream's temperature rule (M190/M104 before it only when the template does not set
+  them, none for Klipper, M109 after it for Bambu Lab — decided by `printer_model` starting with "Bambu Lab", which
+  matches the BBL vendor exactly over the bundled profiles: 56 of 56, 0 of 873) and writes its own `G21/G90/M83` after
+  it. Left unset, so a template reading them fails typed instead of expanding to a guess: the adaptive bed mesh
+  variables and `filament_pre_cooling_temperature(_nc)` (no such options in the port's config), and `print_time_sec` /
+  `used_filament_length`, whose upstream value is a reserved tag GCodeProcessor's post-process replaces — the kernel
+  streams the text out and runs no post-process. `random()` uses a fixed seed (upstream seeds from the clock), so the
+  same input gives the same bytes. A template error is `CUSTOM_GCODE_ERROR: <key>: <parser message>`; reporting it at
+  all needs the kernel's `-fwasm-exceptions` (`build.sh`: without it a throw aborted the module), and
+  `core/slice_errors.js` keeps the slice ladder from retrying any typed refusal. The presets carry what the templates
+  read (`web/extract_all.py _custom_gcode_keys`, derived from the templates themselves and the bridge's option names,
+  multi-line values stored once in the artifact's `text` table), and the model's `default_bed_type` rides on the
+  printer entry: the pick writes it to `curr_bed_type`, as upstream's Plater does, and the first-layer bed temperature
+  follows it. `test_custom_gcode.mjs` (kernel, st == mt, streamed == batch) and `test_preset_file.mjs` pin it.
+- **Extrusion follows upstream's multipliers and volumetric cap, and only for keys the host sends.** Upstream's E per
+  mm is the section times `print_flow_ratio`, the filament's ratio and the path role's ratio (`GCode.cpp:7343-7390`),
+  and its speed is capped at `filament_max_volumetric_speed / mm3_per_mm` (`:7492`). The kernel had the filament ratio
+  only. Now `GW` carries `print_flow` and `role_flow` into every `set_e_per_mm*` (a product with 1.0 is exact, so a
+  map without the keys stays byte-identical — golden and the multi-material/arachne/raft/tree/ironing dumps were
+  compared), `role_flow_ratio` (`emit.cpp`) is the one copy of upstream's role rules for the st, raft and
+  multi-material paths, and `GW::capped_feed` caps every extrusion entry point, the dry run included so the chained
+  `curF` matches a real emit. A feature that keeps its width changes ratio through `GW::set_role_flow`, which rescales
+  the current flow: recomputing it from the float ribbon width moved E with every ratio at 1. Two shapes follow
+  upstream rather than the kernel's surface model: the top and bottom ratios apply to THIS layer's exposed top and
+  bottom (`pass2.cpp` splits them out of the shell region only when the ratio is not 1), and a thick bridge is a round
+  thread of nozzle * sqrt(`bridge_flow`) (`LayerRegion::bridging_flow`). Not read, for want of the feature they scale:
+  `internal_bridge_flow`, `overhang_flow_ratio`, `bridge_line_width`; spiral mode keeps role ratio 1.
+  `test_flow.mjs` pins each multiplier against the slice without it.
 - **Arc fitting is upstream's `ArcFitter`** (`arcfit_bridge.cpp`, called from `GW::extrude_run` at upstream's per-role
   tolerance: 0.04mm sparse infill, 0.0375mm support and raft, `resolution` otherwise). The kernel's own fitter accepted
   a run when its VERTICES lay on one circle, so a zigzag whose turning points sit on a round boundary became one arc:
