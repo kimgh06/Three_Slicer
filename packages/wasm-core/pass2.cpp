@@ -60,6 +60,18 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
     }
     Paths sparse = clip_paths(fillCore, solid, ctDifference);
     double sa = (i%2==0) ? 45.0 : 135.0;
+    // Upstream's exposed top (this layer's own top surface) and bottom (its own bottom that is not a bridge) print
+    //  with their own flow ratio. The kernel's solid is the shell region, so they are cut out of it here, after
+    //  sparse is taken, and only when the ratio makes them print differently: with both at 1 nothing is split.
+    Paths topExposed, bottomExposed;
+    if (p.top_solid_infill_flow_ratio != 1.0 && !ld.topSurf.empty()) {
+      topExposed = clip_paths(solid, ld.topSurf, ctIntersection);
+      if (!topExposed.empty()) solid = clip_paths(solid, topExposed, ctDifference);
+    }
+    if (p.bottom_solid_infill_flow_ratio != 1.0 && !ld.botSurf.empty()) {
+      bottomExposed = clip_paths(solid, ld.botSurf, ctIntersection);
+      if (!bottomExposed.empty()) solid = clip_paths(solid, bottomExposed, ctDifference);
+    }
     // Stage 21: per-feature widths (the first layer uses the initial_layer values throughout). With the defaults (every feature 0 -> line_width) the values are identical -> no regression.
     bool firstL = (i==0 && nraft==0);
     double wSolid  = firstL ? p.initial_layer_line_width : p.internal_solid_infill_line_width;
@@ -75,13 +87,21 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
     ep.topLines  = topPart.empty() ? Paths{} : infill_clipped(topPart, sa, solid_spacing);
     if (!ep.topLines.empty()) sort_monotonic(ep.topLines, sa);
     ep.bridgeLines = bridge.empty() ? Paths{} : infill_clipped(bridge, sa, solid_spacing);
+    if (!topExposed.empty()) { ep.topExposedLines = infill_clipped(topExposed, sa, solid_spacing); sort_monotonic(ep.topExposedLines, sa); }
+    if (!bottomExposed.empty()) { ep.bottomLines = infill_clipped(bottomExposed, sa, solid_spacing); sort_monotonic(ep.bottomLines, sa); }
     ep.sparseLines = (sparse_spacing>0 && !sparse.empty())
         ? build_sparse(sparse, p.sparse_infill_pattern, p.infill_angle, sparse_spacing, i, zE, w, p.infill_density) : Paths{};
     // Skirt/brim — stage 33: wiring up skirt_height and brim_object_gap
     if (i < std::max(1, p.skirt_height) && nraft==0) {
       int brimRings = (int)std::llround(p.brim_width / w); ep.brim = brimRings>0 && i==0;   // the brim is on the first layer only
       for (int k=0; k<p.skirt_loops; ++k) { Paths r=offset_paths(ld.contour,(p.skirt_distance+w*0.5+k*w)); for (auto& q:r) ep.flExtra.push_back(q); }
-      if (i==0) for (int k=1; k<=brimRings; ++k) { Paths r=offset_paths(ld.contour,(p.brim_object_gap+w*0.5+k*w)); for (auto& q:r) ep.flExtra.push_back(q); }
+      Paths& brimTarget = ep.flExtra;                // the brim prints with the skirt unless its own ratio differs
+      Paths& brimOwn = ep.brimLoops;
+      const bool ownBrim = p.brim_flow_ratio != 1.0;
+      if (i==0) for (int k=1; k<=brimRings; ++k) {
+        Paths r=offset_paths(ld.contour,(p.brim_object_gap+w*0.5+k*w));
+        for (auto& q:r) { if (ownBrim) brimOwn.push_back(q); else brimTarget.push_back(q); }
+      }
     }
 
     double classicLen = 0;   // the classic generator's thin walls and gap fill (its loops are in ld.walls)

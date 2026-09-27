@@ -101,7 +101,15 @@ void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, fl
 void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<TreePath>& lines,
                           double z, double h, const Params& p, float type, int fPrint, int fTravel){
   if (gw.dry) {   // G003 E1: position and curF only (E/flow state is reset at every layer start, so it does not chain)
-    for (const auto& lw : lines) if (lw.pl.size() >= 2) { gw.px = lw.pl.back().x()*INV; gw.py = lw.pl.back().y()*INV; gw.curF = fPrint; }
+    for (const auto& lw : lines) {
+      if (lw.pl.size() < 2) continue;
+      gw.px = lw.pl.back().x()*INV; gw.py = lw.pl.back().y()*INV;
+      // The flow the real emit sets for this line, so the volumetric cap leaves curF where the real emit would.
+      if (lw.mm3 > 1e-9) gw.set_e_per_mm_vol(lw.mm3, p);
+      else if (lw.h > 1e-6) gw.set_e_per_mm_width(lw.w, lw.h, p);
+      else gw.set_e_per_mm_width(lw.w, h, p);
+      gw.curF = gw.capped_feed(fPrint);
+    }
     return;
   }
   int curRole = -1;
@@ -131,6 +139,9 @@ void emit_arachne_walls(GW& gw, std::vector<float>& tp, const std::vector<arachn
   bool anyRun=false;
   for (const auto& wl : walls) {
     if (wl.pts.size() < 2) continue;
+    FlowRole flowRole = FlowRole::InnerWall;
+    if (wl.inset_idx == 0) flowRole = FlowRole::OuterWall;
+    gw.role_flow = role_flow_ratio(p, flowRole, gw.on_first_layer);
     if (!anyRun) { gw.role_tag(1); gw.pe_begin_run(2 /*erExternalPerimeter*/, fPrint); anyRun=true; }
     push_seg(tp, gw.px, gw.py, wl.pts[0].x, wl.pts[0].y, z, 0.0f);
     gw.travel(wl.pts[0].x, wl.pts[0].y, fTravel);
@@ -310,4 +321,30 @@ void emit_gcode_footer_blocks(GW& gw, const Params& p, const std::vector<double>
     }
     gw.raw("; CONFIG_BLOCK_END");
   }
+}
+
+double role_flow_ratio(const Params& p, FlowRole role, bool firstLayer) {
+  double ratio = 1.0;
+  if (role == FlowRole::TopSurface) ratio *= p.top_solid_infill_flow_ratio;
+  else if (role == FlowRole::BottomSurface) ratio *= p.bottom_solid_infill_flow_ratio;
+  else if (role == FlowRole::Brim) ratio *= p.brim_flow_ratio;
+  // A bridge's flow is its own Flow upstream: the regular section times bridge_flow, or a round thread when thick.
+  else if (role == FlowRole::Bridge && !p.thick_bridges) ratio *= p.bridge_flow;
+  if (!p.set_other_flow_ratios) return ratio;
+  if (role == FlowRole::OuterWall) ratio *= p.outer_wall_flow_ratio;
+  else if (role == FlowRole::InnerWall) ratio *= p.inner_wall_flow_ratio;
+  else if (role == FlowRole::SparseInfill) ratio *= p.sparse_infill_flow_ratio;
+  else if (role == FlowRole::InternalSolid) ratio *= p.internal_solid_infill_flow_ratio;
+  else if (role == FlowRole::GapFill) ratio *= p.gap_fill_flow_ratio;
+  else if (role == FlowRole::Support) ratio *= p.support_flow_ratio;
+  else if (role == FlowRole::SupportInterface) ratio *= p.support_interface_flow_ratio;
+  // Additionally on the first layer, except brims and skirts
+  if (firstLayer && role != FlowRole::Brim && role != FlowRole::Skirt) ratio *= p.first_layer_flow_ratio;
+  return ratio;
+}
+
+double thick_bridge_mm3_per_mm(const Params& p) {
+  double thread = p.nozzle_diameter;
+  if (p.bridge_flow > 0.0) thread *= std::sqrt(p.bridge_flow);
+  return PI * thread * thread / 4.0;
 }
