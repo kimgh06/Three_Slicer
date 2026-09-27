@@ -5,12 +5,13 @@
 #include "slice_ctx.h"
 
 #include "clip_util.h"
+#include "custom_gcode.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 
-EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double treeZMaxResid) {
+EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double treeZMaxResid, const CustomStart* start) {
   gw.retract_len = p.retract_length;
   gw.retract_min_travel = p.retraction_minimum_travel;
   gw.retractF    = (int)std::llround(p.retract_speed * 60);
@@ -24,6 +25,9 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
   gw.filament_area = PI * p.filament_diameter * p.filament_diameter / 4.0;
   gw.tool_filament_diameter = p.filament_diameter;   // single-material path: one tool, so these never change again
   gw.tool_flow_ratio        = p.flow_ratio;
+  gw.max_vol_speed          = Params::forTool(p.filament_max_volumetric_speed, 0, 0.0);
+  gw.print_flow             = p.print_flow_ratio;
+  gw.scarf_flow             = p.scarf_joint_flow_ratio;
   gw.avoid_walls = p.reduce_crossing_wall;                                 // wall-avoiding travel
   bool realPE    = (!p.pe_lite && p.max_volumetric_extrusion_rate_slope > 0);
   gw.emit_pe_tags = p.emit_pe_tags || realPE;                             // tags are emitted automatically when the real PE is used
@@ -54,18 +58,44 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
     std::snprintf(h,sizeof h,"; ironing=%s@%.2fmm flow=%.0f%% spd=%.0f  reduce_crossing_wall=%d  PE_slope=%.1f  extruders=%d",
       p.ironing_type.c_str(),p.ironing_spacing,p.ironing_flow,p.ironing_speed,
       p.reduce_crossing_wall?1:0,p.max_volumetric_extrusion_rate_slope,p.extruder_count); gw.raw(h);
-    std::snprintf(h,sizeof h,"M140 S%.0f",p.bed_temp); gw.raw(h);
-    std::snprintf(h,sizeof h,"M104 S%.0f",p.nozzle_temp); gw.raw(h);
-    std::snprintf(h,sizeof h,"M190 S%.0f",p.bed_temp); gw.raw(h);
-    std::snprintf(h,sizeof h,"M109 S%.0f",p.nozzle_temp); gw.raw(h);
+    if (!start) {   // with a custom start block the temperatures follow upstream's rule instead (custom_gcode_bridge)
+      std::snprintf(h,sizeof h,"M140 S%.0f",p.bed_temp); gw.raw(h);
+      std::snprintf(h,sizeof h,"M104 S%.0f",p.nozzle_temp); gw.raw(h);
+      std::snprintf(h,sizeof h,"M190 S%.0f",p.bed_temp); gw.raw(h);
+      std::snprintf(h,sizeof h,"M109 S%.0f",p.nozzle_temp); gw.raw(h);
+    }
   }
-  gw.raw("G21 ; mm"); gw.raw("G90 ; absolute XYZ"); gw.raw("M83 ; relative E");
-  // Pressure advance: Marlin M900 K<v>. Klipper uses SET_PRESSURE_ADVANCE, noted here only as a comment.
-  if (p.enable_pressure_advance) {
-    char h[96];
-    std::snprintf(h,sizeof h,"M900 K%.3f ; pressure advance (Marlin/RRF)",p.pressure_advance); gw.raw(h);
-    std::snprintf(h,sizeof h,"; SET_PRESSURE_ADVANCE ADVANCE=%.3f  ; (Klipper equivalent — comment only)",p.pressure_advance); gw.raw(h);
+  auto modes = [&]{
+    gw.raw("G21 ; mm"); gw.raw("G90 ; absolute XYZ"); gw.raw("M83 ; relative E");
+    // Pressure advance: Marlin M900 K<v>. Klipper uses SET_PRESSURE_ADVANCE, noted here only as a comment.
+    if (p.enable_pressure_advance) {
+      char h[96];
+      std::snprintf(h,sizeof h,"M900 K%.3f ; pressure advance (Marlin/RRF)",p.pressure_advance); gw.raw(h);
+      std::snprintf(h,sizeof h,"; SET_PRESSURE_ADVANCE ADVANCE=%.3f  ; (Klipper equivalent — comment only)",p.pressure_advance); gw.raw(h);
+    }
+  };
+  auto lines = [&](const std::string& text){
+    for (size_t i = 0, n = text.size(); i < n; ) {
+      size_t e = text.find('\n', i);
+      if (e == std::string::npos) e = n;
+      if (e > i) gw.raw(text.substr(i, e - i).c_str());
+      i = e + 1;
+    }
+  };
+  if (start) {
+    // Upstream's order (GCode.cpp:3511-3593): temperatures, the start G-code, the Bambu Lab M109s. The writer's own
+    //  modes come after it, as upstream's GCodeWriter::preamble does at the first layer, so a start G-code that
+    //  leaves G91 or M82 behind cannot change how the print is read.
+    if (gw.emit_role_tags) gw.raw(";TYPE:Custom");
+    lines(start->before);
+    gw.raw("; machine_start_gcode (printer profile, expanded)");
+    lines(start->text);
+    lines(start->after);
+    modes();
+    gw.raw("G92 E0");
+    return { realPE, ironOn, scarfOn, seamMode };
   }
+  modes();
   // Printer profile custom start G-code, after the temperature/unit setup and before the extruder reset —
     //  the same slot upstream uses. Absent by default, so the emitted G-code is unchanged unless a printer sets it.
   if (!p.machine_start_gcode.empty()) {
