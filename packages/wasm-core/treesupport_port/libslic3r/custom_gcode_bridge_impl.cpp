@@ -544,15 +544,6 @@ std::string begin(const std::string& settings_json, const Facts& facts) {
   return std::string();
 }
 
-std::string setting(const std::string& key) {
-  if (!g_session)
-    return std::string();
-  const ConfigOption* option = g_session->config.option(key);
-  if (option == nullptr)
-    return std::string();
-  return option->serialize();
-}
-
 Expanded expand(const std::string& key, const std::string& templ, int current_extruder,
                 int layer_num, double layer_z, double max_layer_z, int filament_extruder_id) {
   Expanded out;

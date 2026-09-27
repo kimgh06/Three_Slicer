@@ -36,10 +36,6 @@ struct Facts {
 // gcodeproc_bridge's streamed estimate.
 std::string begin(const std::string& settings_json, const Facts& facts);
 
-// The value of a loaded setting in upstream's string form, "" if the key is unknown. For the kernel's own
-// decisions that must follow the same config the templates see (gcode_flavor, printer_model).
-std::string setting(const std::string& key);
-
 struct Expanded {
   std::string text;
   std::string error;   // "" = expanded; otherwise upstream's parser message (line, column, reason)

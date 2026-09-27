@@ -61,7 +61,12 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
       emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fPrint, fTravel);
       use_tool(gw, OBJECT_TOOL);
     }
-    if (!flExtra.empty()) { flow(FlowRole::Skirt); gw.raw(brim ? "; skirt/brim" : "; skirt"); emit_loops(gw, tp, flExtra, zE, 4.0f, fPrint, fTravel, -1, seamCtx); }
+    if (!flExtra.empty()) {
+      flow(FlowRole::Skirt);
+      if (brim) gw.raw("; skirt/brim");
+      else gw.raw("; skirt");
+      emit_loops(gw, tp, flExtra, zE, 4.0f, fPrint, fTravel, -1, seamCtx);
+    }
     if (!pre.brimLoops.empty()) { flow(FlowRole::Brim); gw.raw("; brim"); emit_loops(gw, tp, pre.brimLoops, zE, 4.0f, fPrint, fTravel, -1, seamCtx); }
     if (p.wall_generator=="arachne" && !ld.arachneWalls.empty()) {
       gw.raw("; walls (Arachne — real ported WallToolPaths, variable width)");
