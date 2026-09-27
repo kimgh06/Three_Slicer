@@ -173,11 +173,24 @@ export function parseGcode(text, opts = {}) {
         else extruderColours = colourList(colourLine[2])
         continue
       }
+      // Bambu Lab's printers take upstream's BBL reserved tags (GCodeProcessor.cpp Reserved_Tags): "; FEATURE: <role>",
+      //  "; LINE_WIDTH: ", "; CHANGE_LAYER" and "; Z_HEIGHT: " in place of ";TYPE:", ";WIDTH:", ";LAYER_CHANGE" and ";Z:".
+      //  A Bambu Studio file read with only the compatible spellings drew every role as wall.
       if (cl.startsWith('type:')) { role = ROLE_BY_NAME[cl.slice(5).trim()] ?? ROLE.WALL; tagged = true; continue }
+      if (cl.startsWith('feature:')) { role = ROLE_BY_NAME[cl.slice(8).trim()] ?? ROLE.WALL; tagged = true; continue }
       if (cl.startsWith('_extrusion_role:')) { role = PE_ROLE[parseInt(cl.slice(16), 10)] ?? ROLE.WALL; tagged = true; continue }
-      if (cl.startsWith('width:')) { const v = parseFloat(cl.slice(6)); width = v > 0 ? v : 0; continue }
-      if (cl.startsWith('layer_change') || cl.startsWith('layer:')) { markerMode = true; pendingLayer = true; unstate(); continue }
-      if (cl.startsWith('z:')) { const v = parseFloat(cl.slice(2)); if (pendingLayer && v > 0) { markerMode = true; openLayer(v) } continue }
+      if (cl.startsWith('width:') || cl.startsWith('line_width:')) {
+        const v = parseFloat(cl.slice(cl.indexOf(':') + 1))
+        width = 0
+        if (v > 0) width = v
+        continue
+      }
+      if (cl.startsWith('layer_change') || cl.startsWith('change_layer') || cl.startsWith('layer:')) { markerMode = true; pendingLayer = true; unstate(); continue }
+      if (cl.startsWith('z:') || cl.startsWith('z_height:')) {
+        const v = parseFloat(cl.slice(cl.indexOf(':') + 1))
+        if (pendingLayer && v > 0) { markerMode = true; openLayer(v) }
+        continue
+      }
       const km = /^layer \d+ z([-\d.]+)/.exec(cl)              // this kernel: "; LAYER 12 Z2.600"
       if (km) { markerMode = true; openLayer(parseFloat(km[1]), true); continue }
       const feat = KERNEL_MARK.find(([k]) => markMatches(cl, k))

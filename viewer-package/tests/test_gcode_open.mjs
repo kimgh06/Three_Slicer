@@ -6,6 +6,7 @@ import { makeModelLoad } from '../src/actions/model_load.js'
 import { SUPPORTED_EXT } from '../src/scene/model_loaders.js'
 import { resultToolColors, exportedGcode, parseGcode } from '../src/core/gcode_parse.js'
 import { TOOL_COLOR } from '../src/core/toolpath_palette.js'
+import { ROLE, STRIDE } from '../src/core/toolpath_encoding.js'
 
 const PRINTABLE = ';LAYER_CHANGE\n;Z:0.2\nG1 X0 Y0 Z0.2\nG1 X10 Y0 E1\n'
 const SELECTED_PLATE = 2
@@ -78,4 +79,22 @@ const hexOf = rgb => '#' + rgb.map(channel => Math.round(channel * 255).toString
     'an export states the list it was drawn in')
 }
 console.log('  ok: one colour list for toolpath, legends and export')
+
+// Issue 63: a Bambu Studio file marks layers and roles with the BBL reserved tags. Two layers, a support run on
+//  the second: read with only the compatible spellings it was one or two layers of wall.
+{
+  const bambu = [
+    'M83',   // relative E, as Bambu Lab start G-code sets it
+    '; CHANGE_LAYER', '; Z_HEIGHT: 0.2', '; LAYER_HEIGHT: 0.2', '; FEATURE: Outer wall', '; LINE_WIDTH: 0.42',
+    'G1 X0 Y0 Z0.2', 'G1 X10 Y0 E1',
+    '; CHANGE_LAYER', '; Z_HEIGHT: 0.4', '; FEATURE: Support', '; LINE_WIDTH: 0.5',
+    'G1 Z0.4', 'G1 X0 Y5', 'G1 X10 Y5 E1', '',
+  ].join('\n')
+  const read = parseGcode(bambu)
+  assert.deepStrictEqual(read.layers.map(layer => layer.z), [0.2, 0.4], 'CHANGE_LAYER + Z_HEIGHT open the layers at their z')
+  const extrusion = read.layers[1].widths.findIndex(width => width > 0)   // travels carry width 0
+  assert.strictEqual(read.layers[1].paths[extrusion * STRIDE + 3] & 15, ROLE.SUPPORT, 'FEATURE: names the role')
+  assert.strictEqual(read.layers[1].widths[extrusion], 0.5, 'LINE_WIDTH: gives the width')
+}
+console.log('  ok: Bambu Lab reserved tags (FEATURE / CHANGE_LAYER / Z_HEIGHT / LINE_WIDTH)')
 console.log('gcode_open: ALL OK')
