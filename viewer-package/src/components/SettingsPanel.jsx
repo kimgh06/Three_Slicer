@@ -80,8 +80,14 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled, customWi
       return <input type="checkbox" checked={Array.isArray(raw) ? !!raw[0] : !!raw} onChange={e => set(e.target.checked)} disabled={disabled} />
     case 'color':
       return <input type="color" value={typeof scalar === 'string' && scalar.startsWith('#') ? scalar : UNKNOWN_COLOR} onChange={e => set(e.target.value)} disabled={disabled} />
-    case 'textarea':
-      return <textarea rows={2} value={Array.isArray(raw) ? raw.join('\n') : (raw ?? '')} onChange={e => set(e.target.value)} disabled={disabled} />
+    case 'textarea': {
+      // full_width is how the schema marks the custom G-code templates, which run to hundreds of lines (issue 63).
+      let rows = 2
+      if (def.full_width) rows = 12
+      let text = raw ?? ''
+      if (Array.isArray(raw)) text = raw.join('\n')
+      return <textarea rows={rows} value={text} onChange={e => set(e.target.value)} disabled={disabled} />
+    }
     case 'points':
       return <code className="pts">{JSON.stringify(raw ?? [])}</code>
     case 'unknown':

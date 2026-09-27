@@ -32,7 +32,7 @@ import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
 import {
   TopBar, VersionBadge, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
-  PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, TowerCard, writeTowerPosition,
+  PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, SliceError, TowerCard, writeTowerPosition,
 } from './ui/index.js'
 import { DEFAULT_BED, DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
 import { THEME_CSS } from './core/theme.js'
@@ -851,7 +851,7 @@ export default function Viewport({
 )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
               {sliceNotice && <div className="slice-warn side-warn" data-testid="slice-notice">ℹ {sliceNotice}</div>}
-              {error && <div className="slice-err side-warn" data-testid="slice-err">{error}</div>}
+              {error && <SliceError error={error} />}
               {downgradeOffer && <button className="slice-btn" data-testid="downgrade-retry" onClick={retryDowngrade} title="Simplify the infill and lower its density to reduce memory pressure, then retry">Simplified retry (simple infill, economy mode)</button>}
 
               {/* Preview controls (view type / slider / legend) */}

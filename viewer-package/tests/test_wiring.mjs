@@ -98,5 +98,19 @@ for (const [label, path] of [['Viewport', join(src, 'Viewport.jsx')], ['Settings
   check(`${label} imports THEME_CSS`, /import \{[^}]*\bTHEME_CSS\b[^}]*\} from '[^']*theme\.js'/.test(text))
 }
 
+// The package builds JSX with the classic runtime (React.createElement), so a .jsx file that writes JSX must import
+//  React. Measured: SliceError.jsx without the import built clean, passed every other test here, and took the whole
+//  slicer page down with "React is not defined" the first time an error was shown.
+console.log('\n[every .jsx that writes JSX imports React]')
+{
+  const jsxFiles = readdirSync(src, { recursive: true }).map(String).filter(file => file.endsWith('.jsx'))
+  const missing = jsxFiles.filter(file => {
+    const text = readFileSync(join(src, file), 'utf8').replace(/\/\/[^\n]*/g, '')
+    const writesJsx = /return\s*\(?\s*<[A-Za-z]|=>\s*\(?\s*<[A-Za-z]|&&\s*<[A-Za-z]/.test(text)
+    return writesJsx && !/^import React\b/m.test(text)
+  })
+  check(`${jsxFiles.length} .jsx files, every one that writes JSX imports React`, missing.length === 0, missing.join(', '))
+}
+
 console.log(failures ? `\n${failures} CHECK(S) FAILED` : '\nALL WIRING CHECKS PASSED')
 assert.equal(failures, 0)
