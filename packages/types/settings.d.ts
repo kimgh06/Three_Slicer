@@ -168,6 +168,8 @@ export function printerSettings(profileName: string): SlicerSettings | null
 
 /** The vendor's recommended process preset for that printer, or `''` when the profile names none. */
 export function printerDefaultPreset(profileName: string): string
+/** The bed type the printer's model defaults to, `''` when the model names none — written to `curr_bed_type` on a pick. */
+export function printerDefaultBedType(profileName: string): string
 
 /** The schema keys the kernel's machine limits are read from — for UI that shows which ones are in play. */
 export const machineLimitKeys: string[]

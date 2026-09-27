@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { writePresetFile, readPresetFile, presetOptionKeys,
-         printerSettings, printerKeys } from '../../engine/src/settings.js'
+         printerSettings, printerKeys, printerDefaultBedType, filamentPresets } from '../../engine/src/settings.js'
 // The bundle codec moved with the viewer into the permissive package; this test stays here because it also
 //  exercises the vendor catalog (printerSettings/printerKeys), which is AGPL data.
 import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../../../viewer-package/src/core/preset_bundle.js'
@@ -119,6 +119,21 @@ const riskyNames = Object.keys(readPresetArchive(risky).manifest.printer_config)
 check('preset names are made safe for zip paths',
   readPresetArchive(risky).manifest.printer_config[0] === 'printer/a_b_ c.json',
   readPresetArchive(risky).manifest.printer_config[0] + ' ' + riskyNames)
+
+// Issue 63: the catalog carries the custom G-code (stored once in the artifact's text table, resolved by the
+//  readers) and the model's default bed type, which the templates' bed temperature follows.
+{
+  const a1mini = printerSettings('Bambu Lab A1 mini 0.4 nozzle')
+  check('a printer row carries its custom start G-code, resolved from the text table',
+    typeof a1mini?.machine_start_gcode === 'string' && a1mini.machine_start_gcode.includes('[bed_temperature_initial_layer_single]'),
+    typeof a1mini?.machine_start_gcode)
+  check('the printer row carries printer_model (the Bambu Lab check reads it)', a1mini?.printer_model === 'Bambu Lab A1 mini', a1mini?.printer_model)
+  check("the model's default bed type rides on the entry, not the preset row",
+    printerDefaultBedType('Bambu Lab A1 mini 0.4 nozzle') === 'Textured PEI Plate' && !('curr_bed_type' in a1mini))
+  const pla = (await filamentPresets()).settingsFor('Bambu PLA Basic @BBL A1M')
+  check('a filament row carries its filament_end_gcode as text, not an index',
+    Array.isArray(pla?.filament_end_gcode) && typeof pla.filament_end_gcode[0] === 'string', JSON.stringify(pla?.filament_end_gcode)?.slice(0, 40))
+}
 
 console.log(failures ? `\n${failures} CHECK(S) FAILED\n` : '\nALL PRESET-FILE CHECKS PASSED\n')
 process.exit(failures ? 1 : 0)

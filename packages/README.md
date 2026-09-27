@@ -737,6 +737,7 @@ the layout by hand.
 | `printerSettings(name)` | Settings a vendor machine profile applies |
 | `printerKeys` | Every key a printer profile can set — clear these before applying another |
 | `printerDefaultPreset(name)` | The vendor's recommended process preset for that printer |
+| `printerDefaultBedType(name)` | The bed type the printer's model defaults to — the viewer writes it to `curr_bed_type` on a pick |
 | `machineLimitKeys` | The schema keys the kernel's machine limits are read from |
 | `processPresets()` | Lazy facade over the print (process) preset catalog |
 | `filamentPresets()` | Lazy facade over the material preset catalog |

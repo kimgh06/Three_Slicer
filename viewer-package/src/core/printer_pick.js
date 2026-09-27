@@ -8,14 +8,18 @@
 // technology" — which is how picking a filament machine on the one FFF plate of a resin project flipped that
 // plate straight back to resin (measured: the card showed SLA again within a render). The key is therefore
 // carried across from `prev` whenever it was there and the profile does not set it.
-export function applyPrinterPick(prev, vals, profileName, { printerKeys, processKeys = [] }) {
+export function applyPrinterPick(prev, vals, profileName, { printerKeys, processKeys = [], bedType = null }) {
   const next = { ...prev }
   for (const key of printerKeys) delete next[key]
   for (const key of processKeys) delete next[key]
   delete next.printer_settings_id
   delete next.print_settings_id
   if ('printer_technology' in prev && !(vals && 'printer_technology' in vals)) next.printer_technology = prev.printer_technology
-  return vals ? { ...next, ...vals, printer_settings_id: profileName } : next   // no profile -> schema defaults
+  if (!vals) return next   // no profile -> schema defaults
+  // The model's default plate, as upstream sets it on a printer change (Plater.cpp:3306-3325): the bed temperature
+  //  a custom start G-code prints ([bed_temperature_initial_layer_single]) is the one for this plate type.
+  if (bedType) return { ...next, ...vals, curr_bed_type: bedType, printer_settings_id: profileName }
+  return { ...next, ...vals, printer_settings_id: profileName }
 }
 
 /**
