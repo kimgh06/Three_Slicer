@@ -98,18 +98,6 @@ std::string custom_gcode_start(const Params& p, const custom_gcode_bridge::Facts
   return std::string();
 }
 
-namespace {
-// Writes a multi-line block through gw.raw, one line each, as the raw path does.
-void write_lines(GW& gw, const std::string& text) {
-  for (size_t i = 0, n = text.size(); i < n; ) {
-    size_t e = text.find('\n', i);
-    if (e == std::string::npos) e = n;
-    if (e > i) gw.raw(text.substr(i, e - i).c_str());
-    i = e + 1;
-  }
-}
-}  // namespace
-
 std::string custom_gcode_end(GW& gw, int layer_num, double layer_z, double max_layer_z, int current_extruder) {
   gw.raw("M107");
   if (custom_gcode_bridge::is_bbl_printer())
@@ -120,7 +108,7 @@ std::string custom_gcode_end(GW& gw, int layer_num, double layer_z, double max_l
                                                                     layer_num, layer_z, max_layer_z, (int)filament);
     if (!end.error.empty())
       return custom_gcode_error(end.error);
-    write_lines(gw, end.text);
+    gw.raw_lines(end.text);
   }
   std::vector<std::string> machineEnd = custom_gcode_bridge::strings("machine_end_gcode");
   if (!machineEnd.empty()) {
@@ -128,7 +116,7 @@ std::string custom_gcode_end(GW& gw, int layer_num, double layer_z, double max_l
                                                                     layer_num, layer_z, max_layer_z);
     if (!end.error.empty())
       return custom_gcode_error(end.error);
-    write_lines(gw, end.text);
+    gw.raw_lines(end.text);
   }
   custom_gcode_bridge::end();
   return std::string();

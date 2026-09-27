@@ -474,12 +474,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   gw.raw("; end"); gw.raw("M104 S0"); gw.raw("M140 S0"); gw.raw("M107");
   if (!p.machine_end_gcode.empty()) {          // printer profile custom end G-code (absent by default)
     gw.raw("; machine_end_gcode (printer profile)");
-    for (size_t i = 0, n = p.machine_end_gcode.size(); i <= n; ) {
-      size_t e = p.machine_end_gcode.find('\n', i);
-      if (e == std::string::npos) e = n;
-      if (e > i) gw.raw(p.machine_end_gcode.substr(i, e - i).c_str());
-      i = e + 1;
-    }
+    gw.raw_lines(p.machine_end_gcode);
   }
   }                                            // end of the raw path's finish
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm", gw.filament); gw.raw(h); }

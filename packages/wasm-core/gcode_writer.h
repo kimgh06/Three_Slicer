@@ -88,6 +88,7 @@ struct GW {
     char t[16]; std::snprintf(t, sizeof t, "T%d", tool); raw(t);
   }
   double last_vol_flow=-1.0;       // previous extrusion volumetric flow in mm³/s (reset at layer start, not reset by travels)
+  static constexpr int MIN_FEED=60;  // mm/min: the slowest feed pe_feed and capped_feed write (1 mm/s)
   // Upstream's flow multipliers on top of the filament's own (GCode.cpp:7343-7390): print_flow_ratio for every path,
   //  the role's ratio set by the emitter before each feature (role_flow_ratio, emit.cpp), and scarf_joint_flow_ratio
   //  on the sloped scarf ramps. All 1.0 unless the host sends the keys, and a product with 1.0 is exact, so the
@@ -109,7 +110,7 @@ struct GW {
     const double A = e_per_mm * filament_area;
     if (A <= 1e-9) return fPrint;
     int fMax = (int)std::floor(max_vol_speed / A * 60.0);
-    if (fMax < 60) fMax = 60;                    // pe_feed's floor: never below 1 mm/s
+    if (fMax < MIN_FEED) fMax = MIN_FEED;
     return std::min(fPrint, fMax);
   }
   // Stage 6: wall-avoiding travel
@@ -161,7 +162,7 @@ struct GW {
       double disc=Fl*Fl-4.0*S;
       if (disc>0) { double sq=std::sqrt(disc), hi=(Fl+sq)/2.0, lo=(Fl-sq)/2.0; if (Fn>lo && Fn<hi) Fn=hi; }
     }
-    int fUse=(int)std::llround((Fn/A)*60.0); if (fUse<60) fUse=60;
+    int fUse=(int)std::llround((Fn/A)*60.0); if (fUse<MIN_FEED) fUse=MIN_FEED;
     last_vol_flow=A*(fUse/60.0);
     return fUse;
   }
@@ -184,6 +185,15 @@ struct GW {
     e_per_mm = mm3 / fa * tool_flow_ratio * print_flow * role_flow;
   }
   void raw(const char* c){ if (dry) return; s += c; s += '\n'; }
+  // A multi-line block (a printer profile's custom G-code), one raw line per line; empty lines are dropped.
+  void raw_lines(const std::string& text) {
+    for (size_t start = 0, size = text.size(); start <= size; ) {
+      size_t end = text.find('\n', start);
+      if (end == std::string::npos) end = size;
+      if (end > start) raw(text.substr(start, end - start).c_str());
+      start = end + 1;
+    }
+  }
   // Hot-path line emission — when the fast path (fixed point) fails, fall back to the original snprintf format (byte-identical).
   inline void line_xyf(const char* head, double a, double b, int f, const char* fbfmt) {
     char* q = buf; size_t hl = strlen(head); memcpy(q, head, hl); q += hl;

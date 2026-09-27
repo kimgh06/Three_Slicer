@@ -74,23 +74,15 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
       std::snprintf(h,sizeof h,"; SET_PRESSURE_ADVANCE ADVANCE=%.3f  ; (Klipper equivalent — comment only)",p.pressure_advance); gw.raw(h);
     }
   };
-  auto lines = [&](const std::string& text){
-    for (size_t i = 0, n = text.size(); i < n; ) {
-      size_t e = text.find('\n', i);
-      if (e == std::string::npos) e = n;
-      if (e > i) gw.raw(text.substr(i, e - i).c_str());
-      i = e + 1;
-    }
-  };
   if (start) {
     // Upstream's order (GCode.cpp:3511-3593): temperatures, the start G-code, the Bambu Lab M109s. The writer's own
     //  modes come after it, as upstream's GCodeWriter::preamble does at the first layer, so a start G-code that
     //  leaves G91 or M82 behind cannot change how the print is read.
     if (gw.emit_role_tags) gw.raw(";TYPE:Custom");
-    lines(start->before);
+    gw.raw_lines(start->before);
     gw.raw("; machine_start_gcode (printer profile, expanded)");
-    lines(start->text);
-    lines(start->after);
+    gw.raw_lines(start->text);
+    gw.raw_lines(start->after);
     modes();
     gw.raw("G92 E0");
     return { realPE, ironOn, scarfOn, seamMode };
@@ -100,12 +92,7 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
     //  the same slot upstream uses. Absent by default, so the emitted G-code is unchanged unless a printer sets it.
   if (!p.machine_start_gcode.empty()) {
     gw.raw("; machine_start_gcode (printer profile)");
-    for (size_t i = 0, n = p.machine_start_gcode.size(); i <= n; ) {
-      size_t e = p.machine_start_gcode.find('\n', i);
-      if (e == std::string::npos) e = n;
-      if (e > i) gw.raw(p.machine_start_gcode.substr(i, e - i).c_str());
-      i = e + 1;
-    }
+    gw.raw_lines(p.machine_start_gcode);
   } else {
     gw.raw("; (no G28 homing — mini-kernel preamble)");
   }
