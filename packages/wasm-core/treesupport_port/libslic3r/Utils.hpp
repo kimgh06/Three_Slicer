@@ -90,4 +90,7 @@ template<typename C> inline typename C::value_type& next_value_modulo(typename C
 // (stage 16) verbatim from Utils.hpp:369/402 — used by TreeModelVolumes/TreeSupportCommon.
 template <class VectorType> inline void reserve_power_of_2(VectorType &vector, size_t n) { vector.reserve(next_highest_power_of_2(n)); }
 template<typename INDEX_TYPE> inline INDEX_TYPE round_up_divide(const INDEX_TYPE dividend, const INDEX_TYPE divisor) { return (dividend + divisor - 1) / divisor; }
+// (issue 63) verbatim from Utils.hpp:209-210 — PlaceholderParser's string functions; bodies in utils_utf8.cpp.
+extern size_t get_utf8_sequence_length(const std::string& text, size_t pos = 0);
+extern size_t get_utf8_sequence_length(const char *seq, size_t size);
 } // namespace Slic3r

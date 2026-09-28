@@ -7,10 +7,15 @@
 export type ProcessRow = (unknown | null)[]
 
 export interface ProcessData {
-  /** Option keys, in column order — the keys the kernel consumes, read out of engine/src/settings.js */
+  /** Option keys, in column order — the keys the kernel consumes plus the ones its custom G-code reads (extract_all.py _preset_keys) */
   keys: string[]
   /** Deduplicated value rows */
   sets: ProcessRow[]
+  /** Columns whose cells are indices into `text` rather than values: the multi-line options (custom G-code, notes),
+   *  stored once because many rows share one. Absent when the table has none. */
+  textKeys?: string[]
+  /** The multi-line values the `textKeys` columns index */
+  text?: unknown[]
   /** `[preset name, index into sets]`, indexed by the numbers in `byPrinter` */
   presets: [string, number][]
   /** Printer profile name -> indices into `presets` */

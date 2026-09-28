@@ -31,7 +31,9 @@ relicense them, so:
   sources and are AGPL. CGAL headers (GPL-3.0-or-later) compile in as well.
 - The kernel bridge written here — `wasm-core` root sources, 11,709 lines (`bindings.cpp`, `params.cpp`,
   `emit.cpp`, …) — is our own copyright, but it links the ports and does nothing without them. Separating
-  it is legally possible and practically pointless.
+  it is legally possible and practically pointless. One root source is not ours: `classic_bridge.cpp` is
+  OrcaSlicer's `PerimeterGenerator::process_classic`, `traverse_loops` and `VariableWidth.cpp`, adapted to
+  plain types, so it carries OrcaSlicer's copyright like the ports.
 
 Anything that calls the kernel is a combined work and is AGPL when distributed. That includes slicing in
 any form, so **a permissive "viewer with slicing" cannot exist.** What can exist is a viewer without it.

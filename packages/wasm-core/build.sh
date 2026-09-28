@@ -19,6 +19,9 @@ cd "$(dirname "$0")"
 AP=arachne_port/libslic3r
 
 # --- Arachne port sources (upstream verbatim + documented minimal edits) ---
+#  classic_bridge.cpp is the classic wall generator (a port of PerimeterGenerator::process_classic); it needs the medial
+#  axis (MedialAxis.cpp, verbatim) for thin walls and gap fill. MedialAxis calls Voronoi::annotate_inside_outside, which
+#  VoronoiOffset.cpp provides from the tree support group (same header, identical in both ports).
 ARACHNE_SRC="
   arachne_bridge.cpp
   $AP/Arachne/WallToolPaths.cpp
@@ -39,6 +42,9 @@ ARACHNE_SRC="
   $AP/Surface.cpp $AP/ArcFitter.cpp $AP/libslic3r.cpp $AP/Geometry.cpp
   $AP/Geometry/VoronoiUtils.cpp $AP/Geometry/Voronoi.cpp
   $AP/Geometry/VoronoiUtilsCgal.cpp
+  classic_bridge.cpp
+  arcfit_bridge.cpp
+  $AP/Geometry/MedialAxis.cpp
 
   $AP/clipper.cpp
   third_party/deps_src/clipper/clipper_z.cpp
@@ -93,6 +99,9 @@ CONFIG_INC="$CONFIG_INC -Iarachne_port/gcodeproc/inc -Iarachne_port/gcodeproc/st
 #  provided by the main build). The 2 conflicting symbols (ExtrusionEntity::role_to_string/string_to_role) are guarded with
 #  -DTS_BRIDGE_EXCLUDE_ROLE_FNS (the main build provides role_to_string.cpp + extrusion_role_helper.cpp). The kernel <-> bridge boundary uses plain types only. -DNDEBUG applies to the tree group only.
 TS=treesupport_port; TL=$TS/libslic3r
+# Issue 63: PlaceholderParser.cpp (upstream verbatim), the two UTF-8 helpers it calls (utils_utf8.cpp) and the custom G-code
+#  bridge live in this group because it is the one with the real Flow (Flow::extrusion_width, which the parser calls for
+#  *_line_width variables). custom_gcode.cpp in MAIN_SRC is the kernel side.
 TS_UNIQUE_SRC="
   $TL/treesupport_bridge_impl.cpp $TL/selector_bridge_impl.cpp $TL/TriangleSelector.cpp
   $TL/MultiMaterialSegmentation.cpp
@@ -104,12 +113,20 @@ TS_UNIQUE_SRC="
   $TL/Geometry/ConvexHull.cpp $TL/Geometry/Circle.cpp
   $TL/Geometry/VoronoiOffset.cpp $TL/ExPolygonsIndex.cpp
   $TL/Fill/Lightning/DistanceField.cpp $TL/Fill/Lightning/Generator.cpp $TL/Fill/Lightning/Layer.cpp $TL/Fill/Lightning/TreeNode.cpp
+  $TL/PlaceholderParser.cpp $TL/utils_utf8.cpp $TL/custom_gcode_bridge_impl.cpp
 "
 TS_INC="-Iarachne_port/cgal_stubs -I$TS -I$TL -I$TL/Support -Ithird_party/deps_src -Ithird_party/deps_src/libnest2d/include -Ithird_party/deps_src/libigl -Ithird_party/deps_src/clipper2/Clipper2Lib/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
 # ---- Parallel compile helper: compile one .o per source, as many at a time as there are cores (previously: a single em++ call = sequential compilation) ----
 #  ccache (EM_COMPILER_WRAPPER) handles caching including header dependencies, so everything is invoked every time with no mtime-based incremental logic
 #  — unchanged TUs hit the cache in ~0.1s. The link passes the .o files in source order to stay deterministic (golden).
 NCPU=$(sysctl -n hw.ncpu 2>/dev/null || echo 8)
+# Native wasm exception handling on every C++ TU and link. Without it emscripten aborts the module on any `throw` and drops
+#  every `catch`, so an upstream error reported by exception (PlaceholderParser on a malformed custom G-code, measured:
+#  "Aborted(undefined)" instead of "Parsing error at line 88: Not a variable name") reached the viewer as a dead worker.
+#  C sources (nlopt, libtess) have no exceptions, but libtess uses setjmp/longjmp, and with wasm exceptions every object has
+#  to use the same (wasm) longjmp, or the link fails on emscripten_longjmp (measured). So C gets C_LONGJMP_FLAGS.
+EXCEPTION_FLAGS="-fwasm-exceptions"
+C_LONGJMP_FLAGS="-sSUPPORT_LONGJMP=wasm"
 pcompile() {  # $1=objdir  $2=compile flags (string)  rest=source list
   local objdir="$1" flags="$2"; shift 2
   mkdir -p "$objdir"
@@ -122,10 +139,10 @@ objs() {  # $1=objdir  rest=source list -> prints .o paths in source order
 }
 
 TS_GROUP_OBJ=/tmp/ts_group.o
-TS_CFLAGS="-O2 -std=c++17 -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $TS_INC"
+TS_CFLAGS="-O2 $EXCEPTION_FLAGS -std=c++17 -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $TS_INC"
 echo "compiling treesupport group (isolated, parallel x$NCPU) -> $TS_GROUP_OBJ"
 pcompile /tmp/ws_obj/ts_st "$TS_CFLAGS" $TS_UNIQUE_SRC
-em++ -O2 -r $(objs /tmp/ws_obj/ts_st $TS_UNIQUE_SRC) -o $TS_GROUP_OBJ
+em++ -O2 $EXCEPTION_FLAGS -r $(objs /tmp/ws_obj/ts_st $TS_UNIQUE_SRC) -o $TS_GROUP_OBJ
 
 # ---- SLA support chain (PrusaSlicer port, its own include universe — see slasupport_port/PORT_NOTES.md) ----
 #  Prusa-generation headers (slasupport_port) and Prusa's own libigl (untemplated igl::Hit) win the include
@@ -138,7 +155,7 @@ SLA_INC="-Islasupport_port -Islasupport_port/libslic3r -Islasupport_port/libslic
 #  CGAL_DISABLE_GMP is REQUIRED everywhere CGAL is compiled: CGAL 6 auto-detects brew's gmp.h via
 #  __has_include and its exact number types then reference __gmpn_* symbols no wasm library provides —
 #  disabling it selects the header-only boost::multiprecision backend instead (exact either way).
-SLA_CFLAGS="-O2 -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $SLA_INC"
+SLA_CFLAGS="-O2 $EXCEPTION_FLAGS -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $SLA_INC"
 SLA_GROUP_OBJ=/tmp/sla_group.o
 # NLopt 2.5.0 (the exact version PrusaSlicer's deps pin, SHA-verified) — the REAL optimizer behind
 #  Optimize/NLoptOptimizer.hpp (ESCH pose/route searches). C sources, canonical list from its CMakeLists,
@@ -154,7 +171,7 @@ NLOPT_SRC="$NL/algs/direct/DIRect.c $NL/algs/direct/direct_wrap.c $NL/algs/direc
   $NL/api/general.c $NL/api/options.c $NL/api/optimize.c $NL/api/deprecated.c
   $NL/util/mt19937ar.c $NL/util/sobolseq.c $NL/util/timer.c $NL/util/stop.c $NL/util/redblack.c $NL/util/qsort_r.c $NL/util/rescale.c"
 NLOPT_INC="-I$NL -I$NL/api -I$NL/util -I$NL/algs/direct -I$NL/algs/cdirect -I$NL/algs/praxis -I$NL/algs/luksan -I$NL/algs/crs -I$NL/algs/mlsl -I$NL/algs/mma -I$NL/algs/cobyla -I$NL/algs/newuoa -I$NL/algs/neldermead -I$NL/algs/auglag -I$NL/algs/bobyqa -I$NL/algs/isres -I$NL/algs/slsqp -I$NL/algs/esch"
-NLOPT_CFLAGS="-O2 -DNDEBUG $NLOPT_INC"
+NLOPT_CFLAGS="-O2 $C_LONGJMP_FLAGS -DNDEBUG $NLOPT_INC"
 nlopt_objs() {  # $1=objdir $2=extra flags — compile (cached) and print the .o list in source order
   local objdir="$1" flags="$2"; mkdir -p "$objdir"
   printf '%s\n' $NLOPT_SRC | OBJDIR="$objdir" CFLAGS="$NLOPT_CFLAGS $flags" xargs -P "$NCPU" -I SRC bash -c '
@@ -167,7 +184,7 @@ nlopt_objs() {  # $1=objdir $2=extra flags — compile (cached) and print the .o
 #  own CMake list; -include limits.h because priorityq-heap.c uses LONG_MAX without including it.
 LT=third_party/deps_src/glu-libtess/src
 LIBTESS_SRC="$LT/dict.c $LT/geom.c $LT/memalloc.c $LT/mesh.c $LT/normal.c $LT/priorityq.c $LT/render.c $LT/sweep.c $LT/tess.c $LT/tessmono.c"
-LIBTESS_CFLAGS="-O2 -DNDEBUG -include limits.h -Ithird_party/deps_src/glu-libtess/include -I$LT"
+LIBTESS_CFLAGS="-O2 $C_LONGJMP_FLAGS -DNDEBUG -include limits.h -Ithird_party/deps_src/glu-libtess/include -I$LT"
 libtess_objs() {  # $1=objdir — compile (cached like everything else) and print the .o list in source order
   local objdir="$1" flags="$2"; mkdir -p "$objdir"
   printf '%s\n' $LIBTESS_SRC | OBJDIR="$objdir" CFLAGS="$flags" xargs -P "$NCPU" -I SRC bash -c '
@@ -181,7 +198,7 @@ NLOPT_OBJ_ST=$(nlopt_objs /tmp/ws_obj/nlopt_st "")
 
 echo "compiling SLA support chain (isolated, parallel x$NCPU) -> $SLA_GROUP_OBJ"
 pcompile /tmp/ws_obj/sla_st "$SLA_CFLAGS" $SLA_SRC
-em++ -O2 -r $(objs /tmp/ws_obj/sla_st $SLA_SRC) $LIBTESS_OBJ_ST $NLOPT_OBJ_ST -o $SLA_GROUP_OBJ
+em++ -O2 $EXCEPTION_FLAGS -r $(objs /tmp/ws_obj/sla_st $SLA_SRC) $LIBTESS_OBJ_ST $NLOPT_OBJ_ST -o $SLA_GROUP_OBJ
 
 ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachne_port -I$AP -Ithird_party/deps_src -I$C2/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
 
@@ -196,16 +213,16 @@ ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachn
 #  preamble -> raft -> PASS2 precompute -> finish stats, leaving slice() as the orchestrator. Same rule — listed in
 #  the order their code had inside slicer_core.cpp.
 #  (clip_util.h / slice_planes.h / gcode_writer.h / layer_data.h / slice_api.h / slice_ctx.h are header-only.)
-MAIN_SRC="slicer_core.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
+MAIN_SRC="slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
 # -DNDEBUG: turns off assert() exactly like an upstream OrcaSlicer release build (CMAKE_BUILD_TYPE=Release).
 #  Without it, asserts upstream treats as "debug-only invariants" kill the worker in a shipped build — e.g. meshes with unwelded vertices and
 #  sliver triangles, such as OCCT tessellations (STEP import), hit Voronoi.cpp:334 (*inside* the recovery routine),
 #  VoronoiUtils.cpp:322 and FillBase.cpp:1407 (zero-length closed edge). Upstream has recovery paths for all of them, so they
 #  slice fine in release. The tree support group (TS_CFLAGS) already had -DNDEBUG.
-MAIN_CFLAGS="-O2 --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $ARACHNE_INC"
+MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $ARACHNE_INC"
 echo "compiling main sources (st, parallel x$NCPU)"
 pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
-em++ -O2 --bind -std=c++17 \
+em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s SINGLE_FILE=1 \
@@ -229,7 +246,7 @@ ls -la ../engine/src/slicer_core.js
 #  emscripten warns about the ALLOW_MEMORY_GROWTH + pthreads combination, but it is functionally valid (judged by measurement).
 echo "compiling treesupport group (mt, parallel x$NCPU) -> /tmp/ts_group_mt.o"
 pcompile /tmp/ws_obj/ts_mt "-pthread $TS_CFLAGS" $TS_UNIQUE_SRC
-em++ -O2 -pthread -r $(objs /tmp/ws_obj/ts_mt $TS_UNIQUE_SRC) -o /tmp/ts_group_mt.o
+em++ -O2 $EXCEPTION_FLAGS -pthread -r $(objs /tmp/ws_obj/ts_mt $TS_UNIQUE_SRC) -o /tmp/ts_group_mt.o
 
 echo "compiling glu-libtess (mt, parallel x$NCPU)"
 LIBTESS_OBJ_MT=$(libtess_objs /tmp/ws_obj/libtess_mt "-pthread $LIBTESS_CFLAGS")
@@ -238,11 +255,11 @@ NLOPT_OBJ_MT=$(nlopt_objs /tmp/ws_obj/nlopt_mt "-pthread")
 
 echo "compiling SLA support chain (mt, parallel x$NCPU) -> /tmp/sla_group_mt.o"
 pcompile /tmp/ws_obj/sla_mt "-pthread $SLA_CFLAGS" $SLA_SRC
-em++ -O2 -pthread -r $(objs /tmp/ws_obj/sla_mt $SLA_SRC) $LIBTESS_OBJ_MT $NLOPT_OBJ_MT -o /tmp/sla_group_mt.o
+em++ -O2 $EXCEPTION_FLAGS -pthread -r $(objs /tmp/ws_obj/sla_mt $SLA_SRC) $LIBTESS_OBJ_MT $NLOPT_OBJ_MT -o /tmp/sla_group_mt.o
 
 echo "compiling main sources (mt, parallel x$NCPU)"
 pcompile /tmp/ws_obj/mt "-pthread $MAIN_CFLAGS" $MAIN_SRC
-em++ -O2 -pthread --bind -std=c++17 \
+em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s SINGLE_FILE=1 \

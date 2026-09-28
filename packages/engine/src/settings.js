@@ -32,6 +32,19 @@ export function resinSettingsFor(name) {
   return out
 }
 
+// One row of a preset table -> the settings it applies. Multi-line text (custom G-code, notes) is stored once in
+//  `text` and a row holds its index, for the columns listed in `textKeys` (web/extract_all.py _intern_text).
+function rowSettings(data, row) {
+  const textKeys = new Set(data.textKeys ?? [])
+  const out = {}
+  data.keys.forEach((key, i) => {
+    if (row[i] == null) return
+    if (textKeys.has(key)) { out[key] = data.text[row[i]]; return }
+    out[key] = row[i]
+  })
+  return out
+}
+
 // Process (print) presets live in the ~800 KB processes.json, so they load on demand — the first call fetches,
 //  later ones reuse the same promise. Returns a small facade so no caller has to know the column layout.
 let processesPromise = null
@@ -46,9 +59,7 @@ export function processPresets() {
     settingsFor: (presetName) => {
       const preset = data.presets.find(([name]) => name === presetName)
       if (!preset) return null
-      const row = data.sets[preset[1]], out = {}
-      data.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
-      return out
+      return rowSettings(data, data.sets[preset[1]])
     },
   }))
   return processesPromise
@@ -84,9 +95,7 @@ export function filamentPresets() {
       settingsFor: (presetName) => {
         const preset = data.presets.find(([name]) => name === presetName)
         if (!preset) return null
-        const row = data.sets[preset[1]], out = {}
-        data.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
-        return out
+        return rowSettings(data, data.sets[preset[1]])
       },
     }
   })
@@ -105,19 +114,20 @@ function printerEntry(profileName) {
 export function printerSettings(profileName) {
   const entry = printerEntry(profileName)
   if (!entry) return null
-  const row = printers.sets[entry[1]]
-  const out = {}
-  printers.keys.forEach((key, i) => { if (row[i] != null) out[key] = row[i] })
-  return out
+  return rowSettings(printers, printers.sets[entry[1]])
 }
 
 /** The vendor's recommended process preset for a printer, or '' when the profile names none. */
 export function printerDefaultPreset(profileName) { return printerEntry(profileName)?.[3] ?? '' }
 
+/** The bed type the printer's model defaults to ("Textured PEI Plate"), or '' when the model names none. Upstream
+ *  writes it to curr_bed_type when the printer is picked; the first-layer bed temperature follows it. */
+export function printerDefaultBedType(profileName) { return printerEntry(profileName)?.[4] ?? '' }
+
 // ---- The catalog as one object -------------------------------------------------------------------------------
-// What `three-slicer-viewer`'s `<Viewport catalog>` takes: the nine lookups above, bundled. The permissive package
+// What `three-slicer-viewer`'s `<Viewport catalog>` takes: the ten lookups above, bundled. The permissive package
 //  ships no catalog (these are OrcaSlicer's profile bundles); `three-slicer/viewer` passes this one by default.
 export const bundledCatalog = Object.freeze({
-  printerKeys, printerSettings, printersByVendor, printerTechByVendor, printerDefaultPreset,
+  printerKeys, printerSettings, printersByVendor, printerTechByVendor, printerDefaultPreset, printerDefaultBedType,
   processPresets, filamentPresets, resinCatalog, resinSettingsFor,
 })

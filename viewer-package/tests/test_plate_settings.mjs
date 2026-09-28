@@ -241,6 +241,12 @@ check('the outgoing machine and its print preset are cleared', (() => {
   const out = applyPrinterPick({ nozzle_diameter: 0.6, outer_wall_speed: 99, print_settings_id: 'old', printer_settings_id: 'old' }, fffRow, 'X1C', { printerKeys: pk, processKeys: ['outer_wall_speed'] })
   return out.nozzle_diameter === 0.4 && !('outer_wall_speed' in out) && !('print_settings_id' in out) && out.printer_settings_id === 'X1C'
 })())
+check("the model's default bed type is written with the pick (upstream Plater.cpp:3306)", (() => {
+  const out = applyPrinterPick({ curr_bed_type: 'Cool Plate' }, fffRow, 'A1M', { printerKeys: pk, bedType: 'Textured PEI Plate' })
+  return out.curr_bed_type === 'Textured PEI Plate'
+})())
+check('a model without a default bed type leaves the current one alone', applyPrinterPick({ curr_bed_type: 'Cool Plate' }, fffRow, 'X1C', { printerKeys: pk, bedType: '' }).curr_bed_type === 'Cool Plate')
+check('clearing the printer writes no bed type', !('curr_bed_type' in applyPrinterPick({}, null, '', { printerKeys: pk, bedType: 'Textured PEI Plate' })))
 
 console.log('\n[process preset: the machine row guards only the keys it sets]')
 const preset = { layer_height: 0.16, outer_wall_speed: 200, nozzle_diameter: 0.25 }

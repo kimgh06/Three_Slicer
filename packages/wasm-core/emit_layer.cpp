@@ -27,7 +27,7 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
     std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
 
     // --- Emission path: unpack the compute_pre results (aliases so the emission code stays untouched) ---
-    Paths& gapLines = pre.gapLines;       std::vector<ThinRun>& thinRuns = pre.thinRuns;
+    Paths& gapLines = pre.gapLines;
     Paths& solidLines = pre.solidLines;   Paths& topLines = pre.topLines;
     Paths& bridgeLines = pre.bridgeLines; Paths& sparseLines = pre.sparseLines;
     Paths& supI = pre.supI; Paths& supB = pre.supB; Paths& flExtra = pre.flExtra;
@@ -42,51 +42,85 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
 
     // Stage 21: helper that applies a feature width — set_e_per_mm_width (E) and g_seg_w_cur (the ribbon) together. With the default (0.42) the values are unchanged.
     auto setW = [&](double ww){ gw.set_e_per_mm_width(ww, ld.h, p); g_seg_w_cur = (float)ww; };
+  // Upstream's role flow ratio for the feature about to be emitted (emit.cpp role_flow_ratio), on the current width.
+  auto flow = [&](FlowRole role){ gw.set_role_flow(role_flow_ratio(p, role, gw.on_first_layer)); };
 
     // --- Emission: support -> skirt/brim -> walls (seam/scarf) -> thin walls -> gap fill -> bridge -> solid -> sparse ---
     const int supportTool  = support_tool_of(p.support_filament);           // -1 = keep the object's tool
     const int interfaceTool = support_tool_of(p.support_interface_filament);
     if (!supI.empty() || !supB.empty()) {
       gw.raw("; support");
-      if (!supI.empty()) { use_tool(gw, interfaceTool); emit_lines(gw, tp, supI, zE, 5.0f, fPrint, fTravel); }
-      if (!supB.empty()) { use_tool(gw, supportTool);   emit_lines(gw, tp, supB, zE, 5.0f, fPrint, fTravel); }
+      if (!supI.empty()) { use_tool(gw, interfaceTool); flow(FlowRole::SupportInterface); emit_lines(gw, tp, supI, zE, 5.0f, fPrint, fTravel); }
+      if (!supB.empty()) { use_tool(gw, supportTool);   flow(FlowRole::Support); emit_lines(gw, tp, supB, zE, 5.0f, fPrint, fTravel); }
       use_tool(gw, OBJECT_TOOL);
     }
     if (p.enable_support && !ld.supTree.empty()) {                    // stages 18/19: the real organic tree support (per-path width)
       gw.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(gw, supportTool);                                       // branches are one body: the base filament covers them
+      gw.role_flow = role_flow_ratio(p, FlowRole::Support, gw.on_first_layer);   // emit_lines_vw sets each branch's own section
       emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fPrint, fTravel);
       use_tool(gw, OBJECT_TOOL);
     }
-    if (!flExtra.empty()) { gw.raw(brim ? "; skirt/brim" : "; skirt"); emit_loops(gw, tp, flExtra, zE, 4.0f, fPrint, fTravel, -1, seamCtx); }
+    if (!flExtra.empty()) {
+      flow(FlowRole::Skirt);
+      if (brim) gw.raw("; skirt/brim");
+      else gw.raw("; skirt");
+      emit_loops(gw, tp, flExtra, zE, 4.0f, fPrint, fTravel, -1, seamCtx);
+    }
+    if (!pre.brimLoops.empty()) { flow(FlowRole::Brim); gw.raw("; brim"); emit_loops(gw, tp, pre.brimLoops, zE, 4.0f, fPrint, fTravel, -1, seamCtx); }
     if (p.wall_generator=="arachne" && !ld.arachneWalls.empty()) {
       gw.raw("; walls (Arachne — real ported WallToolPaths, variable width)");
       emit_arachne_walls(gw, tp, ld.arachneWalls, zE, ld.h, p, fPrint, fTravel);
+      gw.role_flow = 1.0;
       gw.set_e_per_mm(ld.h, p); g_seg_w_cur=(float)w;   // restore the default width/flow (for the infill that follows)
+    } else if (p.wall_generator != "arachne") {
+      // The classic generator's walls in upstream's print order (classic_bridge.cpp): each loop at the width upstream
+      //  gave it (BBS's narrow external loop is thinner than outer_wall_line_width), thin walls at their own width.
+      for (const ClassicWall& wall : ld.classicWalls) {
+        FlowRole wallRole = FlowRole::InnerWall;
+        if (wall.inset == 0 || !wall.loop) wallRole = FlowRole::OuterWall;   // thin walls print as the external perimeter
+        gw.role_flow = role_flow_ratio(p, wallRole, gw.on_first_layer);
+        if (!wall.loop) {
+          emit_lines_vw(gw, tp, std::vector<TreePath>{ { wall.pl, wall.w, 0, (float)ld.h, 0.0f } }, zE, ld.h, p, 8.0f, fPrint, fTravel);
+          continue;
+        }
+        setW(wall.w);
+        if (wall.inset == 0 && scarfOn) emit_scarf_loop(gw, tp, wall.pl, zE, ld.h, fPrint, fTravel, seamMode, seamCtx);
+        else emit_loops(gw, tp, Paths{wall.pl}, zE, 1.0f, fPrint, fTravel, seamMode, seamCtx, wall.inset == 0);  // record the seam only for the outer wall
+      }
     } else {
       for (size_t wi=0; wi<ld.walls.size(); ++wi) {
+        FlowRole wallRole = FlowRole::InnerWall;
+        if (wi == 0) wallRole = FlowRole::OuterWall;
+        gw.role_flow = role_flow_ratio(p, wallRole, gw.on_first_layer);
         setW(wi==0 ? wOuter : wInner);   // stage 21: outer wall (wi==0) = outer_wall_line_width, inner walls = inner_wall_line_width
         if (wi==0 && scarfOn) { for (Path wp : ld.walls[wi]) emit_scarf_loop(gw, tp, wp, zE, ld.h, fPrint, fTravel, seamMode, seamCtx); }
         else                    emit_loops(gw, tp, ld.walls[wi], zE, 1.0f, fPrint, fTravel, seamMode, seamCtx, wi==0);  // record the seam only for the outer wall (wi==0)
       }
     }
-    if (!thinRuns.empty()) {
-      gw.raw("; thin-wall (Arachne-lite: single centerline, NOT full Arachne)");
-      gw.pe_reset();                                 // low-flow thin walls are excluded from PE flow matching (avoids abrupt cross-section changes)
-      double saved = gw.e_per_mm;
-      for (auto& tr : thinRuns) { gw.e_per_mm = saved * tr.flow; emit_lines(gw, tp, tr.line, zE, 8.0f, fPrint, fTravel); }
-      gw.e_per_mm = saved; gw.pe_reset();
+    gw.role_flow = role_flow_ratio(p, FlowRole::GapFill, gw.on_first_layer);
+    if (!ld.classicGapFill.empty()) {
+      gw.raw("; gap-fill");
+      emit_lines_vw(gw, tp, ld.classicGapFill, zE, ld.h, p, 7.0f, fPrint, fTravel);
     }
     setW(firstL ? p.initial_layer_line_width : p.line_width);   // stage 21: gap/bridge use the default width
     if (!gapLines.empty()) { gw.raw("; gap-fill"); emit_lines(gw, tp, gapLines, zE, 7.0f, fPrint, fTravel); }
     if (!bridgeLines.empty()) {
       gw.raw("; bridge (unsupported bottom: fan 100% + bridge_speed)");
       int savedFan = gw.lastFan; gw.set_fan(255);
+      flow(FlowRole::Bridge);
+      if (p.thick_bridges) gw.set_e_per_mm_vol(thick_bridge_mm3_per_mm(p), p);
       emit_lines(gw, tp, bridgeLines, zE, 9.0f, fBridge, fTravel);
       gw.set_fan(savedFan < 0 ? 0 : savedFan);
     }
+    gw.role_flow = role_flow_ratio(p, FlowRole::InternalSolid, gw.on_first_layer);
     if (!solidLines.empty()) { setW(wSolid); emit_lines(gw, tp, solidLines, zE, 3.0f, fPrint, fTravel); }   // stage 21: internal solid width
+    if (!pre.bottomLines.empty()) { gw.role_flow = role_flow_ratio(p, FlowRole::BottomSurface, gw.on_first_layer); setW(wSolid); emit_lines(gw, tp, pre.bottomLines, zE, 3.0f, fPrint, fTravel); }
+    // topLines is the top SHELL region split for its width (pass2.cpp), which upstream prints as solid infill.
+    gw.role_flow = role_flow_ratio(p, FlowRole::InternalSolid, gw.on_first_layer);
     if (!topLines.empty())   { setW(wTop);   emit_lines(gw, tp, topLines,   zE, 3.0f, fPrint, fTravel); }   // stage 21: top-surface width
+    if (!pre.topExposedLines.empty()) { gw.role_flow = role_flow_ratio(p, FlowRole::TopSurface, gw.on_first_layer); setW(wTop); emit_lines(gw, tp, pre.topExposedLines, zE, 3.0f, fPrint, fTravel); }
+    gw.role_flow = role_flow_ratio(p, FlowRole::SparseInfill, gw.on_first_layer);
     if (!sparseLines.empty()){ setW(wSparse);emit_lines(gw, tp, sparseLines,zE, 2.0f, fPrint, fTravel); }   // stage 21: sparse infill width
 
     // Ironing (type10): a low-flow second pass at the same z over exposed top solid (the lines come from compute_pre).
@@ -96,7 +130,8 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
         gw.raw("; ironing");
         gw.pe_reset();                               // low-flow ironing is excluded from PE flow matching
         int fIron = (int)std::llround(std::max(5.0, p.ironing_speed)*60);
-        double saved = gw.e_per_mm; gw.e_per_mm = saved * std::max(0.0, p.ironing_flow/100.0);
+        // The last feature's role ratio is taken back out: ironing is not one of the roles a ratio applies to.
+        double saved = gw.e_per_mm; gw.e_per_mm = saved / gw.role_flow * std::max(0.0, p.ironing_flow/100.0);
         emit_lines(gw, tp, ironLines, zE, 10.0f, fIron, fTravel);
         gw.e_per_mm = saved; gw.pe_reset();
       }
@@ -110,6 +145,8 @@ void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
                            int i, LayerData& ld, EmitPre& pre, const Params& p,
                            double zE, double w, int N, int nraft, int fTravel,
                            int seamMode, bool scarfOn, bool ironOn, SeamCtx& seamCtx) {
+  gw.role_flow = 1.0;                              // no role ratio leaks across a layer boundary
+  gw.on_first_layer = (i == 0 && nraft == 0);      // with a raft the first layer is the raft's (raft.cpp)
   gw.set_e_per_mm(ld.h, p);
   gw.z = zE;
   gw.pe_reset();
@@ -130,13 +167,15 @@ void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
     const int interfaceTool = support_tool_of(p.support_interface_filament);
     if (!eI.empty() || !eB.empty()) {
       gw.raw("; support");
-      if (!eI.empty()) { use_tool(gw, interfaceTool); emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel); }
-      if (!eB.empty()) { use_tool(gw, supportTool);   emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel); }
+      auto supportFlow = [&](FlowRole role){ gw.set_role_flow(role_flow_ratio(p, role, gw.on_first_layer)); };
+      if (!eI.empty()) { use_tool(gw, interfaceTool); supportFlow(FlowRole::SupportInterface); emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel); }
+      if (!eB.empty()) { use_tool(gw, supportTool);   supportFlow(FlowRole::Support); emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel); }
       use_tool(gw, OBJECT_TOOL);
     }
     if (p.enable_support && !ld.supTree.empty()) {
       gw.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(gw, supportTool);
+      gw.role_flow = role_flow_ratio(p, FlowRole::Support, gw.on_first_layer);   // emit_lines_vw sets each branch's section
       emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fSup, fTravel);
       use_tool(gw, OBJECT_TOOL);
     }

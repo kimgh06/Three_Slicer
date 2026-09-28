@@ -7,6 +7,7 @@
 #include "geom_helpers.h"
 #include "selector_bridge.h"
 #include "slice_planes.h"
+#include "custom_gcode.h"
 #include "slice_ctx.h"          // support_run: the same support pass the single-material path uses
 
 #include <algorithm>
@@ -224,12 +225,19 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   }
 
   GW gw; gw.s.reserve(1<<16);
+  // Issue 63: with the flattened settings present the custom start G-code is expanded after emission, from the facts
+  //  the emission itself produced (tools that printed, tool changes, the tower's extent, the first layer's paths),
+  //  and spliced in at startAt. This path is batch-only (gw.s is returned whole), so nothing has left yet.
+  const bool customGcode = custom_gcode_active(p);
+  custom_gcode_bridge::Facts customFacts;
   // Per-tool filament: two materials mean two temperatures, two flow ratios and two retraction settings, so
   //  everything the writer holds about "the loaded filament" is (re)loaded here and again on every tool change.
   //  Params::forTool falls back to the scalar, so a caller that sends no per-extruder arrays gets the old G-code.
   auto loadTool=[&](int t){
     gw.tool_filament_diameter = Params::forTool(p.extruder_filament_diameter, t, p.filament_diameter);
     gw.tool_flow_ratio        = Params::forTool(p.extruder_flow_ratio,        t, p.flow_ratio);
+    // A hole takes tool 0's value (the kernel cannot tell absent from 0); no vector at all = no cap.
+    gw.max_vol_speed          = Params::forTool(p.filament_max_volumetric_speed, t, Params::forTool(p.filament_max_volumetric_speed, 0, 0.0));
     gw.filament_area          = PI*gw.tool_filament_diameter*gw.tool_filament_diameter/4.0;
     gw.retract_len            = Params::forTool(p.extruder_retract_length,    t, p.retract_length);
     gw.retractF               = (int)std::llround(Params::forTool(p.extruder_retract_speed, t, p.retract_speed)*60);
@@ -237,6 +245,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   };
   auto toolTemp=[&](int t){ return Params::forTool(p.extruder_nozzle_temp, t, p.nozzle_temp); };
   loadTool(0);
+  gw.print_flow = p.print_flow_ratio;               // upstream's print-wide multiplier (the st path sets it in the preamble)
   gw.retract_min_travel=p.retraction_minimum_travel;
   gw.offX=p.bed_width*0.5; gw.offY=p.bed_depth*0.5;
   gw.emit_role_tags = p.gcode_role_tags;
@@ -274,14 +283,17 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
         char b[48]; std::snprintf(b,sizeof b," T%d[%d,%d)",toolOf(g),bounds[g],bounds[g+1]); gl+=b; }
       gw.raw(gl.c_str());
     }
-    std::snprintf(h,sizeof h,"M140 S%.0f",p.bed_temp); gw.raw(h);
-    std::snprintf(h,sizeof h,"M104 S%.0f",toolTemp(0)); gw.raw(h);
-    std::snprintf(h,sizeof h,"M190 S%.0f",p.bed_temp); gw.raw(h);
-    std::snprintf(h,sizeof h,"M109 S%.0f",toolTemp(0)); gw.raw(h); }
+    if (!customGcode) {   // with a custom start block the temperatures follow upstream's rule (custom_gcode_bridge)
+      std::snprintf(h,sizeof h,"M140 S%.0f",p.bed_temp); gw.raw(h);
+      std::snprintf(h,sizeof h,"M104 S%.0f",toolTemp(0)); gw.raw(h);
+      std::snprintf(h,sizeof h,"M190 S%.0f",p.bed_temp); gw.raw(h);
+      std::snprintf(h,sizeof h,"M109 S%.0f",toolTemp(0)); gw.raw(h);
+    } }
   // TPU on the first layer changes how a machine should start (upstream hands it to the start-G-code template as
   //  has_tpu_in_first_layer). No template engine here, so it is stated where a reader or a post-processor can act.
   for (int g=0; g<nGroups; ++g)
     if (filamentTypeOf(toolOf(g)) == "TPU") { gw.raw("; has_tpu_in_first_layer = 1"); break; }
+  const size_t startAt = gw.s.size();   // where the expanded start block goes (before the writer's own modes)
   gw.raw("G21 ; mm"); gw.raw("G90 ; absolute XYZ"); gw.raw("M83 ; relative E");
   gw.raw("T0 ; start extruder"); gw.raw("G92 E0");
 
@@ -331,6 +343,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   for (int i=0;i<N;++i){
     double z=p.first_layer_height + (i>0? i*p.layer_height : 0.0);   // approximate z
     double zE=z+zShift, h=(i==0)?p.first_layer_height:p.layer_height;
+    gw.role_flow = 1.0; gw.on_first_layer = (i == 0);   // no raft on this path
     gw.set_e_per_mm(h,p); gw.z=zE; gw.pe_reset();
     std::vector<float> tp, widths; g_seg_w = &widths; g_seg_w_cur = (float)p.line_width;   // stage 21: record MM widths
     char cm[64]; std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.layer_begin(cm);
@@ -364,11 +377,14 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
       return geom;
     };
     enum : int { FEAT_OUTER=0, FEAT_INNER=1, FEAT_FILL=2, FEAT_SOLID=3 };
+    // Each feature takes upstream's role flow ratio (emit.cpp role_flow_ratio) on the layer's width.
+    auto featureFlow=[&](FlowRole role){ gw.set_role_flow(role_flow_ratio(p, role, gw.on_first_layer)); };
     auto emitFeature=[&](const FeatureGeom& geom, int feature){
-      if (feature==FEAT_OUTER) { if (!geom.outer.empty()) emit_loops(gw,tp,geom.outer,zE,1.0f,fPr,fTravel,-1,seamCtx); return; }
-      if (feature==FEAT_INNER) { for (const auto& loops : geom.inner) emit_loops(gw,tp,loops,zE,1.0f,fPr,fTravel,-1,seamCtx); return; }
+      if (feature==FEAT_OUTER) { featureFlow(FlowRole::OuterWall); if (!geom.outer.empty()) emit_loops(gw,tp,geom.outer,zE,1.0f,fPr,fTravel,-1,seamCtx); return; }
+      if (feature==FEAT_INNER) { featureFlow(FlowRole::InnerWall); for (const auto& loops : geom.inner) emit_loops(gw,tp,loops,zE,1.0f,fPr,fTravel,-1,seamCtx); return; }
       // Solid before sparse, the order emit_layer.cpp uses — the skin is what the sparse fill anchors against.
-      if (feature==FEAT_SOLID) { if (!geom.solidLines.empty()) emit_lines(gw,tp,geom.solidLines,zE,3.0f,fPr,fTravel); return; }
+      if (feature==FEAT_SOLID) { featureFlow(FlowRole::InternalSolid); if (!geom.solidLines.empty()) emit_lines(gw,tp,geom.solidLines,zE,3.0f,fPr,fTravel); return; }
+      featureFlow(FlowRole::SparseInfill);
       if (!geom.fillLines.empty()) emit_lines(gw,tp,geom.fillLines,zE,2.0f,fPr,fTravel);
     };
     // ponytail: M109 (wait) right at the switch. A real slicer pre-heats the idle tool a few layers early to hide
@@ -492,11 +508,13 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
         const int supTool = p.support_filament > 0 ? p.support_filament - 1 : curTool;
         const int ifaceTool = p.support_interface_filament > 0 ? p.support_interface_filament - 1 : supTool;
         if (supTool != curTool) toolTo(supTool);
+        gw.set_role_flow(role_flow_ratio(p, FlowRole::Support, gw.on_first_layer));
         if (!sl.supBase.empty()) { Paths lines = infill_clipped(sl.supBase, 45.0, support_sp);
           if (!lines.empty()) emit_lines(gw,tp,lines,zE,5.0f,fPr,fTravel); }
         if (!sl.supTree.empty()) emit_lines_vw(gw,tp,sl.supTree,zE,h,p,5.0f,fPr,fTravel);
         if (!sl.supIface.empty()) {
           if (ifaceTool != curTool) toolTo(ifaceTool);
+          gw.set_role_flow(role_flow_ratio(p, FlowRole::SupportInterface, gw.on_first_layer));
           Paths lines = infill_clipped(sl.supIface, 45.0, solid_spacing);
           if (!lines.empty()) emit_lines(gw,tp,lines,zE,5.0f,fPr,fTravel);
         }
@@ -579,6 +597,27 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
       for (const auto& item : byToolFeature[to]) emitFeature(unitGeom[item.first], item.second);
       printedThisLayer=true;
     }
+    if (customGcode) {
+      // Stride-8 segments, role + tool*16 in slot 3 (toolpath_encoding). Travel (role 0) is not an extrusion; the
+      //  prime tower is role 11. Points go to the printer's frame the way the writer does (+offX/offY).
+      for (size_t k=0; k+7<tp.size(); k+=8) {
+        const int encoded = (int)tp[k+3], role = encoded & 15, tool = encoded >> 4;
+        if (role == 0) continue;
+        for (int end=0; end<2; ++end) {
+          const double x = tp[k+end*4] + gw.offX, y = tp[k+end*4+1] + gw.offY;
+          if (i == 0) { customFacts.first_layer_points.push_back(x); customFacts.first_layer_points.push_back(y); }
+          if (role == 11) {
+            double* box = customFacts.wipe_tower_bbox;
+            if (!customFacts.has_wipe_tower) { box[0]=box[2]=x; box[1]=box[3]=y; customFacts.has_wipe_tower=true; }
+            box[0]=std::min(box[0],x); box[1]=std::min(box[1],y); box[2]=std::max(box[2],x); box[3]=std::max(box[3],y);
+          }
+        }
+        if (i == 0 && role != 11 &&
+            std::find(customFacts.first_layer_filaments.begin(), customFacts.first_layer_filaments.end(), tool) == customFacts.first_layer_filaments.end())
+          customFacts.first_layer_filaments.push_back(tool);
+      }
+      customFacts.max_print_z = zE;
+    }
     em::val Lo=em::val::object(); Lo.set("z",zE); Lo.set("paths",to_f32(tp)); Lo.set("widths",to_f32(widths)); layersArr.call<void>("push",Lo);
     report(i+1,N);
   }
@@ -588,7 +627,41 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   // One slot per extruder even when a tool never printed, so a caller can index the array by tool number
   //  (the material names it shows come from the same per-extruder lists).
   if ((int)filamentByTool.size() < p.extruder_count) filamentByTool.resize(p.extruder_count, 0.0);
+  if (customGcode) {
+    for (int tool=0; tool<(int)filamentByTool.size(); ++tool)
+      if (filamentByTool[tool] > 0) customFacts.used_filaments.push_back(tool);
+    if (customFacts.used_filaments.empty()) customFacts.used_filaments.push_back(0);
+    std::sort(customFacts.first_layer_filaments.begin(), customFacts.first_layer_filaments.end());
+    if (customFacts.first_layer_filaments.empty()) customFacts.first_layer_filaments.push_back(0);
+    customFacts.initial_extruder = 0;                 // this path always starts on T0 ("T0 ; start extruder")
+    customFacts.initial_no_support_extruder = 0;
+    customFacts.total_layer_count = N;
+    customFacts.total_toolchanges = toolChanges;
+    double minX=1e18, minY=1e18, maxX=-1e18, maxY=-1e18;
+    for (const Tri& t : tris) for (const V3& v : t.v) {
+      minX=std::min(minX,(double)v.x); minY=std::min(minY,(double)v.y); maxX=std::max(maxX,(double)v.x); maxY=std::max(maxY,(double)v.y); }
+    customFacts.object_bboxes = { minX+gw.offX, minY+gw.offY, maxX+gw.offX, maxY+gw.offY };
+    Paths firstLayer;
+    if (!preSliced.empty()) for (const Paths& group : preSliced[0]) firstLayer = union_paths(firstLayer, group);
+    customFacts.first_layer_area_mm2 = paths_area(firstLayer);
+    { double fMinX, fMinY, fMaxX, fMaxY; bbox_of(firstLayer, fMinX, fMinY, fMaxX, fMaxY);
+      if (fMaxX >= fMinX) customFacts.object_first_layer_bboxes = { fMinX+gw.offX, fMinY+gw.offY, fMaxX+gw.offX, fMaxY+gw.offY }; }
+    CustomStart customStart;
+    std::string error = custom_gcode_start(p, customFacts, customStart);
+    if (error.empty()) {
+      std::string block;
+      if (gw.emit_role_tags) block += ";TYPE:Custom\n";
+      block += customStart.before + "; machine_start_gcode (printer profile, expanded)\n" + customStart.text;
+      if (!block.empty() && block.back() != '\n') block += '\n';
+      block += customStart.after;
+      gw.s.insert(startAt, block);
+      gw.raw("; end");
+      error = custom_gcode_end(gw, N - 1, gw.z, gw.z, curTool);
+    }
+    if (!error.empty()) { custom_gcode_bridge::end(); em::val r=em::val::object(); r.set("error", error); return r; }
+  } else {
   gw.raw("; end"); gw.raw("M104 S0"); gw.raw("M140 S0"); gw.raw("M107");
+  }
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm",gw.filament); gw.raw(h); }
   emit_gcode_footer_blocks(gw, p, filamentByTool, toolChanges);
   em::val result=em::val::object(), stats=em::val::object();

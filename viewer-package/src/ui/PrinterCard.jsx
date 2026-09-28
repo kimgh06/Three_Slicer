@@ -20,7 +20,7 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
   plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null }) {
   // The vendor catalog is injected (core/catalog.js): this package ships none, three-slicer/viewer hands its
   //  bundled one in, and a host with its own fleet passes its own. Every lookup below reads from it.
-  const { printerKeys, printersByVendor, printerSettings, printerDefaultPreset, printerTechByVendor, processPresets } = resolveCatalog(catalog)
+  const { printerKeys, printersByVendor, printerSettings, printerDefaultPreset, printerDefaultBedType, printerTechByVendor, processPresets } = resolveCatalog(catalog)
   const scoped = cardScope({ settings: globalSettings, setSettings: setGlobalSettings, plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope })
   const plateScope = scoped.plateScope
   const settings = scoped.settings, setSettings = setGlobalSettings ? scoped.setSettings : null
@@ -67,14 +67,18 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
   //  reads print_settings_id off the EFFECTIVE map, where the global preset shows through as "already set".
   const apply = async (profileName) => {
     const vals = profileName ? printerSettings(profileName) : null
-    if (!plateScope) return setSettings?.(prev => applyPrinterPick(prev, vals, profileName, { printerKeys, processKeys: processes?.keys ?? [] }))
+    const bedType = profileName && printerDefaultBedType(profileName)
+    if (!plateScope) return setSettings?.(prev => applyPrinterPick(prev, vals, profileName, { printerKeys, processKeys: processes?.keys ?? [], bedType }))
     const api = tech === 'SLA' ? null : await processPresets()
     const recommended = api && profileName ? printerDefaultPreset(profileName) : null
     const presetVals = recommended && api.listFor(profileName).includes(recommended) ? api.settingsFor(recommended) : null
+    const forceKeys = [...Object.keys(vals ?? {}), ...Object.keys(presetVals ?? {}), 'printer_technology', 'printer_settings_id', 'print_settings_id']
+    if (bedType) forceKeys.push('curr_bed_type')
     setSettings?.(prev => {
-      const withPrinter = { ...applyPrinterPick(prev, vals, profileName, { printerKeys, processKeys: api?.keys ?? [] }), printer_technology: vals?.printer_technology ?? tech }
-      return presetVals ? applyProcessPreset(withPrinter, presetVals, recommended, { processKeys: api.keys, printerOwnedKeys: Object.keys(vals ?? {}) }) : withPrinter
-    }, [...Object.keys(vals ?? {}), ...Object.keys(presetVals ?? {}), 'printer_technology', 'printer_settings_id', 'print_settings_id'])
+      const withPrinter = { ...applyPrinterPick(prev, vals, profileName, { printerKeys, processKeys: api?.keys ?? [], bedType }), printer_technology: vals?.printer_technology ?? tech }
+      if (!presetVals) return withPrinter
+      return applyProcessPreset(withPrinter, presetVals, recommended, { processKeys: api.keys, printerOwnedKeys: Object.keys(vals ?? {}) })
+    }, forceKeys)
   }
   useEffect(() => {
     if (!picked || tech === 'SLA') return   // an SLA plate must not auto-apply the (FFF) process preset of a leaked global pick

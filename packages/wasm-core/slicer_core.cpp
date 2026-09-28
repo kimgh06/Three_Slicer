@@ -63,6 +63,7 @@
 #include "params.h"
 #include "selector_bridge.h"  // stage 20 -> MMU painting: the painted facet states decide whether a layer is multi-tool
 #include "slice_api.h"
+#include "custom_gcode.h"
 #include "slice_ctx.h"
 #include "stage_cache.h"
 #include "stl_parse.h"
@@ -192,8 +193,19 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   // ---- Preamble ----
   }                                              // G003: end of the reuseSup skip block (only PASS1~1.6 is skipped — preamble, raft and emission are shared)
 
+  // Issue 63: with the flattened settings present, the printer's custom start G-code is expanded here, before
+  //  anything is emitted, so a template error fails the slice with no feeder or thread started yet.
+  const bool customGcode = custom_gcode_active(p);
+  CustomStart customStart;
+  const CustomStart* startBlock = nullptr;
+  if (customGcode) {
+    std::string error = custom_gcode_start(p, single_material_facts(p, L, N, p.bed_width * 0.5, p.bed_depth * 0.5), customStart);
+    if (!error.empty()) { custom_gcode_bridge::end(); em::val r=em::val::object(); r.set("error", error); return r; }
+    startBlock = &customStart;
+  }
+
   GW gw; gw.s.reserve(1<<17);
-  EmitFlags EF = gw_setup_preamble(gw, p, treeSupLayers, treeZMaxResid);
+  EmitFlags EF = gw_setup_preamble(gw, p, treeSupLayers, treeZMaxResid, startBlock);
   bool realPE = EF.realPE, ironOn = EF.ironOn, scarfOn = EF.scarfOn;
   int  seamMode = EF.seamMode;
   SeamCtx seamCtx;
@@ -446,16 +458,25 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
 
   // ---- Finish ----
+  if (customGcode) {
+    // Upstream's end block instead of the kernel's heater/fan shutdown: the printer's end G-code owns it.
+    gw.raw("; end");
+    std::string error = custom_gcode_end(gw, N + nraft - 1, gw.z, gw.z, 0);
+    if (!error.empty()) {
+#ifdef __EMSCRIPTEN_PTHREADS__
+      if (streamTime || overlapBatch) (void)feeder.finish();
+#else
+      if (streamTime) (void)gcodeproc_bridge::estimate_end();
+#endif
+      em::val r = em::val::object(); r.set("error", error); return r;
+    }
+  } else {
   gw.raw("; end"); gw.raw("M104 S0"); gw.raw("M140 S0"); gw.raw("M107");
   if (!p.machine_end_gcode.empty()) {          // printer profile custom end G-code (absent by default)
     gw.raw("; machine_end_gcode (printer profile)");
-    for (size_t i = 0, n = p.machine_end_gcode.size(); i <= n; ) {
-      size_t e = p.machine_end_gcode.find('\n', i);
-      if (e == std::string::npos) e = n;
-      if (e > i) gw.raw(p.machine_end_gcode.substr(i, e - i).c_str());
-      i = e + 1;
-    }
+    gw.raw_lines(p.machine_end_gcode);
   }
+  }                                            // end of the raw path's finish
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm", gw.filament); gw.raw(h); }
   emit_gcode_footer_blocks(gw, p, {}, 0);
 

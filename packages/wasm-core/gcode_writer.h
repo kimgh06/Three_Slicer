@@ -2,10 +2,12 @@
 //  Header-only (like clip_util.h / slice_planes.h): GW's members are all defined inside the struct,
 //  and the fixed-point formatters they call keep their original `static inline` linkage.
 #pragma once
+#include "arcfit_bridge.h"
 #include "clip_util.h"
 #include "geom_helpers.h"
 #include "params.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -67,6 +69,7 @@ struct GW {
   double offX=128.0, offY=128.0;   // G-code XY offset = bed/2
   int    lastFan=-1;               // current cooling fan value (M106 only on change)
   bool   arc_fitting=false;        // G2/G3 arc fitting
+  double arc_resolution=0.01;     // the print's `resolution` (mm): the arc fitting tolerance outside sparse infill and support
   double scarf_len=10.0;           // length of the scarf seam ramp (mm)
   // Stage 6: PE-lite (limit on the volumetric flow change rate between adjacent extrusions)
   double pe_slope=0.0;             // mm³/s² (0=off)
@@ -85,6 +88,31 @@ struct GW {
     char t[16]; std::snprintf(t, sizeof t, "T%d", tool); raw(t);
   }
   double last_vol_flow=-1.0;       // previous extrusion volumetric flow in mm³/s (reset at layer start, not reset by travels)
+  static constexpr int MIN_FEED=60;  // mm/min: the slowest feed pe_feed and capped_feed write (1 mm/s)
+  // Upstream's flow multipliers on top of the filament's own (GCode.cpp:7343-7390): print_flow_ratio for every path,
+  //  the role's ratio set by the emitter before each feature (role_flow_ratio, emit.cpp), and scarf_joint_flow_ratio
+  //  on the sloped scarf ramps. All 1.0 unless the host sends the keys, and a product with 1.0 is exact, so the
+  //  G-code without them is byte-identical. on_first_layer is upstream's on_first_layer(): the first printed layer,
+  //  the raft's when there is one.
+  double print_flow=1.0, role_flow=1.0, scarf_flow=1.0;
+  bool   on_first_layer=false;
+  // A new role ratio for a feature that keeps the current width: the current flow is rescaled rather than recomputed
+  //  (a recompute from the float ribbon width would move E even with every ratio at 1; x / 1.0 * 1.0 is exact).
+  void set_role_flow(double next) { e_per_mm = e_per_mm / role_flow * next; role_flow = next; }
+  // The loaded filament's filament_max_volumetric_speed (mm³/s); 0 = no cap, the value when the host sends none.
+  double max_vol_speed=0.0;
+  // Upstream's volumetric cap (GCode.cpp:7492): speed = min(speed, filament_max_volumetric_speed / mm3_per_mm), with
+  //  mm3_per_mm the flow-scaled cross-section — here e_per_mm * filament_area, which already carries the flow ratio.
+  //  Rounded down so the written F never exceeds the cap. Every extrusion entry point calls it, the dry run included,
+  //  so curF chains to the value a real emit leaves.
+  int capped_feed(int fPrint) const {
+    if (max_vol_speed <= 0.0) return fPrint;
+    const double A = e_per_mm * filament_area;
+    if (A <= 1e-9) return fPrint;
+    int fMax = (int)std::floor(max_vol_speed / A * 60.0);
+    if (fMax < MIN_FEED) fMax = MIN_FEED;
+    return std::min(fPrint, fMax);
+  }
   // Stage 6: wall-avoiding travel
   Paths  island;                   // region travels should stay inside (inside the walls). Empty means no check.
   bool   avoid_walls=false;
@@ -116,6 +144,7 @@ struct GW {
   void pe_begin_run(int role, int f){
     if (!emit_pe_tags) return;
     if (role != pe_cur_role) { std::snprintf(buf,sizeof buf,";_EXTRUSION_ROLE:%d",role); raw(buf); pe_cur_role=role; }
+    f = capped_feed(f);
     std::snprintf(buf,sizeof buf,"G1 F%d ;_EXTRUDE_SET_SPEED",f); raw(buf); curF=f;
   }
   void pe_end_run(){ if (emit_pe_tags) raw(";_EXTRUDE_END"); }
@@ -133,29 +162,38 @@ struct GW {
       double disc=Fl*Fl-4.0*S;
       if (disc>0) { double sq=std::sqrt(disc), hi=(Fl+sq)/2.0, lo=(Fl-sq)/2.0; if (Fn>lo && Fn<hi) Fn=hi; }
     }
-    int fUse=(int)std::llround((Fn/A)*60.0); if (fUse<60) fUse=60;
+    int fUse=(int)std::llround((Fn/A)*60.0); if (fUse<MIN_FEED) fUse=MIN_FEED;
     last_vol_flow=A*(fUse/60.0);
     return fUse;
   }
   void set_e_per_mm(double h, const Params& p) {
     double A = h * (p.line_width - h * (1.0 - PI/4.0));
     double fa = PI * tool_filament_diameter * tool_filament_diameter / 4.0;
-    e_per_mm = A / fa * tool_flow_ratio;
+    e_per_mm = A / fa * tool_flow_ratio * print_flow * role_flow;
   }
   // Stage 7: sets the flow for an arbitrary width (variable-width Arachne walls). Cross-section A = h·(w − h·(1−π/4)).
   void set_e_per_mm_width(double wseg, double h, const Params& p) {
     double A = h * (wseg - h * (1.0 - PI/4.0)); if (A < 0) A = 0;
     double fa = PI * tool_filament_diameter * tool_filament_diameter / 4.0;
-    e_per_mm = A / fa * tool_flow_ratio;
+    e_per_mm = A / fa * tool_flow_ratio * print_flow * role_flow;
   }
   // WP3: sets the upstream volumetric flow (mm³/mm, ExtrusionPath::mm3_per_mm) directly — lets tree support reproduce the flow
   //  computed by the upstream Flow verbatim (including cases where it differs from the rectangular width x height approximation, such as bridging contact layers).
   void set_e_per_mm_vol(double mm3, const Params& p) {
     if (mm3 < 0) mm3 = 0;
     double fa = PI * tool_filament_diameter * tool_filament_diameter / 4.0;
-    e_per_mm = mm3 / fa * tool_flow_ratio;
+    e_per_mm = mm3 / fa * tool_flow_ratio * print_flow * role_flow;
   }
   void raw(const char* c){ if (dry) return; s += c; s += '\n'; }
+  // A multi-line block (a printer profile's custom G-code), one raw line per line; empty lines are dropped.
+  void raw_lines(const std::string& text) {
+    for (size_t start = 0, size = text.size(); start <= size; ) {
+      size_t end = text.find('\n', start);
+      if (end == std::string::npos) end = size;
+      if (end > start) raw(text.substr(start, end - start).c_str());
+      start = end + 1;
+    }
+  }
   // Hot-path line emission — when the fast path (fixed point) fails, fall back to the original snprintf format (byte-identical).
   inline void line_xyf(const char* head, double a, double b, int f, const char* fbfmt) {
     char* q = buf; size_t hl = strlen(head); memcpy(q, head, hl); q += hl;
@@ -260,6 +298,7 @@ struct GW {
   }
   void extrude(double x, double y, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) return;
+    fPrint = capped_feed(fPrint);
     if (dry) { px=x; py=y; curF=fPrint; return; }   // G003 dry run (assumes pe off — guarded in parallel mode)
     int fUse = pe_feed(d, fPrint);               // PE-lite: apply the flow change rate limit (fPrint when off)
     double dE = e_per_mm * d; filament += dE; ++segments;
@@ -279,6 +318,7 @@ struct GW {
   // For spiral mode: extrusion that raises Z as it goes
   void extrude_z(double x, double y, double zz, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) { z=zz; return; }
+    fPrint = capped_feed(fPrint);
     double dE = e_per_mm * d; filament += dE; ++segments;
     note_xy(px, py); note_xy(x, y);
     if (zz > exMaxZ) exMaxZ = zz;     // z ramps within the move here, so the member z is one layer behind
@@ -289,7 +329,8 @@ struct GW {
   // For the scarf seam: extrusion applying both Z and flow (an E multiplier) (Z always written)
   void extrude_zf(double x, double y, double zz, double flowMul, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) { z=zz; return; }
-    double dE = e_per_mm * d * flowMul; filament += dE; ++segments;
+    fPrint = capped_feed(fPrint);
+    double dE = e_per_mm * d * flowMul * scarf_flow; filament += dE; ++segments;
     note_xy(px, py); note_xy(x, y);
     if (zz > exMaxZ) exMaxZ = zz;     // z ramps within the move here, so the member z is one layer behind
     if (fPrint != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,zz,dE,fPrint); curF=fPrint; }
@@ -299,44 +340,41 @@ struct GW {
   // Cooling fan (M106 emitted only on change)
   void set_fan(int S) { if (S==lastFan) return; lastFan=S; if (dry) return; std::snprintf(buf,sizeof buf,"M106 S%d",S); raw(buf); }
   // Emit a continuous polyline (pts[0] = current position). G2/G3 with arc_fitting, otherwise G1.
-  void extrude_run(const std::vector<DPt>& pts, int fPrint) {
-    if (dry) { if (pts.size()>1) { px=pts.back().x; py=pts.back().y; curF=fPrint; } return; }
+  //  The arcs are upstream's ArcFitter (arcfit_bridge.cpp) at upstream's per-role tolerance (LayerRegion::simplify_path,
+  //  Layer::simplify_support_path): SPARSE_INFILL_RESOLUTION for sparse infill, SUPPORT_RESOLUTION for support and raft,
+  //  the print's `resolution` for everything else. `type` is the toolpath type the caller emits (emit.cpp).
+  void extrude_run(const std::vector<DPt>& pts, int fPrint, float type) {
+    if (dry) { if (pts.size()>1) { px=pts.back().x; py=pts.back().y; curF=capped_feed(fPrint); } return; }
     if (!arc_fitting) { for (size_t i=1;i<pts.size();++i) extrude(pts[i].x,pts[i].y,fPrint); return; }
-    // try_arc swallows the points it turns into one G2/G3, so they never reach extrude() and its note_xy. Noting
-    //  every input point here instead keeps the extent honest: the arc was fitted to these points to within the
-    //  fitting tolerance, so it cannot reach materially past them.
+    // An arc stands for the points it was fitted to, so they never reach extrude() and its note_xy. Noting every
+    //  input point here keeps the extent honest: the arc stays within the fitting tolerance of them.
     for (const DPt& q : pts) note_xy(q.x, q.y);
-    size_t i=0, n=pts.size();
-    while (i+1<n) { size_t j=try_arc(pts,i,fPrint); if (j>i) i=j; else { extrude(pts[i+1].x,pts[i+1].y,fPrint); ++i; } }
-  }
-  // Approximate an arc starting at pts[i] (>=5 points, deviation <=0.05mm, r 0.1~200, <=~155°) -> on success emit G2/G3 and return the end index
-  size_t try_arc(const std::vector<DPt>& pts, size_t i, int fPrint) {
-    const double RMIN=0.1, RMAX=200.0, MAXDEV=0.05;
-    size_t n=pts.size(); if (i+4>=n) return i;
-    size_t bestE=i; double bcx=0,bcy=0,br=0;
-    for (size_t e=i+4; e<n; ++e) {
-      size_t mid=i+(e-i)/2; double cx,cy,r;
-      if (!circle_from3(pts[i],pts[mid],pts[e],cx,cy,r)) break;
-      if (r<RMIN||r>RMAX) break;
-      bool okAll=true;
-      for (size_t k=i;k<=e;++k){ if (std::fabs(std::hypot(pts[k].x-cx,pts[k].y-cy)-r)>MAXDEV){okAll=false;break;} }
-      if (!okAll) break;
-      double a0=std::atan2(pts[i].y-cy,pts[i].x-cx), a1=std::atan2(pts[e].y-cy,pts[e].x-cx), sw=a1-a0;
-      while(sw>PI)sw-=2*PI; while(sw<-PI)sw+=2*PI;
-      if (std::fabs(sw)>2.7) break;                 // avoid full-circle (360°) arcs
-      bestE=e; bcx=cx; bcy=cy; br=r;
+    double tolerance = arc_resolution;
+    if ((int)type == 2) tolerance = 0.04;                          // SPARSE_INFILL_RESOLUTION (libslic3r.h)
+    if ((int)type == 5 || (int)type == 6) tolerance = 0.0375;      // SUPPORT_RESOLUTION
+    std::vector<std::pair<double,double>> points; points.reserve(pts.size());
+    for (const DPt& q : pts) points.emplace_back(q.x, q.y);
+    std::vector<arcfit_bridge::Move> moves;
+    arcfit_bridge::fit(points, tolerance, moves);
+    for (const arcfit_bridge::Move& move : moves) {
+      if (move.kind == arcfit_bridge::Linear) {
+        for (size_t k=move.start+1; k<=move.end && k<pts.size(); ++k) extrude(pts[k].x, pts[k].y, fPrint);
+        continue;
+      }
+      if (move.length < 1e-9) continue;                            // upstream GCode.cpp skips a zero-length arc
+      extrude_arc(pts[move.end], move.centerX, move.centerY, move.length, move.kind == arcfit_bridge::ArcCounterClockwise, fPrint);
     }
-    if (bestE < i+4) return i;
-    DPt a=pts[i], c=pts[bestE];
-    double a0=std::atan2(a.y-bcy,a.x-bcx), a1=std::atan2(c.y-bcy,c.x-bcx), sw=a1-a0;
-    while(sw>PI)sw-=2*PI; while(sw<-PI)sw+=2*PI;
-    bool ccw = sw>0;                                 // CCW → G3, CW → G2
-    double arcLen=std::fabs(sw)*br, dE=e_per_mm*arcLen; filament+=dE; ++segments;
-    double I=bcx-a.x, J=bcy-a.y;
-    if (fPrint!=curF){ std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",ccw?"G3":"G2",c.x+offX,c.y+offY,I,J,dE,fPrint); curF=fPrint; }
-    else            { std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   ccw?"G3":"G2",c.x+offX,c.y+offY,I,J,dE); }
-    raw(buf); px=c.x; py=c.y;
-    return bestE;
+  }
+  // One G2/G3 from the current position to `end` around (centerX, centerY), E from upstream's arc length.
+  void extrude_arc(DPt end, double centerX, double centerY, double length, bool counterClockwise, int fPrint) {
+    fPrint = capped_feed(fPrint);
+    double dE = e_per_mm*length; filament+=dE; ++segments;
+    double I=centerX-px, J=centerY-py;
+    const char* command = "G2";
+    if (counterClockwise) command = "G3";
+    if (fPrint!=curF){ std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",command,end.x+offX,end.y+offY,I,J,dE,fPrint); curF=fPrint; }
+    else            { std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   command,end.x+offX,end.y+offY,I,J,dE); }
+    raw(buf); px=end.x; py=end.y;
   }
 };
 

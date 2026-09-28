@@ -33,27 +33,18 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
       ? build_sparse(ld.supBase, resolvePat(p.support_base_pattern), supBaseAng, support_spacing, i, zE, w, p.support_density) : Paths{};
     if (ld.contour.empty() || p.spiral_mode) return ep;   // empty layer = support only, spiral = ep unused
 
-    // Gap fill: the morphological-open leftover of the fill inside the innermost wall (gaps narrower than w) -> a center line approximation (single-width lines).
-    //  ⚠ An approximation — not a medial axis or variable width. open(X)=dilate(erode(X)), leftover = X−open. Excluded from fillCore to prevent double extrusion.
+    // Gap fill. The classic generator already produced it (medial axis, variable width) and took it out of ld.fill, as
+    //  upstream's process_classic does. Arachne mode keeps the approximation it had: the morphological-open leftover of
+    //  the fill (gaps narrower than w) filled with single-width lines, open(X)=dilate(erode(X)), leftover = X−open,
+    //  excluded from fillCore to prevent double extrusion.
     Paths gap, fillCore = ld.fill;
-    if (!ld.fill.empty()) {
+    if (p.wall_generator == "arachne" && !ld.fill.empty()) {
       Paths opened = morph_open(ld.fill, w*0.5);
       gap = clip_paths(ld.fill, opened, ctDifference);
       gap = offset_paths(offset_paths(gap, -w*0.1), w*0.1);            // remove noise below 0.2w
       if (!gap.empty()) fillCore = clip_paths(ld.fill, gap, ctDifference);
     }
-    ep.gapLines = gap.empty() ? Paths{} : infill_clipped(gap, p.infill_angle, w);
-
-    // Thin wall center lines (regions narrower than 2w) — one major-axis center line per component + a local width flow correction
-    if (!ld.thin.empty()) {
-      for (const Paths& comp : split_components(ld.thin)) {
-        Paths line = centerline_of(comp, w);
-        if (line.empty()) continue;
-        double A = paths_area(comp), Ln = paths_len(line,false);
-        double width = (Ln>1e-3) ? A/Ln : w;
-        ep.thinRuns.push_back({std::move(line), std::min(2.0, std::max(0.4, width/w))});
-      }
-    }
+    if (!gap.empty()) ep.gapLines = infill_clipped(gap, p.infill_angle, w);
 
     Paths topSolid, botSolid;
     for (int j=i; j<=std::min(N-1, i + p.top_shell_layers - 1); ++j) topSolid = union_paths(topSolid, L[j].topSurf);
@@ -69,6 +60,18 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
     }
     Paths sparse = clip_paths(fillCore, solid, ctDifference);
     double sa = (i%2==0) ? 45.0 : 135.0;
+    // Upstream's exposed top (this layer's own top surface) and bottom (its own bottom that is not a bridge) print
+    //  with their own flow ratio. The kernel's solid is the shell region, so they are cut out of it here, after
+    //  sparse is taken, and only when the ratio makes them print differently: with both at 1 nothing is split.
+    Paths topExposed, bottomExposed;
+    if (p.top_solid_infill_flow_ratio != 1.0 && !ld.topSurf.empty()) {
+      topExposed = clip_paths(solid, ld.topSurf, ctIntersection);
+      if (!topExposed.empty()) solid = clip_paths(solid, topExposed, ctDifference);
+    }
+    if (p.bottom_solid_infill_flow_ratio != 1.0 && !ld.botSurf.empty()) {
+      bottomExposed = clip_paths(solid, ld.botSurf, ctIntersection);
+      if (!bottomExposed.empty()) solid = clip_paths(solid, bottomExposed, ctDifference);
+    }
     // Stage 21: per-feature widths (the first layer uses the initial_layer values throughout). With the defaults (every feature 0 -> line_width) the values are identical -> no regression.
     bool firstL = (i==0 && nraft==0);
     double wSolid  = firstL ? p.initial_layer_line_width : p.internal_solid_infill_line_width;
@@ -84,19 +87,29 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
     ep.topLines  = topPart.empty() ? Paths{} : infill_clipped(topPart, sa, solid_spacing);
     if (!ep.topLines.empty()) sort_monotonic(ep.topLines, sa);
     ep.bridgeLines = bridge.empty() ? Paths{} : infill_clipped(bridge, sa, solid_spacing);
+    if (!topExposed.empty()) { ep.topExposedLines = infill_clipped(topExposed, sa, solid_spacing); sort_monotonic(ep.topExposedLines, sa); }
+    if (!bottomExposed.empty()) { ep.bottomLines = infill_clipped(bottomExposed, sa, solid_spacing); sort_monotonic(ep.bottomLines, sa); }
     ep.sparseLines = (sparse_spacing>0 && !sparse.empty())
         ? build_sparse(sparse, p.sparse_infill_pattern, p.infill_angle, sparse_spacing, i, zE, w, p.infill_density) : Paths{};
     // Skirt/brim — stage 33: wiring up skirt_height and brim_object_gap
     if (i < std::max(1, p.skirt_height) && nraft==0) {
       int brimRings = (int)std::llround(p.brim_width / w); ep.brim = brimRings>0 && i==0;   // the brim is on the first layer only
       for (int k=0; k<p.skirt_loops; ++k) { Paths r=offset_paths(ld.contour,(p.skirt_distance+w*0.5+k*w)); for (auto& q:r) ep.flExtra.push_back(q); }
-      if (i==0) for (int k=1; k<=brimRings; ++k) { Paths r=offset_paths(ld.contour,(p.brim_object_gap+w*0.5+k*w)); for (auto& q:r) ep.flExtra.push_back(q); }
+      Paths& brimTarget = ep.flExtra;                // the brim prints with the skirt unless its own ratio differs
+      Paths& brimOwn = ep.brimLoops;
+      const bool ownBrim = p.brim_flow_ratio != 1.0;
+      if (i==0) for (int k=1; k<=brimRings; ++k) {
+        Paths r=offset_paths(ld.contour,(p.brim_object_gap+w*0.5+k*w));
+        for (auto& q:r) { if (ownBrim) brimOwn.push_back(q); else brimTarget.push_back(q); }
+      }
     }
 
-    double thinLen=0; for (auto& tr:ep.thinRuns) thinLen += paths_len(tr.line,false);
+    double classicLen = 0;   // the classic generator's thin walls and gap fill (its loops are in ld.walls)
+    for (const ClassicWall& wall : ld.classicWalls) if (!wall.loop) classicLen += paths_len(Paths{wall.pl}, false);
+    for (const TreePath& gapPath : ld.classicGapFill) classicLen += paths_len(Paths{gapPath.pl}, false);
     double layerLen = vwalls_len(ld.walls) + paths_len(ep.solidLines,false) + paths_len(ep.sparseLines,false)
                     + paths_len(ep.supI,false) + paths_len(ep.supB,false) + paths_len(ep.flExtra,true)
-                    + paths_len(ep.gapLines,false) + paths_len(ep.bridgeLines,false) + thinLen;
+                    + paths_len(ep.gapLines,false) + paths_len(ep.bridgeLines,false) + classicLen;
     double baseSpeed = (i==0 && nraft==0) ? p.first_layer_speed : p.print_speed;
     double useSpeed = baseSpeed;
     if (p.slow_down_layer_time > 0 && layerLen > 1e-6 && layerLen/baseSpeed < p.slow_down_layer_time)

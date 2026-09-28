@@ -303,7 +303,10 @@
 .slice-btn { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: 7px;
   background: var(--_accent); color: var(--_on-accent); font-weight: 700; cursor: pointer; }
 .slice-btn:disabled { background: var(--_dark-border-strong); color: var(--_dark-text-faint); cursor: not-allowed; }
-.slice-err { color: var(--_danger-on-dark); margin-top: 6px; }
+.slice-err { color: var(--_danger-on-dark); margin-top: 6px; overflow-wrap: anywhere; }
+/* The lines after the message (a custom G-code error's template line and its ^): left and monospaced, or the caret
+   would not stand under the column it points at. */
+.slice-err-detail { margin: 4px 0 0; text-align: left; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre; overflow-x: auto; }
 .slice-stats { margin-top: 8px; line-height: 1.5; }
 .slice-stats b { color: var(--_accent-on-dark); }
 .slice-layer { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }

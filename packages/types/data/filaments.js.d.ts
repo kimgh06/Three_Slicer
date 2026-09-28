@@ -11,10 +11,15 @@ export type FilamentRow = (unknown | null)[]
 export type FilamentEntry = [string, number, string, string]
 
 export interface FilamentData {
-  /** Option keys, in column order — the kernel keys that at least one filament profile sets */
+  /** Option keys, in column order — the kernel keys and custom-G-code keys that at least one filament profile sets */
   keys: string[]
   /** Deduplicated value rows */
   sets: FilamentRow[]
+  /** Columns whose cells are indices into `text` rather than values: the multi-line options (custom G-code, notes),
+   *  stored once because many rows share one. Absent when the table has none. */
+  textKeys?: string[]
+  /** The multi-line values the `textKeys` columns index */
+  text?: unknown[]
   /** Preset entries, indexed by the numbers in `byPrinter` / `defaultsByModel` */
   presets: FilamentEntry[]
   /** Printer profile name (as keyed in printers.json) -> indices into `presets` — the compatible materials */

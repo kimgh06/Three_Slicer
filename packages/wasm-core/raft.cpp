@@ -9,6 +9,9 @@
 #include <cstdio>
 #include <vector>
 
+// A raft is support material upstream, so its lines take the support flow ratio (emit.cpp role_flow_ratio).
+static void raft_support_flow(GW& gw, const Params& p) { gw.set_role_flow(role_flow_ratio(p, FlowRole::Support, gw.on_first_layer)); }
+
 double raft_emit(GW& gw, const Params& p, std::vector<LayerData>& L, double w, int nraft,
                  int fTravel, int fFirst, SeamCtx& seamCtx, const FlushFn& flush_layer) {
   double zShift = 0.0;
@@ -22,14 +25,17 @@ double raft_emit(GW& gw, const Params& p, std::vector<LayerData>& L, double w, i
     gw.set_fan(0);                               // fan off for the raft (the first layers)
     for (int k=0;k<nraft;++k) {
       double rh = (k==0) ? raftFirstH : p.layer_height;
+      gw.role_flow = 1.0; gw.on_first_layer = (k == 0);   // the raft's first layer is the print's first layer
       gw.set_e_per_mm(rh, p); gw.z = rz;
       std::vector<float> tp, widths; g_seg_w = &widths; g_seg_w_cur = (float)w;   // stage 21: record raft widths
       char cm[64]; std::snprintf(cm,sizeof cm,"; raft %d Z%.3f",k,rz); gw.raw(cm);
       std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",rz,fTravel); gw.raw(cm);
       if (k==0) {
         for (int s=0;s<p.skirt_loops;++s){ Paths r=offset_paths(raftArea,(p.skirt_distance+w*0.5+s*w)); emit_loops(gw,tp,r,rz,4.0f,fFirst,fTravel,-1,seamCtx); }
+        raft_support_flow(gw, p);
         emit_lines(gw, tp, infill_clipped(raftArea, 0.0, w), rz, 6.0f, fFirst, fTravel);        // first raft layer: solid
       } else {
+        raft_support_flow(gw, p);
         emit_lines(gw, tp, infill_clipped(raftArea, (k%2)?90.0:0.0, w/0.5), rz, 6.0f, fFirst, fTravel); // afterwards: sparse
       }
       flush_layer(rz, k, tp, widths);

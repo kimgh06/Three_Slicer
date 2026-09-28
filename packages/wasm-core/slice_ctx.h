@@ -52,7 +52,9 @@ void support_run(SliceCtx& C);
 
 // ---- Preamble -> preamble.cpp -------------------------------------------------
 struct EmitFlags { bool realPE, ironOn, scarfOn; int seamMode; };
-EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double treeZMaxResid);
+struct CustomStart;
+// `start` is the expanded custom start block (custom_gcode.h), or null for the raw path.
+EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double treeZMaxResid, const CustomStart* start = nullptr);
 void setup_time_limits(const Params& p, gcode_time::Limits& glim, gcodeproc_bridge::Limits& gl);
 
 // ---- Raft -> raft.cpp ---------------------------------------------------------

@@ -12,6 +12,7 @@ export const emptyCatalog = Object.freeze({
   printersByVendor: {},
   printerTechByVendor: {},
   printerDefaultPreset: () => null,
+  printerDefaultBedType: () => null,
   processPresets: async () => ({ keys: [], listFor: () => [], settingsFor: () => null }),
   filamentPresets: async () => ({ keys: [], listFor: () => [], recommendedFor: () => [], settingsFor: () => null }),
   resinCatalog: [],
