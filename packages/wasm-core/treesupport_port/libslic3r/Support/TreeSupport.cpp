@@ -180,7 +180,8 @@ public:
 private:
     boost::posix_time::ptime m_stage_start_times[NUM_STAGES];
 };
-TreeSupportProfiler profiler;
+// One per thread: tic/toc keep the start time in the object, and the tree path runs some loops threaded.
+thread_local TreeSupportProfiler profiler;
 
 Lines spanning_tree_to_lines(const std::vector<MinimumSpanningTree>& spanning_trees)
 {
@@ -1482,6 +1483,9 @@ void TreeSupport::generate_toolpaths()
     const float base_support_angle = Geometry::deg2rad(object_config.support_angle.value);
 
     // generate tree support tool paths
+    // Threaded as upstream runs it, for the reason draw_circles is: each layer writes only its own support_fills and
+    //  builds its own Fill instances. Measured on the same hybrid plate (mt): 11.4 s serial.
+    tbb_stub::ParallelSection parallel_section;
     tbb::parallel_for(
         tbb::blocked_range<size_t>(m_raft_layers, m_object->support_layer_count()),
         [&](const tbb::blocked_range<size_t>& range)
@@ -2026,6 +2030,10 @@ void TreeSupport::draw_circles()
         return;
     BOOST_LOG_TRIVIAL(info) << "draw_circles for object: " << m_object->model_object()->name;
 
+    // Threaded as upstream runs it: each layer writes only its own SupportLayer and reads the object, the contact nodes
+    //  and the layer outlines, so st and mt give the same bytes. Measured on a 1.13M-facet hybrid plate (st, Clipper
+    //  instrumented): this loop's calls took about 45 of the 86 s support stage.
+    tbb_stub::ParallelSection parallel_section;
     tbb::parallel_for(tbb::blocked_range<size_t>(0, m_ts_data->layer_heights.size()),
         [&](const tbb::blocked_range<size_t>& range)
         {
@@ -2706,6 +2714,8 @@ void TreeSupport::drop_nodes()
         }
 
         // parallel pre-compute avoidance
+        // Threaded as upstream runs it: every entry is a function of its (radius, layer) key, and the caches are locked.
+        tbb_stub::ParallelSection parallel_section;
         tbb::parallel_for(tbb::blocked_range<size_t>(0, contact_nodes.size() - 1), [&](const tbb::blocked_range<size_t> &range) {
             for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
             for (auto node_radius : all_layer_radius[layer_nr]) {
@@ -2748,17 +2758,27 @@ void TreeSupport::drop_nodes()
         Polygons layer_contours = std::move(m_ts_data->get_contours_with_holes(obj_layer_nr));
         //std::unordered_map<Line, bool, LineHash>& mst_line_x_layer_contour_cache = m_mst_line_x_layer_contour_caches[layer_nr];
         tbb::concurrent_unordered_map<Line, bool, LineHash> mst_line_x_layer_contour_cache;
-        auto is_line_cut_by_contour = [&mst_line_x_layer_contour_cache,&layer_contours](Point a, Point b)
+        std::mutex mst_line_cache_mutex;   // the move pass below runs threaded
+        auto is_line_cut_by_contour = [&mst_line_x_layer_contour_cache,&mst_line_cache_mutex,&layer_contours](Point a, Point b)
         {
-            auto iter = mst_line_x_layer_contour_cache.find({ a, b });
-            if (iter != mst_line_x_layer_contour_cache.end()) {
-                if (iter->second)
+            bool cached = false, cut = false;
+            {
+                std::lock_guard<std::mutex> lock(mst_line_cache_mutex);
+                auto iter = mst_line_x_layer_contour_cache.find({ a, b });
+                if (iter != mst_line_x_layer_contour_cache.end()) {
+                    cached = true;
+                    cut = iter->second;
+                }
+            }
+            if (cached) {
+                if (cut)
                     return true;
             }
             else {
                 profiler.tic();
                 Line ln(b, a);
                 Lines pls_intersect = intersection_ln(ln, layer_contours);
+                std::lock_guard<std::mutex> lock(mst_line_cache_mutex);
                 mst_line_x_layer_contour_cache.insert({ {a, b}, !pls_intersect.empty() });
                 mst_line_x_layer_contour_cache.insert({ ln, !pls_intersect.empty() });
                 profiler.stage_add(STAGE_intersection_ln);
@@ -2933,9 +2953,61 @@ void TreeSupport::drop_nodes()
             );
 
             //In the second pass, move all middle nodes.
-            tbb::parallel_for_each(nodes_vec.begin(), nodes_vec.end(), [&](const std::pair<const Point, SupportNode*>& entry) {
-
-                SupportNode* p_node = entry.second;
+            // Threaded, with the serial loop's result: a node's move reads only itself, the caches and its neighbours'
+            //  positions and validity, and in the serial loop a neighbour's validity includes the invalidation of the
+            //  neighbours processed before it. So the pass runs in two threaded steps: the exit each node takes by itself
+            //  (the collision check below), then the moves, reading a neighbour as invalid only when it was invalid
+            //  before this pass or its own exit invalidates it and it comes earlier in nodes_vec. The results are
+            //  applied afterwards in nodes_vec order, which is the order the serial loop wrote them in.
+            //  Measured on a 1.13M-facet hybrid plate (mt): this pass was 23.5 of drop_nodes' 28 s.
+            enum class MoveExit : char { Move, Leaf, Invalid };
+            const size_t node_count = nodes_vec.size();
+            std::vector<MoveExit> exits(node_count, MoveExit::Move);
+            std::vector<std::vector<SupportNode*>> next_nodes_of(node_count);
+            std::unordered_map<const SupportNode*, size_t> index_of;
+            index_of.reserve(node_count);
+            for (size_t node_index = 0; node_index < node_count; ++node_index)
+                index_of.emplace(nodes_vec[node_index].second, node_index);
+            auto part_node = [&nodes_this_part](const Point& position) { return nodes_this_part.find(position)->second; };
+            // Whether the serial loop would see this neighbour as valid while it moves the node at node_index.
+            auto valid_before = [&](const SupportNode* neighbour_node, size_t node_index) {
+                if (!neighbour_node->valid)
+                    return false;
+                const auto found = index_of.find(neighbour_node);
+                if (found == index_of.end())
+                    return true;
+                return !(exits[found->second] == MoveExit::Invalid && found->second < node_index);
+            };
+            tbb_stub::ParallelSection parallel_section;
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, node_count), [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t node_index = range.begin(); node_index < range.end(); ++node_index) {
+                SupportNode* p_node = nodes_vec[node_index].second;
+                const SupportNode& node = *p_node;
+                if (!p_node->valid || node.type == ePolygon || group_index == 0)
+                    continue;
+                //If the branch falls completely inside a collision area (the entire branch would be removed by the X/Y offset), delete it.
+                if (is_inside_ex(get_collision(0, obj_layer_nr), node.position))
+                {
+                    const coordf_t branch_radius_node = get_radius(p_node);
+                    Point to_outside = projection_onto(get_collision(0, obj_layer_nr), node.position);
+                    double dist2_to_outside = vsize2_with_unscale(node.position - to_outside);
+                    if (dist2_to_outside >= branch_radius_node * branch_radius_node) //Too far inside.
+                    {
+                        if (support_on_buildplate_only)
+                            exits[node_index] = MoveExit::Leaf;
+                        else
+                            exits[node_index] = MoveExit::Invalid;
+                        continue;
+                    }
+                    // if the link between parent and current is cut by contours, mark current as bottom contact node
+                    if (p_node->parent && intersection_ln({p_node->position, p_node->parent->position}, layer_contours).empty()==false)
+                        exits[node_index] = MoveExit::Invalid;
+                }
+            }
+            });
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, node_count), [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t node_index = range.begin(); node_index < range.end(); ++node_index) [&] {
+                SupportNode* p_node = nodes_vec[node_index].second;
                 const SupportNode& node = *p_node;
                 if (!p_node->valid)
                 {
@@ -2953,39 +3025,14 @@ void TreeSupport::drop_nodes()
                                                                           to_buildplate, p_node, print_z_next, height_next);
                         next_node->max_move_dist = 0;
                         next_node->overhang = std::move(overhang);
-                        m_ts_data->m_mutex.lock();
-                        contact_nodes[layer_nr_next].emplace_back(next_node);
-                        m_ts_data->m_mutex.unlock();
+                        next_nodes_of[node_index].emplace_back(next_node);
 
                     }
                     return;
                 }
 
-                //If the branch falls completely inside a collision area (the entire branch would be removed by the X/Y offset), delete it.
-                if (group_index > 0 && is_inside_ex(get_collision(0, obj_layer_nr), node.position))
-                {
-                    std::scoped_lock lock(m_ts_data->m_mutex);
-                    const coordf_t branch_radius_node = get_radius(p_node);
-                    Point to_outside = projection_onto(get_collision(0, obj_layer_nr), node.position);
-                    double dist2_to_outside = vsize2_with_unscale(node.position - to_outside);
-                    if (dist2_to_outside >= branch_radius_node * branch_radius_node) //Too far inside.
-                    {
-                        if (support_on_buildplate_only)
-                        {
-                            unsupported_branch_leaves.push_front({ layer_nr, p_node });
-                        }
-                        else {
-                            p_node->valid = false;
-                        }
-                        return;
-                    }
-                    // if the link between parent and current is cut by contours, mark current as bottom contact node
-                    if (p_node->parent && intersection_ln({p_node->position, p_node->parent->position}, layer_contours).empty()==false)
-                    {
-                        p_node->valid = false;
-                        return;
-                    }
-                }
+                if (exits[node_index] != MoveExit::Move)
+                    return;
                 Point next_layer_vertex = node.position;
                 Point move_to_neighbor_center;
                 std::vector<Point>       moves;
@@ -3001,8 +3048,8 @@ void TreeSupport::drop_nodes()
                     Point sum_direction(0, 0);
                     for (const Point &neighbour : neighbours) {
                         // do not move to the neighbor to be deleted
-                        SupportNode *neighbour_node = nodes_this_part[neighbour];
-                        if (!neighbour_node->valid) continue;
+                        SupportNode *neighbour_node = part_node(neighbour);
+                        if (!valid_before(neighbour_node, node_index)) continue;
 
                         Point direction = neighbour - node.position;
                         // do not move to neighbor that's too far away (即使以最大速度移动，在接触热床之前都无法汇聚)
@@ -3104,11 +3151,25 @@ void TreeSupport::drop_nodes()
                 double dist_to_outer   = unscale_(direction_to_outer.cast<double>().norm());
                 next_node->radius      = std::max(node.radius, std::min(next_node->radius, dist_to_outer));
                 get_max_move_dist(next_node);
-                m_ts_data->m_mutex.lock();
-                contact_nodes[layer_nr_next].push_back(next_node);
-                m_ts_data->m_mutex.unlock();
+                next_nodes_of[node_index].push_back(next_node);
+            }();
+            });
+            for (size_t node_index = 0; node_index < node_count; ++node_index) {
+                SupportNode* p_node = nodes_vec[node_index].second;
+                if (exits[node_index] == MoveExit::Leaf)
+                    unsupported_branch_leaves.push_front({ layer_nr, p_node });
+                if (exits[node_index] == MoveExit::Invalid)
+                    p_node->valid = false;
+                append(contact_nodes[layer_nr_next], next_nodes_of[node_index]);
+                // The SupportNode constructor also points its parent and every node merged into the parent at the new
+                //  node (child), and one node can be merged into several parents, so the last of those writes depends on
+                //  the thread order. Written again here in the serial loop's order, which leaves the serial result.
+                for (SupportNode* next_node : next_nodes_of[node_index]) {
+                    next_node->parent->child = next_node;
+                    for (SupportNode* merged : next_node->parent->merged_neighbours)
+                        merged->child = next_node;
+                }
             }
-            );
         }
 
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
@@ -3168,6 +3229,7 @@ void TreeSupport::drop_nodes()
 
     BOOST_LOG_TRIVIAL(debug) << "after m_avoidance_cache.size()=" << m_ts_data->m_avoidance_cache.size();
 }
+
 
 void TreeSupport::smooth_nodes()
 {
@@ -3675,10 +3737,17 @@ const ExPolygons& TreeSupportData::get_collision(coordf_t radius, size_t layer_n
     profiler.tic();
     radius = ceil_radius(radius);
     RadiusLayerPair key{radius, layer_nr};
-    const auto it = m_collision_cache.find(key);
-    const ExPolygons& collision = it != m_collision_cache.end() ? it->second : calculate_collision(key);
+    const ExPolygons* cached = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_cache_mutex);
+        const auto it = m_collision_cache.find(key);
+        if (it != m_collision_cache.end())
+            cached = &it->second;
+    }
+    if (cached == nullptr)
+        cached = &calculate_collision(key);
     profiler.stage_add(STAGE_get_collision);
-    return collision;
+    return *cached;
 }
 
 const ExPolygons& TreeSupportData::get_avoidance(coordf_t radius, size_t layer_nr, int recursions) const
@@ -3686,11 +3755,18 @@ const ExPolygons& TreeSupportData::get_avoidance(coordf_t radius, size_t layer_n
     profiler.tic();
     radius = ceil_radius(radius);
     RadiusLayerPair key{radius, layer_nr, recursions };
-    const auto it = m_avoidance_cache.find(key);
-    const ExPolygons& avoidance = it != m_avoidance_cache.end() ? it->second : calculate_avoidance(key);
+    const ExPolygons* cached = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_cache_mutex);
+        const auto it = m_avoidance_cache.find(key);
+        if (it != m_avoidance_cache.end())
+            cached = &it->second;
+    }
+    if (cached == nullptr)
+        cached = &calculate_avoidance(key);
 
     profiler.stage_add(STAGE_GET_AVOIDANCE);
-    return avoidance;
+    return *cached;
 }
 
 Polygons TreeSupportData::get_contours(size_t layer_nr) const
@@ -3751,6 +3827,7 @@ const ExPolygons& TreeSupportData::calculate_collision(const RadiusLayerPair& ke
     ExPolygons collision_areas = offset_ex(m_layer_outlines[key.layer_nr], scale_(key.radius+m_xy_distance));
     collision_areas = expolygons_simplify(collision_areas, scale_(m_radius_sample_resolution));
     // collision_areas.emplace_back(m_machine_border);
+    std::lock_guard<std::mutex> lock(m_cache_mutex);
     const auto ret = m_collision_cache.insert({ key, std::move(collision_areas) });
     return ret.first->second;
 }
@@ -3768,7 +3845,12 @@ const ExPolygons& TreeSupportData::calculate_avoidance(const RadiusLayerPair& ke
         // below our current one.
         constexpr auto max_recursion_depth = 100;
         // Check if we would exceed the recursion limit by trying to process this layer
-        if (layer_nr >= max_recursion_depth && m_avoidance_cache.find({radius, layer_nr - max_recursion_depth}) == m_avoidance_cache.end()) {
+        bool deep_layer_missing = false;
+        if (layer_nr >= max_recursion_depth) {
+            std::lock_guard<std::mutex> lock(m_cache_mutex);
+            deep_layer_missing = m_avoidance_cache.find({radius, layer_nr - max_recursion_depth}) == m_avoidance_cache.end();
+        }
+        if (deep_layer_missing) {
             // Force the calculation of the layer `max_recursion_depth` below our current one, ignoring the result.
             get_avoidance(radius, layer_nr - max_recursion_depth);
         }
@@ -3778,9 +3860,20 @@ const ExPolygons& TreeSupportData::calculate_avoidance(const RadiusLayerPair& ke
     const ExPolygons &collision       = get_collision(radius, layer_nr);
     avoidance_areas.insert(avoidance_areas.end(), collision.begin(), collision.end());
     avoidance_areas = std::move(union_ex(avoidance_areas));
+    std::lock_guard<std::mutex> lock(m_cache_mutex);
     auto ret = m_avoidance_cache.insert({key, std::move(avoidance_areas)});
     //assert(ret.second);
     return ret.first->second;
+}
+
+// upstream PrintObject.cpp:1133; defined here because the adapter's PrintObject is header-only and TreeSupportData is complete in this file
+std::shared_ptr<TreeSupportData> PrintObject::alloc_tree_support_preview_cache()
+{
+    if (!m_tree_support_preview_cache) {
+        const coordf_t xy_distance = m_config.support_object_xy_distance.value;
+        m_tree_support_preview_cache = std::make_shared<TreeSupportData>(*this, xy_distance, g_config_tree_support_collision_resolution);
+    }
+    return m_tree_support_preview_cache;
 }
 
 } //namespace Slic3r
