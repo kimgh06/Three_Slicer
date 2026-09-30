@@ -26,8 +26,9 @@ void strip_pe_tags(std::string& g);
 struct TimeFeeder {
   std::thread th; std::mutex mu; std::condition_variable cv;
   std::deque<std::string> q; bool done = false;
+  bool threaded = false;   // no thread could be had (the pthread pool was empty): the caller feeds the estimate itself
   void begin(const gcodeproc_bridge::Limits& gl, const gcode_time::Limits* fallback) {
-    th = std::thread([this, gl, fallback]{
+    try { th = std::thread([this, gl, fallback]{
       gcodeproc_bridge::estimate_begin(gl, fallback);
       for (;;) {
         std::string c;
@@ -37,16 +38,20 @@ struct TimeFeeder {
           c = std::move(q.front()); q.pop_front(); }
         gcodeproc_bridge::estimate_feed(c);
       }
-    });
+    }); threaded = true; }
+    catch (...) { gcodeproc_bridge::estimate_begin(gl, fallback); }
   }
   void feed(std::string c) {
     if (c.empty()) return;
+    if (!threaded) { gcodeproc_bridge::estimate_feed(c); return; }
     { std::lock_guard<std::mutex> lk(mu); q.push_back(std::move(c)); }
     cv.notify_one();
   }
   gcodeproc_bridge::Result finish() {
-    { std::lock_guard<std::mutex> lk(mu); done = true; }
-    cv.notify_one(); th.join();
+    if (threaded) {
+      { std::lock_guard<std::mutex> lk(mu); done = true; }
+      cv.notify_one(); th.join();
+    }
     return gcodeproc_bridge::estimate_end();
   }
 };

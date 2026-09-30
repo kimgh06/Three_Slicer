@@ -272,6 +272,7 @@ em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -s DEFAULT_PTHREAD_STACK_SIZE=2MB \
   -s MALLOC=mimalloc \
   -s PTHREAD_POOL_SIZE='(typeof navigator!=="undefined"&&navigator.hardwareConcurrency)||4' \
+  -s PTHREAD_POOL_SIZE_STRICT=2 \
   -s EXPORT_NAME=createSlicer \
   -s ENVIRONMENT=web,worker,node \
   -o ../engine/src/slicer_core.mt.js \

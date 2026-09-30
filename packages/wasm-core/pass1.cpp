@@ -147,7 +147,10 @@ bool pass1_run(SliceCtx& C) {
         for (unsigned t2 = 0; t2 < snt; ++t2) {
           size_t a = t2*schunk, b = std::min(tris.size(), a+schunk);
           if (a >= b) break;
-          sths.emplace_back([&, a, b, t2]{ collect(a, b, tb[t2]); });
+          // an empty pthread pool refuses the thread (PTHREAD_POOL_SIZE_STRICT=2): the caller sweeps the range itself,
+          //  into the same bucket, so the segment order is unchanged
+          try { sths.emplace_back([&, a, b, t2]{ collect(a, b, tb[t2]); }); }
+          catch (...) { collect(a, b, tb[t2]); }
         }
         for (auto& th : sths) th.join();
         for (int li = 0; li < N; ++li) {
@@ -247,7 +250,7 @@ bool pass1_run(SliceCtx& C) {
       auto workfn = [&]{ int i; while (!CX() && (i = nextIdx.fetch_add(1)) < N) { computeLayer(i);
         unsigned d = p1done.fetch_add(1) + 1; p1prog->store((unsigned)((unsigned long long)d * 1000u / (unsigned)N)); } };
       std::vector<std::thread> ths; ths.reserve(nt-1);
-      for (unsigned t=1; t<nt; ++t) ths.emplace_back(workfn);
+      for (unsigned t=1; t<nt; ++t) { try { ths.emplace_back(workfn); } catch (...) { break; } }   // the threads that started take the rest
       workfn();                                  // the main thread joins in too
       for (auto& th : ths) th.join();
       p1prog->store(0);                          // avoid polluting the support band (clear the leftover value before ParallelScope resets it)
