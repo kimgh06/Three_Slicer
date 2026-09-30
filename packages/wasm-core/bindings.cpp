@@ -2,6 +2,7 @@
 //  The embind block plus the small wrappers it binds (heap/config probes + the stage-20 painting selector wiring).
 #include "arachne_bridge.h"
 #include "config_bridge.h"
+#include "contour_phase.h"
 #include "emit.h"
 #include "selector_bridge.h"
 #include "slice_api.h"
@@ -175,7 +176,44 @@ static em::val selector_project_counts(em::val zsVal, bool enforcer) {
   return selector_project_counts_state(zsVal, selector_state_of(enforcer));
 }
 
+// ---- PASS1's union outside the kernel (contour_phase.h); the worker drives these around two slice() calls
+static void contour_phase_mode(int mode) {
+  contour_phase::mode = mode;
+  if (mode == contour_phase::OFF) { contour_phase::loops.clear(); contour_phase::contours.clear(); contour_phase::result.clear(); contour_phase::input = contour_phase::GpuInput(); }
+}
+// views into the kernel's heap (no copy): valid until the next contour_phase call
+static em::val contour_gpu_input() {
+  contour_phase::build_gpu_input();
+  const contour_phase::GpuInput& input = contour_phase::input;
+  em::val out = em::val::object();
+  out.set("ms", input.ms);
+  out.set("layerCount", input.layerCount); out.set("segmentCount", input.segmentCount); out.set("cellCount", input.cellCount);
+  out.set("polygonCount", input.polygonCount); out.set("cellEntryCount", input.cellEntryCount);
+  out.set("points", em::val(em::typed_memory_view(input.points.size(), input.points.data())));
+  out.set("layerInfo", em::val(em::typed_memory_view(input.layerInfo.size(), input.layerInfo.data())));
+  out.set("layerStart", em::val(em::typed_memory_view(input.layerStart.size(), input.layerStart.data())));
+  out.set("polyInfo", em::val(em::typed_memory_view(input.polyInfo.size(), input.polyInfo.data())));
+  out.set("polyLayer", em::val(em::typed_memory_view(input.polyLayer.size(), input.polyLayer.data())));
+  return out;
+}
+static em::val contour_result_buffer(int pieceCount) {
+  contour_phase::result.resize((size_t)std::max(0, pieceCount) * 4);
+  return em::val(em::typed_memory_view(contour_phase::result.size(), contour_phase::result.data()));
+}
+static em::val contour_assemble() {
+  const contour_phase::Assembled assembled = contour_phase::assemble();
+  contour_phase::mode = contour_phase::INJECT;
+  em::val out = em::val::object();
+  out.set("walkMs", assembled.walkMs); out.set("fallbackMs", assembled.fallbackMs);
+  out.set("fallbackLayers", (int)assembled.fallbackLayers.size());
+  return out;
+}
+
 EMSCRIPTEN_BINDINGS(slicer) {
+  em::function("contour_phase_mode", &contour_phase_mode);         // 0 off, 1 capture (contour_phase.h)
+  em::function("contour_gpu_input", &contour_gpu_input);
+  em::function("contour_result_buffer", &contour_result_buffer);
+  em::function("contour_assemble", &contour_assemble);
   em::function("slice", &slice);
   em::function("slice_sla", &slice_sla);                     // SLA (resin): contours + generated supports, no G-code
 

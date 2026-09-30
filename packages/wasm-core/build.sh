@@ -213,7 +213,7 @@ ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachn
 #  preamble -> raft -> PASS2 precompute -> finish stats, leaving slice() as the orchestrator. Same rule — listed in
 #  the order their code had inside slicer_core.cpp.
 #  (clip_util.h / slice_planes.h / gcode_writer.h / layer_data.h / slice_api.h / slice_ctx.h are header-only.)
-MAIN_SRC="slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
+MAIN_SRC="contour_phase.cpp slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
 # -DNDEBUG: turns off assert() exactly like an upstream OrcaSlicer release build (CMAKE_BUILD_TYPE=Release).
 #  Without it, asserts upstream treats as "debug-only invariants" kill the worker in a shipped build — e.g. meshes with unwelded vertices and
 #  sliver triangles, such as OCCT tessellations (STEP import), hit Voronoi.cpp:334 (*inside* the recovery routine),

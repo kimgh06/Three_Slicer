@@ -3,6 +3,7 @@
 //  The two cancel sites inside PASS 1 return `false` instead of building the canceled em::val — slice() builds it
 //  at the call site, so the observable result is unchanged.
 #include "slice_ctx.h"
+#include "contour_phase.h"
 
 #include "arachne_bridge.h"
 #include "classic_bridge.h"
@@ -127,7 +128,11 @@ bool pass1_run(SliceCtx& C) {
     //  input is identical -> segment values are unchanged. Per-thread 'contiguous triangle ranges' merged in range order keep the in-layer segment
     //  order in ascending triangle index (same as the old full scan) -> the chain_polys input is unchanged = byte-identical.
     std::vector<std::vector<Seg>> layerSegs(N);
-    if (N > 0) {
+    // The union done outside the kernel (contour_phase.h). OFF leaves every line below as it was.
+    const bool captureLoops = contour_phase::mode == contour_phase::CAPTURE;
+    const bool injectContours = contour_phase::mode == contour_phase::INJECT && (int)contour_phase::contours.size() == N;
+    if (captureLoops) contour_phase::loops.assign(N, Paths());
+    if (N > 0 && !injectContours) {
       auto collect = [&](size_t a, size_t b, std::vector<std::vector<Seg>>& out){
         Seg sg;
         for (size_t ti = a; ti < b; ++ti) {
@@ -166,8 +171,16 @@ bool pass1_run(SliceCtx& C) {
       const double z = zsv[i];
       LayerData ld; ld.z=z; ld.idx=i; ld.h=(i==0)?p.first_layer_height:p.layer_height;
       std::vector<Seg> segs; segs.swap(layerSegs[i]);
+      if (captureLoops) {
+        contour_phase::loops[i] = chain_polys(segs);
+        contour_phase::cancel_coincident(contour_phase::loops[i]);
+        return;
+      }
+      if (injectContours) ld.contour = contour_phase::contours[i];
+      else {
       Paths loops = chain_polys(segs);
-      ld.contour = SimplifyPolygons(loops, pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
+      ld.contour = SimplifyPolygons(loops, pftNonZero);
+      }   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
       // [early simplification — matching upstream] Upstream simplifies every contour to resolution right after slicing the mesh
       //  (TriangleMeshSlicer.cpp:2042 ex.simplify). The kernel passed raw contours straight through, so everything downstream (walls, infill,
       //  support, emission clipping) paid for high-density polygons. CleanPolygons (removal by perpendicular distance) gives an equivalent reduction —
@@ -255,10 +268,12 @@ bool pass1_run(SliceCtx& C) {
       for (auto& th : ths) th.join();
       p1prog->store(0);                          // avoid polluting the support band (clear the leftover value before ParallelScope resets it)
       if (CX()) { return false; }   // G002
+      if (captureLoops) { contour_phase::captured = true; return false; }
       report(N, total);                          // JS callbacks are main-thread only -> report at coarse granularity
     }
 #else
     for (int i=0;i<N;++i){ if (CX()) { return false; } computeLayer(i); report(i+1, total); }
+    if (captureLoops) { contour_phase::captured = true; return false; }
 #endif
   }
   return true;

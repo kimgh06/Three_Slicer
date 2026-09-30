@@ -61,6 +61,7 @@
 #include "geom_helpers.h"
 #include "layer_data.h"
 #include "params.h"
+#include "contour_phase.h"
 #include "selector_bridge.h"  // stage 20 -> MMU painting: the painted facet states decide whether a layer is multi-tool
 #include "slice_api.h"
 #include "custom_gcode.h"
@@ -177,7 +178,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     treeSupLayers = g_scache.treeSupLayers; treeZMaxResid = g_scache.treeZMaxResid;
     report(N, total); report(N+1, total);
   } else {
-    if (!pass1_run(C)) { em::val r=em::val::object(); r.set("error", std::string("canceled")); return r; }
+    contour_phase::captured = false;
+    if (!pass1_run(C)) { em::val r=em::val::object();
+      // pass1 stopped on purpose, with every layer's loops held for the union outside the kernel (contour_phase.h)
+      if (contour_phase::captured) { r.set("captured", true); r.set("layers", N); return r; }
+      r.set("error", std::string("canceled")); return r; }
 
   tw_p1 = emscripten_get_now();
 
