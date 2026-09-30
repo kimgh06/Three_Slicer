@@ -1,4 +1,5 @@
 import React from 'react'
+import { GPU_ACCELERATION_MODES, gpuAccelerationMode } from '../core/gpu_acceleration.js'
 
 // The sidebar's fixed bottom bar: auto-slice toggle, the slice button (with the per-plate dropdown)
 // and the G-code export link. While a slice runs the button cancels it.
@@ -7,16 +8,29 @@ export default function SliceBar({
   slicedPlateCount, canSlice, onSlice, onCancel, onExportAll, gcodeUrl, bedWarning,
   // Plate-parallel slicing: the run map (core/slice_pool.js) while an all-plates run is on, the worker-count knob
   //  and what Auto resolves to, and which kernel loaded — mt and st are a measured 9.8x apart, so it is said.
-  plateRun = null, kernelKind = null, workers = 0, autoWorkers = 1, maxWorkers = 1, memoryWorkers = Infinity, onWorkers = null,
+  plateRun = null, kernelKind = null, workers = 0, autoWorkers = 1, maxWorkers = 1, memoryWorkers = Infinity,
   slaResult = false, slaTech = false, onExportSl1 = null, exporting = null, sl1Ready = null, onExportGcode3mf = null, onExportPlateGcode3mf = null,
+  // GPU acceleration of the polygon booleans (core/gpu_acceleration.js): the settings map's raw `gpu_acceleration` value.
+  //  onSetting(key, value) writes a viewer knob (`slice_workers`, `gpu_acceleration`) into the host's settings map.
+  gpuSetting = null, onSetting,
 }) {
   const title = slicing ? 'Click to cancel the slice'
     : plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)'
+  const gpuMode = gpuAccelerationMode({ gpu_acceleration: gpuSetting })
   return (
     <div className="side-bottom">
-      <label className="auto-slice" data-testid="auto-slice" title="Re-slice automatically 0.8s after a settings change (the first slice is manual; a running slice is canceled and restarted)">
-        <input type="checkbox" checked={autoSlice} onChange={e => onAutoSlice(e.target.checked)} /> Auto slice
-      </label>
+      {/* The two slice options stack in one column so the bar keeps the export button on one line. */}
+      <div className="slice-options">
+        <label className="auto-slice" data-testid="auto-slice" title="Re-slice automatically 0.8s after a settings change (the first slice is manual; a running slice is canceled and restarted)">
+          <input type="checkbox" checked={autoSlice} onChange={e => onAutoSlice(e.target.checked)} /> Auto slice
+        </label>
+        <label className="gpu-accel" data-testid="gpu-accel" title={GPU_TITLE[gpuMode]}>
+          GPU
+          <select value={gpuMode} onChange={e => onSetting('gpu_acceleration', e.target.value)}>
+            {GPU_ACCELERATION_MODES.map(mode => <option key={mode} value={mode}>{GPU_LABEL[mode]}</option>)}
+          </select>
+        </label>
+      </div>
       <div className="slice-dd">
         <button className="slice-btn" title={title}
           onClick={() => (slicing ? onCancel() : (plateCount > 1 ? onSliceMenu() : onSlice('current')))}
@@ -33,7 +47,7 @@ export default function SliceBar({
             <label className="slice-workers" data-testid="slice-workers"
               title={`Plates sliced at the same time. Auto = ${autoWorkers} on this machine. Each worker keeps its own copy of the model in memory.`}>
               <span>Workers</span>
-              <select value={workers > 0 ? Math.min(workers, maxWorkers, memoryWorkers) : 0} onChange={e => onWorkers?.(Number(e.target.value))}>
+              <select value={workers > 0 ? Math.min(workers, maxWorkers, memoryWorkers) : 0} onChange={e => onSetting('slice_workers', Number(e.target.value))}>
                 <option value={0}>Auto ({autoWorkers})</option>
                 {/* Only what the memory budget allows for the loaded models is offered: past it the tab itself
                     dies (measured, five workers on a 143MB model), which nothing in the page can catch. */}
@@ -120,4 +134,14 @@ export default function SliceBar({
       )}
     </div>
   )
+}
+
+// The GPU select's option labels and tooltips, one per GPU_ACCELERATION_MODES entry. The stats line after a slice says
+//  which engine that slice used.
+const GPU_LABEL = { auto: 'Auto', on: 'On', off: 'Off' }
+const GPU_FALLBACK = 'A GPU call that fails falls back to the CPU for that call.'
+const GPU_TITLE = {
+  auto: `Polygon operations use the GPU when WebGPU gives a device, the CPU otherwise. ${GPU_FALLBACK}`,
+  on: `Polygon operations use the GPU; without a WebGPU device the slice says so and uses the CPU. ${GPU_FALLBACK}`,
+  off: 'Polygon operations stay on the CPU.',
 }

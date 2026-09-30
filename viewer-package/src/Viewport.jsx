@@ -877,7 +877,7 @@ export default function Viewport({
               <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 plateRun={plateRun} kernelKind={kernelKind} workers={Number(settings?.slice_workers) || 0} autoWorkers={autoWorkers} maxWorkers={cores} memoryWorkers={memoryWorkers}
-                onWorkers={(n) => setSettings?.(prev => ({ ...prev, slice_workers: n }))}
+                onSetting={(key, value) => setSettings?.(prev => ({ ...prev, [key]: value }))} gpuSetting={settings?.gpu_acceleration}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
                 canSlice={objects.length > 0 && !gcodeOnly} onSlice={onSlice} onCancel={cancelSlice}
                 onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
