@@ -1561,6 +1561,16 @@ const bedTreeCentre = sliceOnBed(makeTableSTL(), treeNoSkirt)
 ok(typeTotal(bedTreeCentre, 5) > 0, `a centred model's tree support is unaffected (type5=${typeTotal(bedTreeCentre, 5)})`)
 ok(bedTreeCentre.stats.over_bed === false, `...and is not over the bed either`)
 
+//  The non-organic tree styles (upstream smsTreeSlim / Strong / Hybrid) run TreeSupport, not TreeSupport3D, and that
+//  path keeps its layer outlines in PrintObject's tree-support cache. The adapter returned an empty pointer for it, so
+//  every one of these styles dereferenced null on any model: std::length_error on st, "memory access out of bounds" on mt.
+console.log('\n[tree support: every style slices]')
+for (const tree_style of ['organic', 'slim', 'strong', 'hybrid']) {
+  let styled = null
+  try { styled = sliceOnBed(makeTableSTL(), { ...treeNoSkirt, tree_style }) } catch (error) { styled = { error: String(error) } }
+  ok(!styled.error && typeTotal(styled, 5) > 0, `tree_style ${tree_style} slices and emits support (type5=${styled.error ?? typeTotal(styled, 5)})`)
+}
+
 // ===== ;TYPE: role tags: the G-code TEXT names the roles the stream records =======================================
 //  The viewer draws a slice from the toolpath stream, but an exported .gcode / .gcode.3mf comes back as text, and
 //  the multi-material path wrote no role marks at all: an opened painted model drew its object as prime tower (every
