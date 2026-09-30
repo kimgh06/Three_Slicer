@@ -2,6 +2,7 @@
 #define TREESUPPORT_H
 
 #include <forward_list>
+#include <mutex>
 #include <unordered_set>
 #include "ExPolygon.hpp"
 #include "Point.hpp"
@@ -335,6 +336,9 @@ public:
      * coconut: previously stl::unordered_map is used which seems problematic with tbb::parallel_for.
      * So we change to tbb::concurrent_unordered_map
      */
+    // Guards both caches below: drop_nodes reads them from several threads (the concurrent_* types are std aliases here).
+    //  A value is a function of its key alone, so two threads computing the same key insert the same bytes.
+    mutable std::mutex m_cache_mutex;
     mutable tbb::concurrent_unordered_map<RadiusLayerPair, ExPolygons, RadiusLayerPairHash, RadiusLayerPairEquality> m_collision_cache;
     mutable tbb::concurrent_unordered_map<RadiusLayerPair, ExPolygons, RadiusLayerPairHash, RadiusLayerPairEquality> m_avoidance_cache;
 
