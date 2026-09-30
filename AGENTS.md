@@ -29,6 +29,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   meaning is named instead: "clear the message" is `clearError()` / `clearSliceNotice()` / `clearTriWarn()`
   (`Viewport.jsx` wiring), not `setError('')` at each call site, and "no value" is `null`. `test_layers.mjs` fails on
   a `set…('')` outside those definitions.
+  Tests and guards read the owner too. A guard that types out the list it protects checks the old list once the
+  owner grows, and passes over a copy of the new entry. The fill tools are the example: `FILL_TOOLS`
+  (`core/paint_tools.js`, exported as `three-slicer-viewer/paint` so the AGPL slicer worker reads the same set) was
+  spelled out by the brush input, both paint panels and the worker, and the guard in `test_layers.mjs` that now
+  catches that builds its pattern from `FILL_TOOLS`. The same applies to a list the test file itself repeats
+  (`SOURCE_DIRS` there, typed three times before).
 - `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
 - Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (93 keys from an empty settings map today), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
@@ -422,6 +428,17 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream simplifies slice contours by 0.0025mm (`PrintObjectSlice.cpp:172`, "has influence on arc fitting") and
   PASS1 by `resolution`, so a coarsely faceted round wall here can sit just past the arc tolerance and stay straight
   moves where upstream would fit it.
+- **Tree support (slim, strong, hybrid) runs four loops threaded on mt, and each must give the serial result.**
+  `tbb_stub::ParallelSection` (`treesupport_port/tbb/stub_parallel.h`) turns the tbb stub's threads on around one loop:
+  `draw_circles`, `generate_toolpaths`, the avoidance precompute and the move pass of `drop_nodes` (upstream runs all
+  four in parallel). The rest of the tree path stays serial because the `concurrent_*` stubs are std aliases. The move
+  pass is not upstream's loop: a node's own exit is decided first, the moves read a neighbour's validity as the serial
+  loop would at that node, and the results are applied in node order, including the `child` links the `SupportNode`
+  constructor writes on every node merged into its parent (one node can be merged into several parents, so the last
+  write followed the thread order). `MinimumSpanningTree::prim` scans its candidates in vertex order: upstream keys
+  them by address and picks with `min_element`, so equal distances were broken by heap layout and the st kernel gave
+  different G-code for one slim input from different script paths. Measured on a 1.13M-facet hybrid plate (mt):
+  91.1 -> 20.7 s, G-code unchanged. `test_tree_support_mt.mjs` pins st == mt over three mt runs for all three styles.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
   `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and
@@ -568,7 +585,7 @@ lives in Core rules above and is not restated here.
 - No ternary operator anywhere, JSX and tests included. Suggest an early `return`, `if`/`else`, a lookup table with
   `??`, or `cond && <Element/>`. Ternaries in touched code are converted.
 - One owner per fact. A second place that computes the same conversion, merge order, plate context or colour list,
-  or that types out a list, label or limit a constant already holds, is a defect even if it agrees today (`paint_clip.js`, `buildMergedSTL`, `plateContext`, `filament_colors.js`).
+  or that types out a list, label or limit a constant already holds, is a defect even if it agrees today (`paint_clip.js`, `buildMergedSTL`, `plateContext`, `filament_colors.js`, `paint_tools.js`). Tests included.
 - Omission, not defaults: a param is emitted only when the settings map holds its key.
 - Generated files (`PARAMS.md`, `settings-keys.d.ts`, `kernel_setting_keys.js`) change only through their generator.
 - Layer boundary: nothing under `core/` imports React, the DOM or a renderer; `ui/` does not reach into the scene or
