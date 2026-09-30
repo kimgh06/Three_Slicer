@@ -5,6 +5,9 @@
 #include "gcode_time.h"
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <string>
 #include <algorithm>
 
 namespace gcode_time {
@@ -247,113 +250,193 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
 }
 
 // ---- tiny g-code parser + driver ----
-static bool parse_axis(const std::string& line, char ax, double& out){
-    // find token "<ax><number>" preceded by start/space, ignore inside comment
-    for (size_t i=0;i<line.size();++i){
-        char c=line[i];
-        if (c==';') break;
-        if ((c==ax || c==(char)std::tolower(ax)) && (i==0 || line[i-1]==' ' || line[i-1]=='\t')) {
-            char* end=nullptr; out=std::strtod(line.c_str()+i+1, &end);
-            if (end != line.c_str()+i+1) return true;
-        }
+// ---- line parser --------------------------------------------------------------------------------------------------------
+// One scan per line, no per-line allocation. It answers exactly what the previous per-axis scan (parse_axis, one pass over the
+//  line per letter) answered: for each axis the first token "<letter><number>" whose number parses, tokens counted only at the
+//  start of the line or after a space/tab, nothing past a ';'. Measured before this rewrite: the transcribed estimate of a
+//  58.6MB G-code took 3.2s serial after the last layer (mt), with the parser doing a substr per line and 5-7 scans per line.
+enum { PX=0, PY=1, PZ=2, PE=3, PF=4, PI=5, PJ=6, PN=7 };
+struct AxisVals { double v[PN]; bool has[PN]; };
+
+static const double kPow10[23] = { 1e0,1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,1e11,1e12,1e13,1e14,1e15,1e16,1e17,1e18,1e19,1e20,1e21,1e22 };
+
+// Decimal fast path with strtod's answer: [+-]digits[.digits] with at most 15 significant digits and at most 22 fraction digits,
+//  not followed by anything strtod would keep reading (a digit, '.', 'e', 'E', 'x', 'X'). An integer below 2^53 and a power of ten
+//  up to 1e22 are both exact doubles, and one IEEE division of two exact doubles is correctly rounded — the same value strtod returns
+//  (Clinger's fast path). Anything else — exponents, hex, inf/nan, leading spaces, more digits — takes strtod itself.
+static bool fast_decimal(const char* b, const char* e, double& out, const char*& end) {
+    const char* q = b; bool neg = false;
+    if (q < e && (*q == '+' || *q == '-')) { neg = (*q == '-'); ++q; }
+    unsigned long long mant = 0; int digits = 0, frac = 0; bool any = false;
+    while (q < e && *q >= '0' && *q <= '9') { if (digits < 15) { mant = mant * 10 + (unsigned)(*q - '0'); ++digits; } else return false; ++q; any = true; }
+    if (q < e && *q == '.') {
+        ++q;
+        while (q < e && *q >= '0' && *q <= '9') { if (digits < 15) { mant = mant * 10 + (unsigned)(*q - '0'); ++digits; ++frac; } else return false; ++q; any = true; }
     }
-    return false;
+    if (!any) return false;
+    if (q < e) { char c = *q; if (c == '.' || c == 'e' || c == 'E' || c == 'x' || c == 'X' || (c >= '0' && c <= '9')) return false; }
+    double v = (double)mant / kPow10[frac];
+    if (neg) v = -v;
+    out = v; end = q; return true;
 }
 
-Result estimate(const std::string& gcode, const Limits& lim){
+static bool parse_number(const char* b, const char* e, double& out) {
+    const char* end = nullptr;
+    if (fast_decimal(b, e, out, end)) return true;
+    char tmp[64]; size_t n = (size_t)(e - b); if (n > sizeof tmp - 1) n = sizeof tmp - 1;   // strtod needs a terminator; a token is short
+    memcpy(tmp, b, n); tmp[n] = '\0';
+    char* stop = nullptr; out = std::strtod(tmp, &stop);
+    return stop != tmp;
+}
+
+static int axis_index(char c) {
+    switch (c) {
+        case 'X': case 'x': return PX; case 'Y': case 'y': return PY; case 'Z': case 'z': return PZ; case 'E': case 'e': return PE;
+        case 'F': case 'f': return PF; case 'I': case 'i': return PI; case 'J': case 'j': return PJ; default: return -1;
+    }
+}
+
+static void parse_axes(const char* b, const char* e, AxisVals& out) {
+    for (int k = 0; k < PN; ++k) out.has[k] = false;
+    for (const char* q = b; q < e; ++q) {
+        char c = *q;
+        if (c == ';') break;
+        int k = axis_index(c);
+        if (k < 0 || out.has[k]) continue;
+        if (q != b && q[-1] != ' ' && q[-1] != '\t') continue;
+        double v;
+        if (parse_number(q + 1, e, v)) { out.v[k] = v; out.has[k] = true; }
+    }
+}
+
+static inline bool starts(const char* b, size_t len, const char* lit, size_t n) { return len >= n && memcmp(b, lit, n) == 0; }
+static inline bool gword(const char* b, size_t len, char d) {   // "G<d>" not followed by an alphanumeric ("G1" but not "G10")
+    return len >= 2 && b[0] == 'G' && b[1] == d && (len < 3 || !std::isalnum((unsigned char)b[2]));
+}
+
+struct Estimator::Impl {
+    Limits lim;
     Result R;
     std::vector<TimeBlock> blocks;
     State curr, prev;
-    double pos[4]={0,0,0,0};          // absolute X,Y,Z,E
-    bool have_pos[3]={false,false,false};
-    double m_feedrate=0;              // mm/s (from F mm/min)
-    bool e_relative=true;            // kernel emits M83
-    bool xyz_absolute=true;          // kernel emits G90
-    int  layer_id=-1;                 // -1 = preamble; increments on "; LAYER"
-    int  cur_role=-1;
+    double pos[4] = {0,0,0,0};          // absolute X,Y,Z,E
+    double m_feedrate = 0;              // mm/s (from F mm/min)
+    bool e_relative = true;             // kernel emits M83
+    bool xyz_absolute = true;           // kernel emits G90
+    int  layer_id = -1;                 // -1 = preamble; increments on "; LAYER"
+    int  cur_role = -1;
+    std::string carry;                  // a line split across feeds
 
-    size_t i=0, n=gcode.size();
-    while (i<n) {
-        size_t e=gcode.find('\n', i); if (e==std::string::npos) e=n;
-        std::string line = gcode.substr(i, e-i); i=e+1;
-        if (line.empty()) continue;
+    explicit Impl(const Limits& l) : lim(l) {}
+
+    void line(const char* b, size_t len) {
+        if (len == 0) return;
+        const char* e = b + len;
         // markers
-        if (line.compare(0,8,"; LAYER ")==0 || line.compare(0,8,"; LAYER\t")==0) { ++layer_id; R.layer_s.push_back(0.0); continue; }
-        if (line.compare(0,17,";_EXTRUSION_ROLE:")==0) { cur_role = std::atoi(line.c_str()+17); continue; }
+        if (starts(b, len, "; LAYER ", 8) || starts(b, len, "; LAYER\t", 8)) { ++layer_id; R.layer_s.push_back(0.0); return; }
+        if (starts(b, len, ";_EXTRUSION_ROLE:", 17)) { char tmp[32]; size_t n = len - 17; if (n > sizeof tmp - 1) n = sizeof tmp - 1; memcpy(tmp, b + 17, n); tmp[n] = '\0'; cur_role = std::atoi(tmp); return; }
         // mode changes
-        if (line.compare(0,3,"M83")==0) { e_relative=true; continue; }
-        if (line.compare(0,3,"M82")==0) { e_relative=false; continue; }
-        if (line.compare(0,3,"G91")==0) { xyz_absolute=false; continue; }
-        if (line.compare(0,3,"G90")==0) { xyz_absolute=true; continue; }
+        if (starts(b, len, "M83", 3)) { e_relative = true; return; }
+        if (starts(b, len, "M82", 3)) { e_relative = false; return; }
+        if (starts(b, len, "G91", 3)) { xyz_absolute = false; return; }
+        if (starts(b, len, "G90", 3)) { xyz_absolute = true; return; }
         // motion: G0 / G1 / G2 / G3
-        bool g0 = line.compare(0,2,"G0")==0 && (line.size()<3 || !std::isalnum((unsigned char)line[2]));
-        bool g1 = line.compare(0,2,"G1")==0 && (line.size()<3 || !std::isalnum((unsigned char)line[2]));
-        bool g2 = line.compare(0,2,"G2")==0 && (line.size()<3 || !std::isalnum((unsigned char)line[2]));
-        bool g3 = line.compare(0,2,"G3")==0 && (line.size()<3 || !std::isalnum((unsigned char)line[2]));
-        if (!(g0||g1||g2||g3)) continue;
+        bool g2 = gword(b, len, '2'), g3 = gword(b, len, '3');
+        if (!(gword(b, len, '0') || gword(b, len, '1') || g2 || g3)) return;
 
-        double vx,vy,vz,ve,vf,vi,vj;
-        bool hx=parse_axis(line,'X',vx), hy=parse_axis(line,'Y',vy), hz=parse_axis(line,'Z',vz);
-        bool he=parse_axis(line,'E',ve), hf=parse_axis(line,'F',vf);
-        if (hf) m_feedrate = vf/60.0;   // mm/min -> mm/s
+        AxisVals a; parse_axes(b, e, a);
+        if (a.has[PF]) m_feedrate = a.v[PF] / 60.0;   // mm/min -> mm/s
 
         // new absolute position
-        double nx = hx ? (xyz_absolute ? vx : pos[AX]+vx) : pos[AX];
-        double ny = hy ? (xyz_absolute ? vy : pos[AY]+vy) : pos[AY];
-        double nz = hz ? (xyz_absolute ? vz : pos[AZ]+vz) : pos[AZ];
-        double de = he ? (e_relative ? ve : ve-pos[AE]) : 0.0;
+        double nx = pos[AX], ny = pos[AY], nz = pos[AZ], de = 0.0;
+        if (a.has[PX]) { nx = a.v[PX]; if (!xyz_absolute) nx = pos[AX] + a.v[PX]; }
+        if (a.has[PY]) { ny = a.v[PY]; if (!xyz_absolute) ny = pos[AY] + a.v[PY]; }
+        if (a.has[PZ]) { nz = a.v[PZ]; if (!xyz_absolute) nz = pos[AZ] + a.v[PZ]; }
+        if (a.has[PE]) { de = a.v[PE]; if (!e_relative) de = a.v[PE] - pos[AE]; }
 
         float delta[4];
-        if (g2||g3) {
+        if (g2 || g3) {
             // arc: distance = radius * swept angle (center from I/J relative to start)
-            bool hi=parse_axis(line,'I',vi), hj=parse_axis(line,'J',vj);
-            double cx=pos[AX]+(hi?vi:0.0), cy=pos[AY]+(hj?vj:0.0);
-            double r=std::hypot(pos[AX]-cx, pos[AY]-cy);
-            double a0=std::atan2(pos[AY]-cy, pos[AX]-cx), a1=std::atan2(ny-cy, nx-cx);
-            double sweep = a1-a0;
-            if (g2) { if (sweep>0) sweep-=2*M_PI; } else { if (sweep<0) sweep+=2*M_PI; }
-            double arc_len = std::abs(sweep)*r;
+            double ci = 0.0, cj = 0.0; if (a.has[PI]) ci = a.v[PI]; if (a.has[PJ]) cj = a.v[PJ];
+            double cx = pos[AX] + ci, cy = pos[AY] + cj;
+            double r = std::hypot(pos[AX]-cx, pos[AY]-cy);
+            double a0 = std::atan2(pos[AY]-cy, pos[AX]-cx), a1 = std::atan2(ny-cy, nx-cx);
+            double sweep = a1 - a0;
+            if (g2) { if (sweep > 0) sweep -= 2*M_PI; } else { if (sweep < 0) sweep += 2*M_PI; }
+            double arc_len = std::abs(sweep) * r;
             // treat arc as a single planar move of arc length in X (direction chord); good enough for estimate
-            delta[AX]=(float)arc_len; delta[AY]=0.f; delta[AZ]=0.f; delta[AE]=(float)de;
+            delta[AX] = (float)arc_len; delta[AY] = 0.f; delta[AZ] = 0.f; delta[AE] = (float)de;
         } else {
-            delta[AX]=(float)(nx-pos[AX]); delta[AY]=(float)(ny-pos[AY]); delta[AZ]=(float)(nz-pos[AZ]); delta[AE]=(float)de;
+            delta[AX] = (float)(nx-pos[AX]); delta[AY] = (float)(ny-pos[AY]); delta[AZ] = (float)(nz-pos[AZ]); delta[AE] = (float)de;
         }
 
         // move type (GCodeProcessor.cpp move_type lambda L4876-4891)
-        int mt;
-        if (delta[AE] < 0.f) mt = (delta[AX]!=0.f||delta[AY]!=0.f||delta[AZ]!=0.f) ? 2 : 3;      // travel / retract
+        const bool xyz_moved = delta[AX] != 0.f || delta[AY] != 0.f || delta[AZ] != 0.f;
+        int mt = 0;                                                     // noop
+        if (delta[AE] < 0.f) { mt = 3; if (xyz_moved) mt = 2; }         // retract / travel
         else if (delta[AE] > 0.f) {
-            if (delta[AX]==0.f && delta[AY]==0.f) mt = (delta[AZ]==0.f) ? 4 : 2;                 // unretract / travel
-            else mt = 1;                                                                          // extrude
-        } else mt = (delta[AX]!=0.f||delta[AY]!=0.f||delta[AZ]!=0.f) ? 2 : 0;                     // travel / noop
+            mt = 1;                                                     // extrude
+            if (delta[AX] == 0.f && delta[AY] == 0.f) { mt = 2; if (delta[AZ] == 0.f) mt = 4; }   // travel / unretract
+        } else if (xyz_moved) mt = 2;                                   // travel
 
         // filament = E of real extrusion moves only (exclude unretract re-prime), to match kernel gw.filament
         if (mt == 1 && delta[AE] > 0.f) R.filament_mm += delta[AE];
 
         if (mt != 0) {
-            int role = (mt==1) ? cur_role : -1;
-            add_move(blocks, curr, prev, delta, (float)m_feedrate, lim, mt, role, std::max(0,layer_id));
+            int role = -1; if (mt == 1) role = cur_role;
+            add_move(blocks, curr, prev, delta, (float)m_feedrate, lim, mt, role, std::max(0, layer_id));
             ++R.moves;
         }
-        pos[AX]=nx; pos[AY]=ny; pos[AZ]=nz;
-        pos[AE] = e_relative ? pos[AE] : (he ? ve : pos[AE]);
+        pos[AX] = nx; pos[AY] = ny; pos[AZ] = nz;
+        if (!e_relative && a.has[PE]) pos[AE] = a.v[PE];
     }
 
-    // planner over all blocks (full look-ahead; firmware uses a 64-block window — documented simplification)
-    for (int k=(int)blocks.size()-1; k>0; --k) planner_reverse_pass_kernel(blocks[k-1], blocks[k]);
-    for (size_t k=0; k+1<blocks.size(); ++k) planner_forward_pass_kernel(blocks[k], blocks[k+1]);
-    recalculate_trapezoids(blocks);
-
-    for (const TimeBlock& b : blocks) {
-        double t = b.time();
-        if (!(t==t) || t<0) t=0;   // guard NaN
-        R.total_s += t;
-        if (b.layer_id >=0 && b.layer_id < (int)R.layer_s.size()) R.layer_s[b.layer_id] += t;
-        if (b.move_type==1) R.extrude_s += t; else if (b.move_type==2) R.travel_s += t;
-        if (b.role >= 0) R.role_s[b.role] += t;
+    void feed(const char* data, size_t len) {
+        const char* p = data; const char* end = data + len;
+        if (!carry.empty()) {
+            const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
+            if (!nl) { carry.append(p, (size_t)(end - p)); return; }
+            carry.append(p, (size_t)(nl - p));
+            line(carry.data(), carry.size()); carry.clear();
+            p = nl + 1;
+        }
+        while (p < end) {
+            const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
+            if (!nl) { carry.assign(p, (size_t)(end - p)); break; }
+            line(p, (size_t)(nl - p));
+            p = nl + 1;
+        }
     }
-    if (!R.layer_s.empty()) R.first_layer_s = R.layer_s.front();
-    return R;
+
+    Result finish() {
+        if (!carry.empty()) { line(carry.data(), carry.size()); carry.clear(); }
+        // planner over all blocks (full look-ahead; firmware uses a 64-block window — documented simplification)
+        for (int k = (int)blocks.size()-1; k > 0; --k) planner_reverse_pass_kernel(blocks[k-1], blocks[k]);
+        for (size_t k = 0; k+1 < blocks.size(); ++k) planner_forward_pass_kernel(blocks[k], blocks[k+1]);
+        recalculate_trapezoids(blocks);
+
+        for (const TimeBlock& b : blocks) {
+            double t = b.time();
+            if (!(t==t) || t<0) t=0;   // guard NaN
+            R.total_s += t;
+            if (b.layer_id >= 0 && b.layer_id < (int)R.layer_s.size()) R.layer_s[b.layer_id] += t;
+            if (b.move_type == 1) R.extrude_s += t; else if (b.move_type == 2) R.travel_s += t;
+            if (b.role >= 0) R.role_s[b.role] += t;
+        }
+        if (!R.layer_s.empty()) R.first_layer_s = R.layer_s.front();
+        return std::move(R);
+    }
+};
+
+Estimator::Estimator(const Limits& lim) : impl_(new Impl(lim)) {}
+Estimator::~Estimator() { delete impl_; }
+void Estimator::feed(const char* data, size_t len) { impl_->feed(data, len); }
+Result Estimator::end() { return impl_->finish(); }
+
+Result estimate(const std::string& gcode, const Limits& lim) {
+    Estimator est(lim);
+    est.feed(gcode.data(), gcode.size());
+    return est.end();
 }
 
 } // namespace gcode_time

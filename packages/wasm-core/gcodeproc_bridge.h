@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include "gcode_time.h"   // the transcribed estimator the streamed estimate hands over to past its move cap
 
 namespace gcodeproc_bridge {
 
@@ -30,6 +31,7 @@ struct Result {
     double filament_mm = 0.0;
     long   moves = 0;
     bool   ok = false;
+    bool   transcribed = false;         // the result came from the gcode_time hand-over (see estimate_begin), not from GCodeProcessor
 };
 
 // Run the real GCodeProcessor (apply_config -> process_buffer -> finalize) on the g-code and extract
@@ -40,7 +42,11 @@ Result estimate(const std::string& gcode, const Limits& lim);
 //  streaming parser — chunks end on '\n' boundaries, so many calls behave exactly like one big feed), which avoids
 //  keeping the whole g-code string resident. begin (apply_config once) -> feed (process_buffer + filament accumulation per chunk)
 //  -> end (finalize + extract Result). Only one stream at a time (file-static state).
-void   estimate_begin(const Limits& lim);
+//  `fallback` is the transcribed engine's limits, or null. With it, the fed text is kept until the move cap (MOVES_CAP) is
+//  reached; past the cap the kept text and every later chunk go to a gcode_time::Estimator instead, so the estimate still
+//  overlaps emission and end() returns a Result with `transcribed` set. Without it (streaming, where the text is released per
+//  layer on purpose) the cap ends the estimate as before and end() reports !ok.
+void   estimate_begin(const Limits& lim, const gcode_time::Limits* fallback);
 void   estimate_feed(const std::string& chunk);
 Result estimate_end();
 

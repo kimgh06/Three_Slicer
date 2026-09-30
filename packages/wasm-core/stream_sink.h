@@ -26,9 +26,9 @@ void strip_pe_tags(std::string& g);
 struct TimeFeeder {
   std::thread th; std::mutex mu; std::condition_variable cv;
   std::deque<std::string> q; bool done = false;
-  void begin(const gcodeproc_bridge::Limits& gl) {
-    th = std::thread([this, gl]{
-      gcodeproc_bridge::estimate_begin(gl);
+  void begin(const gcodeproc_bridge::Limits& gl, const gcode_time::Limits* fallback) {
+    th = std::thread([this, gl, fallback]{
+      gcodeproc_bridge::estimate_begin(gl, fallback);
       for (;;) {
         std::string c;
         { std::unique_lock<std::mutex> lk(mu);
