@@ -261,8 +261,13 @@ export function deriveKernelParams(settings, opts) {
   //  the default style silently sliced grid. An explicit non-tree style keeps winning over the type.
   const styleRaw = str('support_style')
   const typeRaw = str('support_type')
-  const support_style =
-    /tree|organic/i.test(styleRaw) || (/tree/i.test(typeRaw) && styleRaw === 'default') ? 'tree' : 'grid'
+  let support_style = 'grid'
+  if (/tree|organic/i.test(styleRaw) || (/tree/i.test(typeRaw) && styleRaw === 'default')) support_style = 'tree'
+  // Which tree. Upstream's slim / strong / hybrid run TreeSupport and organic runs TreeSupport3D
+  //  (SupportParameters.hpp:190-204), and a tree type left on 'default' resolves to organic there. The kernel defaults to
+  //  organic too, so only the three others are sent: an organic slice keeps exactly the parameters it had. Before this the
+  //  style never reached the kernel and every tree style sliced organic.
+  const tree_style = { tree_slim: 'slim', tree_strong: 'strong', tree_hybrid: 'hybrid' }[styleRaw]
 
   // Bed: bounding box of the first rectangle in printable_area
   const pa = settingRaw(settings, 'printable_area')
@@ -369,6 +374,10 @@ export function deriveKernelParams(settings, opts) {
     }
   }
 
+  // Sent only for the three non-organic styles (see tree_style above), so an empty map still derives the same keys.
+  const treeStyle = {}
+  if (tree_style) treeStyle.tree_style = tree_style
+
   const perExtruder = {}
   for (const [param, key, scalar] of [
     ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature')],
@@ -391,6 +400,7 @@ export function deriveKernelParams(settings, opts) {
     ...widths,
     ...machine,
     ...passthrough,     // present only for keys the settings map actually holds (see PASSTHROUGH_* above)
+    ...treeStyle,
     layer_height: num('layer_height'),
     first_layer_height: num('initial_layer_print_height'),
     line_width,
