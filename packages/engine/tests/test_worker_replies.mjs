@@ -78,5 +78,13 @@ assert.ok(workerSource.includes("from 'three-slicer-viewer/paint'"), 'the worker
 assert.ok(!/const FILL_TOOLS\s*=/.test(workerSource), 'the worker defines no FILL_TOOLS of its own')
 console.log('  ok fill tools read from three-slicer-viewer/paint')
 
+// `gpu: true` without a WebGPU device (plain node): the slice is the kernel's own and says why
+const gpuAsked = await send({ stl: cubeSTL, params: { layer_height: 0.2 }, gpu: true, requestId: 1001 })
+const gpuDone = gpuAsked.find(answer => answer.type === 'done')
+assert.ok(gpuDone, `gpu slice: answers 'done' (got ${gpuAsked.map(answer => answer.type)})`)
+assert.equal(gpuDone.result.stats.contour_engine, 'cpu')
+assert.equal(gpuDone.result.stats.contour_engine_reason, 'no WebGPU device')
+console.log('  ok a slice that asks for the GPU without a device is the CPU slice, with the reason')
+
 console.log('\nworker_replies: ok')
 process.exit(0)
