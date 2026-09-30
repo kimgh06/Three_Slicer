@@ -228,14 +228,16 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   TimeFeeder feeder;
   const bool overlapBatch = !streaming && !realPE && p.time_engine != "transcribed";
   size_t fedOff = 0;                            // batch overlap: how much of gw.s has already been fed
-  if (streamTime || overlapBatch) feeder.begin(gl);
+  const gcode_time::Limits* fallback = nullptr;   // batch keeps gw.s resident, so the hand-over's kept text costs no new ceiling; streaming stays stream-notime
+  if (overlapBatch) fallback = &glim;
+  if (streamTime || overlapBatch) feeder.begin(gl, fallback);
   auto feed_batch_tail = [&]{                   // feed everything after the last flush (including the footer)
     std::string c = gw.s.substr(fedOff); fedOff = gw.s.size();
     if (gw.emit_pe_tags && p.pe_strip_tags) strip_pe_tags(c);   // batch feeds the estimator the same tag-stripped input as streaming
     feeder.feed(std::move(c));
   };
 #else
-  if (streamTime) gcodeproc_bridge::estimate_begin(gl);
+  if (streamTime) gcodeproc_bridge::estimate_begin(gl, nullptr);
 #endif
   // Layer emission: batch accumulates into layersArr; streaming emits a chunk (everything in gw.s since the last flush) plus the toolpaths, then releases gw.s.
   //  The preamble goes into the first flush chunk and the footer into the last -> concatenating the chunks is byte-identical to the batch gw.s.
@@ -325,6 +327,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     std::mutex emu; std::condition_variable ecv;
     int wNext = 0, dispatched = 0;
     GW base = gw; base.s.clear(); base.island.clear(); base.dry = false;   // the template GW for writers
+    // A writer's totals are its layer's alone: flushJob adds them to gw's. Copied as they stood, every layer re-added
+    //  what the raft had already counted (measured on a 20mm cube with 2 raft layers: 9018.83mm of filament, st 1084.41).
+    base.filament = 0; base.segments = 0; base.wall_crossings = 0;
     unsigned wHW = std::thread::hardware_concurrency(); if (!wHW) wHW = 4;
     unsigned WN = std::max(1u, wHW / 2);
     auto writerFn = [&]{
@@ -368,10 +373,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         gw.s += J.gcode;
         if (overlapBatch) feed_batch_tail();
       } else {
-        if (streamTime) feeder.feed(J.gcode);
+        // Text written outside the writers — the preamble, and anything else still in gw.s — goes ahead of the layer,
+        //  as flush_layer sends it and as the batch branch above appends it. Sending J.gcode alone held the preamble
+        //  back until the footer flush, so a streamed mt slice put M83 and the temperatures after the last layer.
+        std::string chunk; chunk.swap(gw.s);
+        chunk += J.gcode;
+        if (streamTime) feeder.feed(chunk);
         em::val paths = economy ? em::val::array() : to_f32(J.tp);
         em::val wid   = economy ? em::val::array() : to_f32(J.widths);
-        sink(zk, k, J.gcode, paths, wid);
+        sink(zk, k, chunk, paths, wid);
       }
       J.gcode = std::string(); J.tp = {}; J.widths = {}; J.pre = EmitPre{};
       if (!keepStages) { int old = k - std::max(p.bottom_shell_layers, 1) - 1 - FW;   // release only outside the writer/dry reference window
@@ -515,8 +525,10 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 #else
       gcodeproc_bridge::Result fr = gcodeproc_bridge::estimate(gw.s, gl);
 #endif
-      if (fr.ok) { absorb(fr); engine_used = "full"; }
-      else { te = gcode_time::estimate(gw.s, glim); engine_used = "full-fallback-transcribed"; }
+      if (fr.ok) {
+        absorb(fr); engine_used = "full";
+        if (fr.transcribed) engine_used = "full-fallback-transcribed";   // handed over inside the feeder, past the move cap
+      } else { te = gcode_time::estimate(gw.s, glim); engine_used = "full-fallback-transcribed"; }
     }
   }
 
