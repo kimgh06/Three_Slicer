@@ -39,6 +39,7 @@ custom_gcode_bridge::Facts single_material_facts(const Params& p, const std::vec
                                                  double offX, double offY) {
   custom_gcode_bridge::Facts facts;
   facts.used_filaments = {0};
+  facts.filament_order = {0};
   facts.first_layer_filaments = {0};
   if (L.empty())
     return facts;

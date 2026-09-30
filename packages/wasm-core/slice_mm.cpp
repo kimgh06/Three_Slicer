@@ -615,6 +615,9 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
         if (i == 0 && role != 11 &&
             std::find(customFacts.first_layer_filaments.begin(), customFacts.first_layer_filaments.end(), tool) == customFacts.first_layer_filaments.end())
           customFacts.first_layer_filaments.push_back(tool);
+        if (role != 11 &&
+            std::find(customFacts.filament_order.begin(), customFacts.filament_order.end(), tool) == customFacts.filament_order.end())
+          customFacts.filament_order.push_back(tool);
       }
       customFacts.max_print_z = zE;
     }
@@ -631,6 +634,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     for (int tool=0; tool<(int)filamentByTool.size(); ++tool)
       if (filamentByTool[tool] > 0) customFacts.used_filaments.push_back(tool);
     if (customFacts.used_filaments.empty()) customFacts.used_filaments.push_back(0);
+    if (customFacts.filament_order.empty()) customFacts.filament_order.push_back(0);
     std::sort(customFacts.first_layer_filaments.begin(), customFacts.first_layer_filaments.end());
     if (customFacts.first_layer_filaments.empty()) customFacts.first_layer_filaments.push_back(0);
     customFacts.initial_extruder = 0;                 // this path always starts on T0 ("T0 ; start extruder")

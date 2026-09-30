@@ -18,6 +18,8 @@ struct Facts {
   int initial_extruder = 0;                 // filament (0-based) of the first extrusion
   int initial_no_support_extruder = 0;      // first filament that prints an object rather than support
   std::vector<int> used_filaments;          // every filament that extrudes, ascending
+  std::vector<int> filament_order;          // every filament that extrudes, in the order it first extrudes (the walk
+                                            //  ToolOrdering::cal_non_support_filaments makes over the layer tools)
   std::vector<int> first_layer_filaments;   // the filaments that extrude on the first layer
   int total_layer_count = 0;
   double max_print_z = 0.0;                 // top of the print, mm

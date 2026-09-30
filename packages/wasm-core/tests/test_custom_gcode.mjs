@@ -147,6 +147,23 @@ ok(/; changes \d+ used true/.test(mm.gcode), 'is_extruder_used marks the second 
 ok(mm.gcode.indexOf('; machine_start_gcode') < mm.gcode.indexOf('T0 ; start extruder'), 'the start block precedes the first tool select')
 ok(mm.gcode.includes('; end A') && mm.gcode.includes('; end B'), 'every filament_end_gcode is written')
 
+console.log('[first filaments] per physical extruder, as cal_non_support_filaments + physical_extruder_map set them')
+// A two-nozzle printer whose logical extruder 0 is physical nozzle 1 (Bambu Lab H2D/X2D profiles). Their start
+//  G-code indexes first_filaments by physical nozzle; the variable was missing and every slice failed.
+const firstTemplate = '; first {first_filaments[0]} {first_filaments[1]} non-support {first_non_support_filaments[0]} {first_non_support_filaments[1]} tools {first_tools[1]}'
+const twoNozzles = { nozzle_diameter: ['0.4', '0.4'], physical_extruder_map: ['1', '0'], machine_start_gcode: firstTemplate }
+const onOneNozzle = slice(withConfig({ ...twoNozzles, filament_map: ['1'] }))
+ok(!onOneNozzle.error, `a two-nozzle template slices (${String(onOneNozzle.error).split('\n')[0]})`)
+ok((onOneNozzle.gcode ?? '').includes('; first -1 0 non-support -1 0 tools 0'),
+   `filament 0 on logical extruder 0 lands at physical index 1 (${/; first .*/.exec(onOneNozzle.gcode ?? '')?.[0]})`)
+const onTwoNozzles = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_map: ['1', '2'] }, { extruder_count: 2, mm_group_split: A.length }), twoBoxes)
+ok((onTwoNozzles.gcode ?? '').includes('; first 1 0 non-support 1 0 tools 0'),
+   `one filament per nozzle, swapped by the physical map (${/; first .*/.exec(onTwoNozzles.gcode ?? '')?.[0]})`)
+const supportFirst = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_map: ['1', '1'], filament_is_support: ['1', '0'] },
+                                      { extruder_count: 2, mm_group_split: A.length }), twoBoxes)
+ok((supportFirst.gcode ?? '').includes('; first -1 0 non-support -1 1 tools 0'),
+   `a support filament is skipped for first_non_support_filaments only (${/; first .*/.exec(supportFirst.gcode ?? '')?.[0]})`)
+
 console.log('[st == mt] the same expanded slice through the pthread kernel')
 const slicerMt = await createSlicerMt()
 const mtResult = slicerMt.slice(cube, JSON.stringify(withConfig({})), () => {})
