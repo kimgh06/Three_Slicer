@@ -136,12 +136,14 @@ namespace impl {
         }
     };
 
-    // Stage 19 (promoting to exact predicates): wasm has no directed rounding, so the interval filter (FK=Interval_nt_advanced)
-    //  produces inaccurate bounds and the filter can return a wrong definite answer. So the filter stage is replaced with **exact predicates**
-    //  instead of intervals (EK=Simple_cartesian<MP_Float>, the Boost.MP family) — putting EK/C2E in Filtered_predicate's filter predicate/converter
-    //  skips the interval stage and always evaluates exactly. The planarity check runs once per layer, so the cost is acceptable (measured).
-    using ParabolicTangentToSegmentOrientationPredicateFiltered = CGAL::Filtered_predicate<ParabolicTangentToSegmentOrientationPredicate<EK>, ParabolicTangentToSegmentOrientationPredicate<EK>, C2E, C2E>;
-    using ParabolicTangentToParabolicTangentOrientationPredicateFiltered = CGAL::Filtered_predicate<ParabolicTangentToParabolicTangentOrientationPredicate<EK>, ParabolicTangentToParabolicTangentOrientationPredicate<EK>, C2E, C2E>;
+    // Upstream's typedefs: an interval filter (FK) decides the common case in double and only an uncertain sign falls through to the
+    //  exact predicate (EK). wasm has no directed rounding, so a plain Interval_nt would not be rigorous; the build therefore defines
+    //  CGAL_ALWAYS_ROUND_TO_NEAREST (build.sh MAIN_CFLAGS), under which CGAL's IA_up widens every bound to its nextafter successor instead
+    //  of relying on the FPU mode. Stage 19 had replaced the filter with the exact kernel outright (EK in both slots), which evaluated every
+    //  predicate in MP_Float: measured 11.8s of a 48.8s st slice on a 774k-facet model, 40% of Arachne. With the filter restored the check
+    //  costs 2.6s and the G-code is byte-identical (the exact fallback still decides every uncertain case).
+    using ParabolicTangentToSegmentOrientationPredicateFiltered = CGAL::Filtered_predicate<ParabolicTangentToSegmentOrientationPredicate<EK>, ParabolicTangentToSegmentOrientationPredicate<FK>, C2E, C2F>;
+    using ParabolicTangentToParabolicTangentOrientationPredicateFiltered = CGAL::Filtered_predicate<ParabolicTangentToParabolicTangentOrientationPredicate<EK>, ParabolicTangentToParabolicTangentOrientationPredicate<FK>, C2E, C2F>;
 } // namespace impl
 
 using ParabolicTangentToSegmentOrientation = impl::ParabolicTangentToSegmentOrientationPredicateFiltered;

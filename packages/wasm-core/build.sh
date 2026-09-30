@@ -219,7 +219,10 @@ MAIN_SRC="slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cp
 #  sliver triangles, such as OCCT tessellations (STEP import), hit Voronoi.cpp:334 (*inside* the recovery routine),
 #  VoronoiUtils.cpp:322 and FillBase.cpp:1407 (zero-length closed edge). Upstream has recovery paths for all of them, so they
 #  slice fine in release. The tree support group (TS_CFLAGS) already had -DNDEBUG.
-MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $ARACHNE_INC"
+# -DCGAL_ALWAYS_ROUND_TO_NEAREST: wasm cannot switch the FPU rounding mode, so CGAL's interval filter (VoronoiUtilsCgal.cpp, the Arachne
+#  Voronoi planarity check) widens each bound with nextafter instead. Only the main group compiles CGAL interval code (llvm-nm: no IA_up /
+#  Interval_nt symbol in ts_group.o or sla_group.o), so the define is scoped here. Measured st, 774k facets, arachne: 48.8s -> 34.7s, G-code byte-identical.
+MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 -DCGAL_ALWAYS_ROUND_TO_NEAREST $ARACHNE_INC"
 echo "compiling main sources (st, parallel x$NCPU)"
 pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
