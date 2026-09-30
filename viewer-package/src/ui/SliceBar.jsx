@@ -139,9 +139,8 @@ export default function SliceBar({
 // The GPU select's option labels and tooltips, one per GPU_ACCELERATION_MODES entry. The stats line after a slice says
 //  which engine that slice used.
 const GPU_LABEL = { auto: 'Auto', on: 'On', off: 'Off' }
-const GPU_FALLBACK = 'A GPU call that fails falls back to the CPU for that call.'
 const GPU_TITLE = {
-  auto: `Polygon operations use the GPU when WebGPU gives a device, the CPU otherwise. ${GPU_FALLBACK}`,
-  on: `Polygon operations use the GPU; without a WebGPU device the slice says so and uses the CPU. ${GPU_FALLBACK}`,
-  off: 'Polygon operations stay on the CPU.',
+  auto: 'The layer contours are computed on the GPU when the single-threaded kernel is loaded and WebGPU gives a device. The G-code then differs slightly from a CPU slice.',
+  on: 'The layer contours are computed on the GPU whenever WebGPU gives a device; without one the slice says so and uses the CPU. The G-code differs slightly from a CPU slice.',
+  off: 'Everything is computed on the CPU.',
 }
