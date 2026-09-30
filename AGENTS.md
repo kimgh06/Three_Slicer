@@ -439,6 +439,21 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   them by address and picks with `min_element`, so equal distances were broken by heap layout and the st kernel gave
   different G-code for one slim input from different script paths. Measured on a 1.13M-facet hybrid plate (mt):
   91.1 -> 20.7 s, G-code unchanged. `test_tree_support_mt.mjs` pins st == mt over three mt runs for all three styles.
+- **PASS1's contour union can run on the GPU, between two calls of `slice()`.** The kernel is synchronous and WebGPU
+  is not, so `contour_phase.h` splits the slice: CAPTURE stops after chaining every layer's raw loops, the worker
+  runs `engine/src/contour_gpu.js` on them, INJECT reads the contours back (`engine/src/contour_slice.js` drives the
+  three). OFF is the kernel as it was and the golden output is unchanged. Four things it depends on. **(1)** Segments
+  coinciding in opposite directions are cancelled on the CPU first (`cancel_coincident`): the pipeline cannot order
+  the crossings of two segments on one line (measured on a 3M-facet scan: 164,337 such pairs; 0 layers fall back
+  with the cancel, 5 to 100 without). **(2)** Two crossings at one place on a segment are ordered in the sort shader
+  by the perturbation the crossing test uses; without it the loops do not close. **(3)** A layer whose loops stay
+  open gets the kernel's own union (`assemble`), and a device that refuses the input leaves the kernel's own slice:
+  the slice never depends on the GPU. **(4)** The GPU's contours have the CPU union's area and other vertices, so a
+  GPU slice is not byte-identical to the CPU slice; `test_contour_gpu.mjs` compares by filament within a tolerance
+  and pins that the same input gives the same G-code twice. `gpu_acceleration` is a worker option (`gpu: true`),
+  never a kernel parameter, and `auto` asks for the GPU on the st kernel only: on mt the union is already spread
+  over the threads and the measured difference is inside the run-to-run spread. The shader text
+  (`contour_gpu_shaders.js`) is the measured experiment's and is edited only with a measurement beside it.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
   `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and

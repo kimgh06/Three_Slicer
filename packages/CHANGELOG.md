@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The layer contours can be computed on the GPU. The viewer's slice bar has a GPU select (`gpu_acceleration`:
+  `auto`, `on`, `off`), and the worker's slice message takes `gpu: true`. `auto` uses it on the single-threaded
+  kernel only, where a 3M-facet slice went from 9.8 to 7.6 s; the threaded kernel gains nothing measurable. A GPU
+  slice's G-code differs from the CPU slice's in its vertices (same contour area), and the result's
+  `stats.contour_engine` says which engine ran.
+- `support_style` `tree_slim`, `tree_strong` and `tree_hybrid` reach the kernel as `tree_style`. They used to slice
+  as organic.
+
+### Changed
+
+- Tree support (slim, strong, hybrid) runs four of its loops on every thread of the threaded kernel: a 1.13M-facet
+  hybrid plate went from 91 to 21 s, with the same G-code as the single-threaded kernel.
+
+### Fixed
+
+- Tree slim, strong and hybrid crashed the kernel on any model.
+- The same tree slim or strong input could slice to different G-code from run to run (a tie in the minimum spanning
+  tree was broken by memory address).
+- A Bambu Lab X2D or H2D project failed every slice with `CUSTOM_GCODE_ERROR`: the start G-code reads
+  `first_filaments` and `first_non_support_filaments` per physical nozzle, which were missing or not mapped.
+
 ## 0.3.2 — 2026-09-21
 
 ### Added

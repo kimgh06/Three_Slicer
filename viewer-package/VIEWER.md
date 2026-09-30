@@ -396,6 +396,29 @@ for 143MB) against a 4GB pool budget, which gives 2 for that model and does not 
 manual count is capped the same way. What the browser has NOT measured yet is
 the arachne + tree-support preset, where the harness gains were largest.
 
+### The contour union on the GPU
+
+The slice bar's **GPU** select (`gpu_acceleration` in the settings map: `auto`, `on`, `off`; absent is `auto`; a viewer
+knob like `slice_workers`, not a kernel parameter) lets the slicer worker compute every layer's contour union with
+WebGPU instead of Clipper. `auto` asks for it only when the single-threaded kernel loaded, `on` on either kernel,
+`off` never. It applies to the selected plate's filament slice; pool workers, multi-material and resin slices compute
+their contours themselves.
+
+Measured in node (Dawn, Metal, 15 cores) with the kernel consuming the GPU's contours:
+
+| model | kernel | CPU | GPU |
+|---|---|---|---|
+| 3M-facet scan, tree slim support, 420 layers | st | 9.6-9.8 s | 7.6-7.7 s |
+| 1.13M-facet plate, tree hybrid support, 849 layers | st | 105 s | 102-104 s |
+| either | mt | | within run-to-run spread of the CPU slice |
+
+The union is about 2.5 s of the single-threaded slice and 50-100 ms on the GPU; on the threaded kernel the same union is
+already spread over the threads, which is why `auto` leaves it alone. What it costs: the GPU's contours have the CPU
+union's area (within 2e-10 relative) and other vertices, so the G-code is not the CPU slice's byte for byte (filament
+within 0.3 % in those two models). The slice never depends on the GPU: without a device, or when the GPU refuses an
+input, the kernel slices by itself, a layer whose loops the GPU leaves open gets the kernel's own union, and the stats
+card says which happened (`Contours on the GPU`, with the count of layers that went back to the CPU).
+
 ## Theming
 
 Both shadow roots (the viewer and `<SettingsPanel/>`) paint their chrome from one palette, `UI_TOKENS` in
