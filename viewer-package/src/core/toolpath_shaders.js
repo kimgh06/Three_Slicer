@@ -81,9 +81,8 @@ in vec3 vNormal;
 out vec4 fragColor;
 
 void main() {
-  // Two-sided: the layer slider cuts the plate open, so back faces are seen and must not go black.
+  // Front faces only (the material culls the rest), so the normal never needs flipping.
   vec3 n = normalize(vNormal);
-  if (!gl_FrontFacing) n = -n;
   // A single head-on light plus a generous ambient. The point is to read the bead's ROUNDING — which
   //  face is up, which is the side — not to look lit.
   float lambert = max(dot(n, normalize(vec3(0.35, 0.35, 1.0))), 0.0);

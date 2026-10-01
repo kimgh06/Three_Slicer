@@ -8,7 +8,7 @@ import { THEME } from '../core/theme.js'
 
 // The bead template: a four-corner ring at each end of the segment, so 8 vertices.
 //  tpl = [which end (0 = start, 1 = end), which ring corner (0 = +side, 1 = +up, 2 = -side, 3 = -up)]
-const TEMPLATE_TPL = new Float32Array([
+export const TEMPLATE_TPL = new Float32Array([
   0, 0,  0, 1,  0, 2,  0, 3,     // start ring
   1, 0,  1, 1,  1, 2,  1, 3,     // end ring
 ])
@@ -70,7 +70,10 @@ export function makeToolpath(THREE, data) {
     vertexShader: SEG_VS,
     fragmentShader: SEG_FS,
     glslVersion: THREE.GLSL3,
-    side: THREE.DoubleSide,
+    // Every face of the template winds outward (test_toolpath_contract.mjs), so a back face is only ever the
+    //  inside of a bead seen through its open end. Drawing those doubled the GPU time of a frame: measured on a
+    //  14.6M-segment scene (6 plates, M5 Pro, DPR 2), 53.6 -> 29.4 ms with back faces culled.
+    side: THREE.FrontSide,
     uniforms: { uLayerLo: { value: 0 }, uLayerHi: { value: Math.max(0, layerCount - 1) } },
   })
 
