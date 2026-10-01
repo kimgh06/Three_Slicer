@@ -4,6 +4,7 @@
 #include "config_bridge.h"
 #include "contour_phase.h"
 #include "emit.h"
+#include "fill_bridge.h"
 #include "selector_bridge.h"
 #include "slice_api.h"
 #include "stl_parse.h"
@@ -250,6 +251,7 @@ EMSCRIPTEN_BINDINGS(slicer) {
   em::function("config_option_count", &config_option_count);
   em::function("config_option_default", &config_option_default);
   em::function("cgal_planar_check_count", &arachne_bridge::cgal_planar_check_count); // stage 14: number of real CGAL planarity check calls
+  em::function("chain_reorder_kept_length", &fill_bridge::chain_reorder_kept_length); // test: what path reordering keeps (ShortestPath.cpp)
   em::function("selector_prepare", &selector_prepare);       // stage 20: register the mesh on load
   em::function("selector_reprepare", &selector_reprepare);   // re-register after a transform, keeping the paint
   em::function("selector_paint", &selector_paint);           //  paint with the sphere cursor on every drag

@@ -16,4 +16,9 @@ using Poly = std::vector<std::pair<double,double>>;   // polygon/polyline as (x,
 std::vector<Poly> generate_fill(const std::vector<Poly>& region_mm, const std::string& pattern,
                                 double density, double spacing_mm, double angle_deg,
                                 double z_mm, int layer_id);
+
+// The length (mm) of path chain_and_reorder_extrusion_entities (ShortestPath.cpp) keeps out of a fixed layer: a 10 mm
+//  path in a collection whose first child is an empty collection, and a 5 mm path in a collection whose last child is a
+//  path without points. 15 when both are kept; upstream's check dropped both collections whole. test.mjs pins it.
+double chain_reorder_kept_length();
 } // namespace fill_bridge

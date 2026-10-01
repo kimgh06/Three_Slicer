@@ -5,6 +5,8 @@
 #include "arachne_port/libslic3r/Surface.hpp"
 #include "arachne_port/libslic3r/ExPolygon.hpp"
 #include "arachne_port/libslic3r/Geometry.hpp"
+#include "arachne_port/libslic3r/ExtrusionEntityCollection.hpp"
+#include "arachne_port/libslic3r/ShortestPath.hpp"
 #include <memory>
 #include <cmath>
 
@@ -69,5 +71,35 @@ std::vector<Poly> generate_fill(const std::vector<Poly>& region_mm, const std::s
         if (poly.size() >= 2) out.push_back(std::move(poly));
     }
     return out;
+}
+
+static double path_length_mm(const ExtrusionEntity *entity) {
+    double length = 0;
+    if (auto collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
+        for (const ExtrusionEntity *child : collection->entities) length += path_length_mm(child);
+    if (auto path = dynamic_cast<const ExtrusionPath *>(entity))
+        length += path->polyline.length() * SCALING_FACTOR;
+    return length;
+}
+
+double chain_reorder_kept_length() {
+    auto path_of_length = [](double length_mm) {
+        ExtrusionPath path(erSupportMaterial, 0.1, 0.42f, 0.2f);
+        Polyline line;
+        line.points = { Point(0, 0), Point(sc(length_mm), 0) };
+        path.polyline = Polyline3(line);
+        return path;
+    };
+    ExtrusionEntityCollection layer;
+    auto *empty_first = new ExtrusionEntityCollection();
+    empty_first->entities.push_back(new ExtrusionEntityCollection());
+    empty_first->append(path_of_length(10));
+    auto *empty_last = new ExtrusionEntityCollection();
+    empty_last->append(path_of_length(5));
+    empty_last->append(ExtrusionPath(erSupportMaterial));
+    layer.entities.push_back(empty_first);
+    layer.entities.push_back(empty_last);
+    chain_and_reorder_extrusion_entities(layer.entities);
+    return path_length_mm(&layer);
 }
 } // namespace fill_bridge

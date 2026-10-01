@@ -1613,5 +1613,14 @@ for (const [name, stl, caseParams] of tagCases) {
   ok(off.length === 0, `${name}: text read back gives the stream's length in every role (${roles.map(role => `${role}:${(stream[role] ?? 0).toFixed(0)}/${(text[role] ?? 0).toFixed(0)}`).join(' ')})`)
 }
 
+// Reordering a layer's paths must not drop paths. Upstream's check removed a whole collection whenever its first or last
+//  child had no endpoints, so every path in it was lost: on a 3M-facet tree-slim model 64.6 mm of support toolpaths over
+//  three layers, one of them a 37 mm outline of a whole support island (ShortestPath.cpp remove_entities_without_endpoints).
+console.log('\n[path reordering]')
+{
+  const kept = Module.chain_reorder_kept_length()
+  ok(Math.abs(kept - 15) < 1e-6, `reordering keeps the paths of collections with an empty first or last child (${kept.toFixed(3)} of 15 mm)`)
+}
+
 console.log(failed === 0 ? '\nALL NODE TESTS PASSED' : `\n${failed} TEST(S) FAILED`)
 process.exit(failed === 0 ? 0 : 1)
