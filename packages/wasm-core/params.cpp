@@ -228,6 +228,7 @@ Params parse_params(const std::string& j) {
   p.mm_group_split                = (int)jget(j,"mm_group_split",p.mm_group_split);
   p.mm_group_splits               = jarr(j,"mm_group_splits");
   p.mm_group_tools                = jarr(j,"mm_group_tools");
+  p.single_tool                   = std::max(0, (int)jget(j,"single_tool",p.single_tool));
   p.outer_wall_filament_id        = (int)jget(j,"outer_wall_filament_id",p.outer_wall_filament_id);
   p.inner_wall_filament_id        = (int)jget(j,"inner_wall_filament_id",p.inner_wall_filament_id);
   p.sparse_infill_filament_id     = (int)jget(j,"sparse_infill_filament_id",p.sparse_infill_filament_id);

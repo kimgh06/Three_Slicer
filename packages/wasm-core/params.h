@@ -129,6 +129,10 @@ struct Params {
   //  mm_group_tools names the tool each group prints with — extruder numbers can be sparse (objects on T1 and T3
   //  only), and the per-extruder filament arrays are indexed by the real tool, not by group position.
   std::vector<double> mm_group_splits, mm_group_tools;
+  // The filament (0-based) a single-material slice prints with: every object of the plate assigned to filament 4
+  //  is tool 3. Its per-extruder values replace the scalars and the custom G-code starts on it. 0, the default,
+  //  is the first filament, which is what the single-material path always printed with.
+  int    single_tool=0;
   // Per-feature filament, upstream's *_filament_id family (PrintConfig.cpp). 1-based filament index, 0 = "Default"
   //  meaning the tool the region already prints with. Only the features slice_multimaterial actually emits are
   //  honoured: it prints walls and sparse infill and has no shell detection, so the top/bottom/solid ids are parsed

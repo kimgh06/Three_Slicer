@@ -25,7 +25,7 @@ EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double t
   gw.filament_area = PI * p.filament_diameter * p.filament_diameter / 4.0;
   gw.tool_filament_diameter = p.filament_diameter;   // single-material path: one tool, so these never change again
   gw.tool_flow_ratio        = p.flow_ratio;
-  gw.max_vol_speed          = Params::forTool(p.filament_max_volumetric_speed, 0, 0.0);
+  gw.max_vol_speed          = Params::forTool(p.filament_max_volumetric_speed, p.single_tool, 0.0);
   gw.print_flow             = p.print_flow_ratio;
   gw.scarf_flow             = p.scarf_joint_flow_ratio;
   gw.avoid_walls = p.reduce_crossing_wall;                                 // wall-avoiding travel

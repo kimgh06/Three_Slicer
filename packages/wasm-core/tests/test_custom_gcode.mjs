@@ -164,10 +164,34 @@ const supportFirst = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_m
 ok((supportFirst.gcode ?? '').includes('; first -1 0 non-support -1 1 tools 0'),
    `a support filament is skipped for first_non_support_filaments only (${/; first .*/.exec(supportFirst.gcode ?? '')?.[0]})`)
 
+console.log('[single tool] every object on the third filament: the single-material path prints with it')
+// A Bambu Lab project assigns each plate's objects to one filament; a plate on filament 4 used to load filament 1.
+const singleSettings = { ...settings, filament_type: ['PLA', 'PETG', 'ABS'], nozzle_temperature_initial_layer: ['210', '230', '250'],
+                         nozzle_temperature: ['205', '225', '245'], filament_end_gcode: [''],
+                         machine_start_gcode: '; load [initial_extruder] {filament_type[initial_extruder]}', machine_end_gcode: '; end on [current_extruder]' }
+const singleParams = { single_tool: 2, extruder_nozzle_temp: [205, 225, 245], extruder_retract_length: [0.8, 0.8, 1.5], gcode_stats_block: true }
+const singleTool = slice(withConfig(singleSettings, singleParams))
+const singleText = singleTool.gcode ?? ''
+ok(!singleTool.error, `slices (${singleTool.error ?? 'no error'})`)
+ok(singleText.includes('; load 2 ABS'), 'initial_extruder is the filament the plate prints with')
+ok(/^M104 S250 /m.test(singleText.slice(0, singleText.indexOf('; machine_start_gcode'))), 'the nozzle is heated to that filament\'s first-layer temperature')
+ok(singleText.includes('; end on 2'), 'the end G-code sees it as the current extruder')
+ok(!/^T\d+/m.test(singleText), 'no T command: a single-extruder machine switches nothing (GCode.cpp set_extruder)')
+ok(/^G1 E-1\.5000 /m.test(singleText) && !/^G1 E-0\.8000 /m.test(singleText), 'retraction is that filament\'s')
+ok(/; filament used \[mm\] = 0\.00, 0\.00, [1-9]/.test(singleText), 'the footer reports the use on that filament')
+// A .gcode.3mf's slice_info.config and the stats card read this; without it a Bambu Lab printer was told filament 1.
+const byTool = singleTool.stats.filament_mm_by_tool ?? []
+ok(byTool.length === 3 && byTool[0] === 0 && byTool[1] === 0 && byTool[2] === singleTool.stats.filament_mm,
+   `filament_mm_by_tool puts the use on that filament (${JSON.stringify(byTool)})`)
+let otherTool = 0
+for (const layer of singleTool.layers) for (let k = 3; k < layer.paths.length; k += 8) if ((layer.paths[k] & 15) !== 0 && (layer.paths[k] >>> 4) !== 2) otherTool++
+ok(otherTool === 0, `every extrusion in the toolpath stream carries tool 2 (${otherTool} do not)`)
+
 console.log('[st == mt] the same expanded slice through the pthread kernel')
 const slicerMt = await createSlicerMt()
 const mtResult = slicerMt.slice(cube, JSON.stringify(withConfig({})), () => {})
 ok(mtResult.gcode === gcode, 'byte-identical')
+ok(slicerMt.slice(cube, JSON.stringify(withConfig(singleSettings, singleParams)), () => {}).gcode === singleText, 'byte-identical on a single tool')
 
 if (failures) { console.log(`${failures} CUSTOM G-CODE CHECK(S) FAILED`); process.exit(1) }
 console.log('ALL CUSTOM G-CODE CHECKS PASSED')

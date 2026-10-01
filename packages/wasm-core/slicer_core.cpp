@@ -150,6 +150,21 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   if (p.extruder_count >= 2 && (hasGroups || hasPaintedTools || hasFeatureTools))
     return slice_multimaterial(tris, p, onProgress, height, over_bed);
 
+  // A single-material slice on a filament other than the first (every object of the plate on filament 4): that
+  //  filament's values replace the scalars, as slice_multimaterial reloads them on a T change. Upstream switches to
+  //  the initial extruder after the start block (GCode.cpp:3643), which on a single-extruder machine writes no T,
+  //  so none is written here either; the start template loads the filament from initial_extruder.
+  const int singleTool = p.single_tool;
+  if (singleTool > 0) {
+    p.nozzle_temp       = Params::forTool(p.extruder_nozzle_temp, singleTool, p.nozzle_temp);
+    p.filament_diameter = Params::forTool(p.extruder_filament_diameter, singleTool, p.filament_diameter);
+    p.flow_ratio        = Params::forTool(p.extruder_flow_ratio, singleTool, p.flow_ratio);
+    p.retract_length    = Params::forTool(p.extruder_retract_length, singleTool, p.retract_length);
+    p.retract_speed     = Params::forTool(p.extruder_retract_speed, singleTool, p.retract_speed);
+    p.z_hop             = Params::forTool(p.extruder_z_hop, singleTool, p.z_hop);
+  }
+  g_seg_tool = singleTool;                             // the preview's tool channel: the filament the model prints with
+
   // Count the z levels (the progress total)
   int N = 0; for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) ++N;
   int total = 2*N + 2;   // +2 = the surface and support completion ticks. Previously nothing was reported between PASS1 (50%) and the end of support -> it looked "stuck at 50%".
@@ -211,6 +226,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   GW gw; gw.s.reserve(1<<17);
   EmitFlags EF = gw_setup_preamble(gw, p, treeSupLayers, treeZMaxResid, startBlock);
+  gw.cur_tool = singleTool;                      // loaded by the start template, so a support T change returns to it
   bool realPE = EF.realPE, ironOn = EF.ironOn, scarfOn = EF.scarfOn;
   int  seamMode = EF.seamMode;
   SeamCtx seamCtx;
@@ -349,6 +365,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
           k = wNext++; }
         EmitJob& J = *jobs[k];
         GW g = base;
+        g_seg_tool = singleTool;   // thread_local: a pool thread keeps the tool the previous slice left on it
         g.px = J.entry.px; g.py = J.entry.py; g.curF = J.entry.curF; g.lastFan = J.entry.lastFan;
         g.island = std::move(J.island);
         SeamCtx sc = J.entry.sc;
@@ -479,7 +496,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   if (customGcode) {
     // Upstream's end block instead of the kernel's heater/fan shutdown: the printer's end G-code owns it.
     gw.raw("; end");
-    std::string error = custom_gcode_end(gw, N + nraft - 1, gw.z, gw.z, 0);
+    std::string error = custom_gcode_end(gw, N + nraft - 1, gw.z, gw.z, singleTool);
     if (!error.empty()) {
 #ifdef __EMSCRIPTEN_PTHREADS__
       if (streamTime || overlapBatch) (void)feeder.finish();
@@ -496,7 +513,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
   }                                            // end of the raw path's finish
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm", gw.filament); gw.raw(h); }
-  emit_gcode_footer_blocks(gw, p, {}, 0);
+  {
+    std::vector<double> filamentByTool;                // empty: the footer reports the whole print as filament 1
+    if (singleTool > 0) { filamentByTool.assign(singleTool + 1, 0.0); filamentByTool[singleTool] = gw.filament; }
+    emit_gcode_footer_blocks(gw, p, filamentByTool, 0);
+  }
 
   gcode_time::Result te; std::string engine_used;
   auto absorb = [&](const gcodeproc_bridge::Result& fr){
