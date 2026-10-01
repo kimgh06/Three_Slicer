@@ -18,7 +18,7 @@ import { isPrintable, uploadGcode } from './octoprint.js'
 }} />
 ```
 
-`.gcode` comes from **Export G-code ▾ → Plain .gcode**. The main Export G-code button saves a `.gcode.3mf`
+`.gcode` comes from Export G-code ▾ → Plain .gcode. The main Export G-code button saves a `.gcode.3mf`
 (the Bambu print-job format), which OctoPrint does not print, so the demo lets it download.
 
 ## Running it
@@ -32,10 +32,10 @@ npm test         # src/octoprint.js against a stub OctoPrint server
 In OctoPrint:
 
 1. Settings > API: copy the API key (or create an application key under Settings > Application Keys).
-2. Settings > API: turn on **Allow Cross Origin Resource Sharing (CORS)** and restart OctoPrint. Without it the
+2. Settings > API: turn on "Allow Cross Origin Resource Sharing (CORS)" and restart OctoPrint. Without it the
    browser blocks every request from this page.
 
-Enter the address and key in the bar at the top, press **Test connection**, slice, and export. The address,
+Enter the address and key in the bar at the top, press Test connection, slice, and export. The address,
 key and "start printing" choice are kept in this browser's `localStorage` only.
 
 ## Where it works
@@ -52,8 +52,9 @@ The last row is the common case for a hosted page and a Raspberry Pi, so the dem
 says so instead of failing with "Failed to fetch". Chrome may additionally ask for permission before a public
 site reaches a private address (Private Network Access).
 
-If an upload fails for any other reason (wrong key, OctoPrint offline), the G-code is downloaded instead, so the
-slice is never lost.
+If an upload fails for any other reason (wrong key, OctoPrint offline), the status line offers the G-code as a
+download. It is a button rather than an automatic download because the upload outlives the Export click's user
+activation, and Chrome blocks a download started after that.
 
 ## Not included
 

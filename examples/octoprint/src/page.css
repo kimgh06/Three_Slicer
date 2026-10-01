@@ -17,6 +17,7 @@ body { background: #0d1016; color: #e8eaf0; font: 14px/1.5 ui-sans-serif, system
 .status { flex: 1 1 100%; margin: 0; font-size: 13px; color: #97a1b2; }
 .status-ok { color: #5fd38d; }
 .status-error { color: #ff7a7a; }
+.status .inline { margin-left: 10px; padding: 2px 8px; font-size: 12px; }
 
 /* The viewer fills its nearest positioned ancestor. */
 .frame { position: relative; flex: 1; min-height: 0; }

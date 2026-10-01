@@ -9,13 +9,14 @@ import { checkConnection, connectionProblem, isPrintable, uploadGcode } from './
 import './page.css'
 
 const STORAGE_KEY = 'octoprint-demo'
+const NO_CONNECTION = { url: '', apiKey: '', print: false }
 
 // The address and key stay in this browser only. A private window or blocked storage starts empty.
 function loadConnection() {
   try {
-    return { url: '', apiKey: '', print: false, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') }
+    return { ...NO_CONNECTION, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') }
   } catch {
-    return { url: '', apiKey: '', print: false }
+    return NO_CONNECTION
   }
 }
 
@@ -27,13 +28,16 @@ function saveConnection(connection) {
   }
 }
 
-// The fallback when OctoPrint cannot take the file: the user still gets their G-code.
-function download(file, filename) {
+// The fallback when OctoPrint cannot take the file, run from its own click: the upload outlives the Export
+// click's user activation, and a download started after that is blocked as automatic (export_actions.js
+// saveWindowOpen in the viewer). The URL is revoked late enough for the browser to finish reading it.
+function download({ file, filename }) {
   const link = document.createElement('a')
   link.href = URL.createObjectURL(file)
   link.download = filename
+  document.body.appendChild(link)
   link.click()
-  setTimeout(() => URL.revokeObjectURL(link.href), 0)
+  setTimeout(() => { link.remove(); URL.revokeObjectURL(link.href) }, Math.max(4000, file.size / 10000))
 }
 
 const SAMPLE = { url: 'calibration-cube.stl' }
@@ -43,6 +47,7 @@ function App() {
   const [connection, setConnection] = useState(loadConnection)
   const [status, setStatus] = useState({ kind: 'idle', text: 'Slice, then Export G-code ▾ → Plain .gcode: the file goes to OctoPrint instead of Downloads.' })
   const [sample, setSample] = useState(null)
+  const [unsent, setUnsent] = useState(null)   // { file, filename } of a failed upload, offered as a download
 
   const update = patch => setConnection(previous => {
     const next = { ...previous, ...patch }
@@ -81,6 +86,7 @@ function App() {
       setStatus({ kind: 'error', text: `${problem} Downloaded ${filename} instead.` })
       return false
     }
+    setUnsent(null)
     setStatus({ kind: 'busy', text: `Uploading ${filename}…` })
     uploadGcode({ ...connection, file, filename })
       .then(() => {
@@ -89,8 +95,8 @@ function App() {
         setStatus({ kind: 'ok', text })
       })
       .catch(error => {
-        setStatus({ kind: 'error', text: `${error.message} Downloaded ${filename} instead.` })
-        download(file, filename)
+        setStatus({ kind: 'error', text: error.message })
+        setUnsent({ file, filename })
       })
     return true
   }, [configured, connection])
@@ -126,7 +132,10 @@ function App() {
           <span>Start printing after upload</span>
         </label>
         <button type="button" onClick={test} disabled={!configured}>Test connection</button>
-        <p className={`status status-${status.kind}`} role="status">{status.text}</p>
+        <p className={`status status-${status.kind}`} role="status">
+          {status.text}
+          {unsent && <button type="button" className="inline" onClick={() => download(unsent)}>Download {unsent.filename}</button>}
+        </p>
       </header>
 
       <main className="frame">
