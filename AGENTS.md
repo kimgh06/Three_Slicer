@@ -231,12 +231,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `buildMergedSTL` used — which is why `exportObjects` must return objects in that same extruder-sorted order.
   Painting is written from the per-object store after a `flushPaint`, so every plate's brush strokes are saved in
   each object's own numbering; the writer still accepts a merge-numbered `paintExport` for a caller that has one.
-  `write3MFProject` is **async** because the deflate runs off-thread (fflate's worker pool, as the parser's `unzip`
-  already does) — a save is dominated by compression, and on the main thread that is a frozen tab. Measured on a
-  980k-facet model: 2.6s all-on-thread when this landed, 1.5s wall / 0.45s longest frame gap now. Two of that came
-  from choices worth not undoing: the weld keys vertices by their float32 BIT PATTERN rather than a decimal string
-  (708ms -> 89ms), and the zip is level **3**, which on this XML is both faster than level 6 and slightly smaller.
-  The `[vp-prof] export` line reports gather/paint/write separately, because the three scale with different things.
+  `write3MFProject` is **async** because the deflate runs off-thread (fflate's worker pool) — a save is dominated by
+  compression, and on the main thread that is a frozen tab. Measured on a 980k-facet model: 2.6s all-on-thread when
+  this landed, 1.5s wall / 0.45s longest frame gap now. Two of that came from choices worth not undoing: the weld keys
+  vertices by their float32 BIT PATTERN rather than a decimal string (708ms -> 89ms), and the zip is level **3**,
+  which on this XML is both faster than level 6 and slightly smaller. The `[vp-prof] export` line reports
+  gather/paint/write separately, because the three scale with different things.
 - **Selection is a set, and the kernel's facet numbering does not follow it.** `exportObjects({selectedOnly})` is
   upstream's `export_stl(..., selection_only, ...)`; upstream additionally rejects anything that is not a whole
   object (`Plater.cpp:16244`), which this viewer cannot hit because it has no parts. The trap is the painting: the
