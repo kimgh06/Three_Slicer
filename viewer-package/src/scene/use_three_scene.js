@@ -850,6 +850,8 @@ export function useThreeScene(deps) {
         // Per rendered frame, not per change: the handles are sized in screen pixels, so they have to be re-sized
         //  whenever the camera moves, and that is exactly the set of frames that get drawn.
         scaleBox.update(canvasModeRef.current === 'preview' ? null : scaleBoxTarget(), gizmoMode === 'scale')
+        // Each plate's toolpath picks its level of detail for this camera (toolpath_mesh.js updateLod).
+        toolpathGroup.traverseVisible(object => object.userData.updateLod?.(camera, renderer.domElement.height))
         renderer.render(scene, camera)
       }
     }
