@@ -428,10 +428,13 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream simplifies slice contours by 0.0025mm (`PrintObjectSlice.cpp:172`, "has influence on arc fitting") and
   PASS1 by `resolution`, so a coarsely faceted round wall here can sit just past the arc tolerance and stay straight
   moves where upstream would fit it.
-- **Tree support (slim, strong, hybrid) runs four loops threaded on mt, and each must give the serial result.**
+- **Tree support (slim, strong, hybrid) runs its loops threaded on mt, and each must give the serial result.**
   `tbb_stub::ParallelSection` (`treesupport_port/tbb/stub_parallel.h`) turns the tbb stub's threads on around one loop:
-  `draw_circles`, `generate_toolpaths`, the avoidance precompute and the move pass of `drop_nodes` (upstream runs all
-  four in parallel). The rest of the tree path stays serial because the `concurrent_*` stubs are std aliases. The move
+  `detect_overhangs`' per-layer loops, `draw_circles`, `generate_toolpaths`, the avoidance precompute, and the
+  per-part spanning trees and the move pass of `drop_nodes` (upstream runs most of them in parallel); the preview
+  cache (`TreeSupportData`, the layer outlines) is built on a thread taken from the stub's budget while
+  `detect_overhangs` runs. The move pass creates its nodes with `link_to_parent` false and writes the child links in
+  node order afterwards, which also keeps the node constructor out of the lock. The rest of the tree path stays serial because the `concurrent_*` stubs are std aliases. The move
   pass is not upstream's loop: a node's own exit is decided first, the moves read a neighbour's validity as the serial
   loop would at that node, and the results are applied in node order, including the `child` links the `SupportNode`
   constructor writes on every node merged into its parent (one node can be merged into several parents, so the last
@@ -439,6 +442,15 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   them by address and picks with `min_element`, so equal distances were broken by heap layout and the st kernel gave
   different G-code for one slim input from different script paths. Measured on a 1.13M-facet hybrid plate (mt):
   91.1 -> 20.7 s, G-code unchanged. `test_tree_support_mt.mjs` pins st == mt over three mt runs for all three styles.
+  `draw_circles` unions a layer's node circles per cluster of overlapping bboxes (`union_ex_by_clusters`) before the
+  roof diff; one union of all of them was 39 of its 47 s (st). Same region, other vertex order, so the support
+  G-code bytes moved once (measured on the same plate: 21.2 -> 18.9 s mt, support extrusion +0.01 mm). Each cluster is
+  then unioned as a tree split by position (`union_ex_by_halves`, 32 per leaf), which moved them again (draw_circles
+  4.6 -> 2.3 s mt, support extrusion +0.06 mm, worst layer 0.27 %); Clipper2's union measured slower.
+  `detect_overhangs` is two passes instead of upstream's one loop: upstream's loop stops sharp-tail detection at the
+  first layer with more than 100 overhangs, which under threads depends on the order the layers are reached; the first
+  pass finds that layer, the second checks the layers as the serial loop would (same plate: 18.6-18.9 -> 17.6-17.7 s
+  mt, G-code unchanged).
 - **PASS1's contour union can run on the GPU, between two calls of `slice()`.** The kernel is synchronous and WebGPU
   is not, so `contour_phase.h` splits the slice: CAPTURE stops after chaining every layer's raw loops, the worker
   runs `engine/src/contour_gpu.js` on them, INJECT reads the contours back (`engine/src/contour_slice.js` drives the
@@ -454,6 +466,18 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   never a kernel parameter, and `auto` asks for the GPU on the st kernel only: on mt the union is already spread
   over the threads and the measured difference is inside the run-to-run spread. The shader text
   (`contour_gpu_shaders.js`) is the measured experiment's and is edited only with a measurement beside it.
+  **The mesh route moves the cut and chain onto the GPU too.** MESH stops pass1 before the segment sweep and keeps the
+  seated triangles and the layer planes; `contour_front_gpu.js` (shaders `contour_front_shaders.js`, same editing
+  rule) cuts in double-float, cancels coincident pairs, chains and lays the loops out as `chain_polys` and
+  `write_polygon` would, straight into the union's input buffers. Three things it depends on. **(a)** Metal compiles
+  WGSL with fast math, which folds a two_sum's error term away; every intermediate the double-float depends on goes
+  through `opaque()` (an XOR with a uniform zero), or the points are off by thousands of units. **(b)** A layer with a
+  chain the GPU did not close is marked (`open_layers`) and `assemble` cuts, chains and unions that layer itself from
+  the kept mesh, with pass1's own inclusion rule and triangle order, so it is the capture route's layer exactly
+  (`[open layer]` pins a holed box to the CPU slice's G-code). **(c)** Only cycle members are laid out (the image of
+  succ^(2^R)): a tail leading into a cycle once misplaced every slot after it. The worker takes this route on the st
+  kernel only: st's own cut and chain measured 419-442 ms against 34-154 ms of mesh hand-over plus 64-153 ms on the
+  GPU, while mt's threads do it in 64-77 ms and the mesh route was 20 ms slower there.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
   `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and

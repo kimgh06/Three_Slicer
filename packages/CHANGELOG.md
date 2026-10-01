@@ -9,6 +9,10 @@
   kernel only, where a 3M-facet slice went from 9.8 to 7.6 s; the threaded kernel gains nothing measurable. A GPU
   slice's G-code differs from the CPU slice's in its vertices (same contour area), and the result's
   `stats.contour_engine` says which engine ran.
+- On the single-threaded kernel the GPU also cuts the mesh into layers and chains the loops (`stats.contour_front`
+  `'gpu'`; the slice card reads "Contours cut and unioned on the GPU"). The kernel hands its mesh over instead of
+  cutting every layer itself: on a 3M-facet model that part went from 419-442 ms to 34-154 ms plus 64-153 ms on the
+  GPU. A layer the GPU cannot close is cut by the kernel as before.
 - `support_style` `tree_slim`, `tree_strong` and `tree_hybrid` reach the kernel as `tree_style`. They used to slice
   as organic.
 
@@ -16,6 +20,26 @@
 
 - Tree support (slim, strong, hybrid) runs four of its loops on every thread of the threaded kernel: a 1.13M-facet
   hybrid plate went from 91 to 21 s, with the same G-code as the single-threaded kernel.
+- Tree support unions each layer's support circles per group of overlapping circles instead of all at once. On the
+  same plate the slice went from 21.2-21.6 to 18.9-19.0 s (threaded) and from 110.3 to 98.0 s (single-threaded).
+  The support area is unchanged; its G-code vertices come out in another order (support extrusion 4113.49 ->
+  4113.50 mm, every model path unchanged).
+- Tree support finds overhangs on every thread of the threaded kernel (it ran on one): on the same plate the slice
+  went from 18.6-18.9 to 17.6-17.7 s, with the same G-code.
+- Tree support no longer recomputes the same offsets while it drops branches and groups overhangs (a dilation per
+  node move, a whole-layer line clip per segment, a region offset per cluster tried): on the same plate the slice
+  went from 17.1-17.3 to 15.5-15.6 s, with the same G-code.
+- Tree support's threads no longer queue on two locks while they move branches (one over the line-cut cache, one
+  around every new node), the branch spanning trees are built in one pass per vertex and per part on threads, and the
+  layer outlines are prepared beside overhang detection instead of after it: on the same plate 15.6 -> 13.9-14.1 s,
+  then 10.2-10.3 -> 9.7-9.8 s, with the same G-code.
+- Tree support unions each group of overlapping circles as a tree of smaller unions, split by position: draw_circles
+  4.6 -> 2.3 s on the same plate (11.6-11.8 s slice). The support area is the same; the intermediate unions round
+  their crossings once more, so the support G-code moves slightly (support extrusion 4113.50 -> 4113.56 mm, the worst
+  layer 0.27 %, every model path unchanged). Clipper2's union measured slower and is not used.
+- Arachne walls are written by the threaded kernel's G-code writers like every other path (they were written on one
+  thread): on the same plate emit 3.2 -> 1.7 s (11.7 -> 10.2 s slice), with the same G-code, toolpaths and widths as
+  the single-threaded kernel.
 
 ### Fixed
 - The threaded kernel ships its wasm as a file, `engine/src/slicer_core.mt.wasm`, instead of inlining it in
@@ -25,6 +49,10 @@
   3 to 8 workers ran without a crash and peaked at 1.2-1.9 GB. A bundler emits the file as an asset; see
   "Multithreaded WASM" in the README for serving it.
 
+- Tree support could lose a whole support island's paths on a layer: reordering a layer's paths dropped any group of
+  paths whose first or last member was empty, with every path in it (a 3M-facet tree-slim model lost 64.6 mm of
+  support paths over three layers). Only the empty members are dropped now. Models where it did not happen slice to
+  the same G-code.
 - Tree slim, strong and hybrid crashed the kernel on any model.
 - The same tree slim or strong input could slice to different G-code from run to run (a tie in the minimum spanning
   tree was broken by memory address).
