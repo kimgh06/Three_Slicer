@@ -12,15 +12,15 @@ VIEWER_REMOTE ?= https://github.com/kimgh06/three-slicer-viewer.git
 DRY           ?= 0
 LOG_DIR       ?= $(or $(TMPDIR),/tmp)/three-slicer-release
 
-# The account publishes with 2FA, so a real publish asks for a one-time code right before each upload (a code
-# typed at the start would expire during the tests). --ignore-scripts skips the viewer's prepublishOnly: its build
-# and its two tests are exactly what preflight has just run.
+# The registry refuses a publish without 2FA ("Two-factor authentication or granular access token with bypass 2fa
+# enabled is required"), and npm asks for it itself at the upload: a one-time code, or a browser login it opens on
+# ENTER. So the publish steps run in the terminal rather than through $(call step): with their output in a log file
+# that prompt was never shown and the release sat at "[  ]". --ignore-scripts skips the viewer's prepublishOnly: its
+# build and its two tests are exactly what preflight has just run.
 ifeq ($(DRY),1)
-ASK_OTP     :=
 NPM_PUBLISH := npm publish --ignore-scripts --dry-run
 else
-ASK_OTP     := printf 'npm OTP: '; read otp </dev/tty;
-NPM_PUBLISH := npm publish --ignore-scripts --otp=$$otp
+NPM_PUBLISH := npm publish --ignore-scripts
 endif
 
 # $(call step,label,command): one status line per step. The output goes to $(LOG_DIR)/<label>.log and is printed
@@ -61,8 +61,10 @@ endif
 	@$(call step,pack_check.sh,bash packages/pack_check.sh)
 
 publish: preflight  ## release $(VERSION): viewer first, then three-slicer, then the mirror and the tag
-	@$(ASK_OTP) $(call step,publish three-slicer-viewer@$(VERSION),cd viewer-package && $(NPM_PUBLISH))
-	@$(ASK_OTP) $(call step,publish three-slicer@$(VERSION),cd packages && $(NPM_PUBLISH))
+	@echo "== publish three-slicer-viewer@$(VERSION)"
+	@cd viewer-package && $(NPM_PUBLISH)
+	@echo "== publish three-slicer@$(VERSION)"
+	@cd packages && $(NPM_PUBLISH)
 ifeq ($(DRY),1)
 	@echo "[dry] skipped: mirror sync, tag v$(VERSION), push"
 else
