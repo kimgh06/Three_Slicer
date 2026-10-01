@@ -11,15 +11,17 @@
 //   threads = 3x15 threads — the OS scheduler already does it), longest-plate-first ordering (FIFO won by a
 //   second on a mixed run), and whether the count divides the plate count (7/11/13/17 sat on the same curve).
 //
-// The BROWSER is tighter than that harness, and Auto has to know it: every worker's wasm heap lives in the one
-//   renderer process that already holds each plate's STL buffer and three.js geometry. Measured in Chromium on the
-//   same 143MB-STL model over nine plates (classic preset): 1 worker 17.8s, 2 workers 15.7s, 3 workers crashed the
-//   tab once and took 18.7s once, Auto at 8 crashed the tab every time (Chromium RSS 10-14GB at the crash). So Auto
-//   is also capped by model size: a worker's heap is about HEAP_PER_STL_BYTE times the STL it slices (node measured
-//   ~1.7GB for 143MB), and the pool as a whole gets POOL_HEAP_BUDGET. For that model this yields 2; for a 40MB
-//   model it does not bind (8 on 15 cores). The cap binds a MANUAL count too: past it the renderer process itself
-//   dies (Chromium "error code 5" on 5 workers x 143MB), which no ladder or re-queue can catch — so the select
-//   simply does not offer those values.
+// The BROWSER is tighter than that harness: every worker's wasm heap lives in the one renderer process that also
+//   holds each plate's STL buffer and three.js geometry. Measured in Chromium on the same 143MB-STL model over nine
+//   plates (classic preset): 1 worker 17.8s, 2 workers 15.7s, 3 workers crashed the tab once and took 18.7s once,
+//   Auto at 8 crashed the tab every time. Those crashes were the threaded glue inlining its wasm (every pthread
+//   isolate held a copy, and all isolates of a tab share one 4GB V8 heap region — AGENTS.md, "The threaded kernel's
+//   wasm is a file"): with the wasm split out, 5 and 8 workers ran that model with no crash (Chrome RSS peak 11.4GB
+//   on a 24GB machine), and haaland.3mf ran 3-5 workers where 3 had crashed 4 times in 6. The cap below is still
+//   applied, to Auto and to the select: a worker's heap is about HEAP_PER_STL_BYTE times the STL it slices (node
+//   measured ~1.7GB for 143MB), and the pool gets POOL_HEAP_BUDGET — 2 for that model, no limit for a 40MB one (8 on
+//   15 cores). ponytail: these constants were set from the cage crashes; re-derive them against physical memory
+//   (a smaller-RAM machine) before raising them.
 export const PLATE_STATES = Object.freeze({ queued: 'queued', busy: 'busy', done: 'done', failed: 'failed' })
 export const HEAP_PER_STL_BYTE = 12
 export const POOL_HEAP_BUDGET = 4 * 1024 ** 3
