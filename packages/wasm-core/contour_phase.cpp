@@ -1,5 +1,6 @@
 // contour_phase.cpp — see contour_phase.h.
 #include "contour_phase.h"
+#include "slice_planes.h"
 
 #include <emscripten.h>
 #include <algorithm>
@@ -13,6 +14,9 @@ namespace contour_phase {
 int mode = OFF;
 bool captured = false;
 std::vector<Paths> loops, contours;
+std::vector<float> mesh_tris;
+std::vector<double> mesh_planes;
+std::vector<unsigned char> open_layers;
 GpuInput input;
 std::vector<int> result;
 
@@ -274,10 +278,37 @@ void walk(WalkWork& w, size_t from, size_t to) {
 
 }  // namespace
 
+void set_layer_count(int layerCount) {
+  input = GpuInput(); input.layerCount = layerCount;
+  input.layerMin.assign((size_t)std::max(0, layerCount) * 2, 0);
+  open_layers.assign((size_t)std::max(0, layerCount), 0);
+}
+
+namespace {
+
+// MESH: one layer's loops as pass1 would capture them (tri_plane over every triangle, chain_polys, cancel_coincident)
+struct MeshWork { const std::vector<int>* layers; };
+void mesh_layer_loops(int index, void* context) {
+  const int layer = (*((MeshWork*)context)->layers)[index];
+  const Tri* triangles = reinterpret_cast<const Tri*>(mesh_tris.data());
+  const size_t triangleCount = mesh_tris.size() / 9;
+  const double z = mesh_planes[layer];
+  std::vector<Seg> segments; Seg segment;
+  for (size_t t = 0; t < triangleCount; ++t) {
+    const Tri& triangle = triangles[t];
+    const double zmin = std::min({triangle.v[0].z, triangle.v[1].z, triangle.v[2].z}), zmax = std::max({triangle.v[0].z, triangle.v[1].z, triangle.v[2].z});
+    if (zmin <= z && z < zmax && tri_plane(triangle, z, segment)) segments.push_back(segment);   // pass1's inclusion rule
+  }
+  loops[layer] = chain_polys(segments);
+  cancel_coincident(loops[layer]);
+}
+
+}  // namespace
+
 Assembled assemble() {
   Assembled out;
   const double walkStarted = emscripten_get_now();
-  const int layerCount = (int)loops.size();
+  const int layerCount = input.layerCount;   // CAPTURE: build_gpu_input() set it to loops.size(); MESH: set_layer_count()
   WalkWork work; work.pieceCount = result.size() / 4; work.layerCount = layerCount;
   contours.assign(layerCount, Paths());
   work.visited.assign(work.pieceCount, 0); work.bad.assign(layerCount, 0);
@@ -298,7 +329,18 @@ Assembled assemble() {
   }
   out.walkMs = emscripten_get_now() - walkStarted;
   const double fallbackStarted = emscripten_get_now();
-  for (int layer = 0; layer < layerCount; ++layer) if (work.bad[layer]) out.fallbackLayers.push_back(layer);
+  for (int layer = 0; layer < layerCount; ++layer) if (work.bad[layer] || (layer < (int)open_layers.size() && open_layers[layer])) out.fallbackLayers.push_back(layer);
+  if ((int)loops.size() != layerCount) {   // MESH: nothing captured; the fallback layers are cut from the mesh here
+    if (!out.fallbackLayers.empty() && (mesh_tris.empty() || (int)mesh_planes.size() != layerCount)) {
+      out.unavailable = true;
+      out.fallbackMs = emscripten_get_now() - fallbackStarted;
+      return out;
+    }
+    loops.assign(layerCount, Paths());
+    MeshWork meshWork{ &out.fallbackLayers };
+    parallel((int)out.fallbackLayers.size(), mesh_layer_loops, &meshWork);
+  }
+  std::vector<float>().swap(mesh_tris);   // nothing reads the mesh after the contours are known
   parallel((int)out.fallbackLayers.size(), [](int index, void* context) {
     const int layer = (*(std::vector<int>*)context)[index];
     contours[layer] = SimplifyPolygons(loops[layer], pftNonZero);

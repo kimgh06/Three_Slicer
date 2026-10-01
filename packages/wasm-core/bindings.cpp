@@ -179,7 +179,8 @@ static em::val selector_project_counts(em::val zsVal, bool enforcer) {
 // ---- PASS1's union outside the kernel (contour_phase.h); the worker drives these around two slice() calls
 static void contour_phase_mode(int mode) {
   contour_phase::mode = mode;
-  if (mode == contour_phase::OFF) { contour_phase::loops.clear(); contour_phase::contours.clear(); contour_phase::result.clear(); contour_phase::input = contour_phase::GpuInput(); }
+  if (mode == contour_phase::OFF) { contour_phase::loops.clear(); contour_phase::contours.clear(); contour_phase::result.clear(); contour_phase::input = contour_phase::GpuInput();
+    std::vector<float>().swap(contour_phase::mesh_tris); std::vector<double>().swap(contour_phase::mesh_planes); contour_phase::open_layers.clear(); }
 }
 // views into the kernel's heap (no copy): valid until the next contour_phase call
 static em::val contour_gpu_input() {
@@ -200,12 +201,29 @@ static em::val contour_result_buffer(int pieceCount) {
   contour_phase::result.resize((size_t)std::max(0, pieceCount) * 4);
   return em::val(em::typed_memory_view(contour_phase::result.size(), contour_phase::result.data()));
 }
+// MESH: views of the seated triangles and the layer planes (valid until the next contour_phase call)
+static em::val contour_mesh() {
+  em::val out = em::val::object();
+  out.set("tris", em::val(em::typed_memory_view(contour_phase::mesh_tris.size(), contour_phase::mesh_tris.data())));
+  out.set("planes", em::val(em::typed_memory_view(contour_phase::mesh_planes.size(), contour_phase::mesh_planes.data())));
+  return out;
+}
+// MESH: the layer count and a view the caller fills with each layer's origin (min x, min y in kernel units)
+static em::val contour_origin_buffer(int layerCount) {
+  contour_phase::set_layer_count(layerCount);
+  return em::val(em::typed_memory_view(contour_phase::input.layerMin.size(), contour_phase::input.layerMin.data()));
+}
+// MESH: a view the caller sets to 1 for every layer whose chains the GPU did not close (after contour_origin_buffer)
+static em::val contour_open_layers() {
+  return em::val(em::typed_memory_view(contour_phase::open_layers.size(), contour_phase::open_layers.data()));
+}
 static em::val contour_assemble() {
   const contour_phase::Assembled assembled = contour_phase::assemble();
   contour_phase::mode = contour_phase::INJECT;
   em::val out = em::val::object();
   out.set("walkMs", assembled.walkMs); out.set("fallbackMs", assembled.fallbackMs);
   out.set("fallbackLayers", (int)assembled.fallbackLayers.size());
+  out.set("unavailable", assembled.unavailable);
   return out;
 }
 
@@ -214,6 +232,9 @@ EMSCRIPTEN_BINDINGS(slicer) {
   em::function("contour_gpu_input", &contour_gpu_input);
   em::function("contour_result_buffer", &contour_result_buffer);
   em::function("contour_assemble", &contour_assemble);
+  em::function("contour_mesh", &contour_mesh);
+  em::function("contour_origin_buffer", &contour_origin_buffer);
+  em::function("contour_open_layers", &contour_open_layers);
   em::function("slice", &slice);
   em::function("slice_sla", &slice_sla);                     // SLA (resin): contours + generated supports, no G-code
 

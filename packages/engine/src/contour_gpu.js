@@ -19,6 +19,7 @@
 //  2e-10 relative) and other vertices, so a GPU slice's G-code is not the CPU slice's byte for byte.
 //
 // The module takes its GPUDevice from the caller and never decides whether the GPU should be used.
+import { makeContourFront } from './contour_front_gpu.js'
 import {
   BIN_SHADER, INTERSECT_SHADER, SORT_SHADER, LINK_SHADER, SCAN_SHADER, CHECK_SHADER, GLUE_SHADER, PIECES_SHADER,
   TIES_SHADER, ZIP_SHADER, DIRECTIONS_SHADER, EXPAND_SHADER, COMPACT_SHADER, GATE_SHADER, ARGS_SHADER,
@@ -62,7 +63,8 @@ export async function acquireContourDevice(gpu) {
 
 /**
  * @param {GPUDevice} device from acquireContourDevice (browser) or Dawn's create() (node tests)
- * @returns {Promise<{ union(input, piecesTarget): Promise<object>, dispose(): void }>}
+ * @returns {Promise<{ union(input, piecesTarget): Promise<object>, front: object, dispose(): void }>} `front` is
+ *   contour_front_gpu.js on the same device: the cut and chain that feed `union` without leaving the GPU
  */
 export async function makeContourGpu(device) {
   const compile = async (code, name) => {
@@ -223,10 +225,16 @@ export async function makeContourGpu(device) {
     const segmentParameters = uniform([segmentCount, cellCount, CELL_SIZE, 0]), eventParameters = uniform([segmentCount, cellCount, CELL_SIZE, 1])
     const points = pooled(segmentCount * 8, BUFFER.STORAGE), polygonLayers = pooled(polygonCount * 4, BUFFER.STORAGE)
     const layers = pooled(layerCount * 16, BUFFER.STORAGE), polygons = pooled(polygonCount * 16, BUFFER.STORAGE)
-    device.queue.writeBuffer(points, 0, input.points, 0, segmentCount * 2)
-    device.queue.writeBuffer(polygonLayers, 0, input.polyLayer, 0, polygonCount)
-    device.queue.writeBuffer(layers, 0, input.layerInfo, 0, layerCount * 4)
-    device.queue.writeBuffer(polygons, 0, input.polyInfo, 0, polygonCount * 4)
+    // an array the kernel built (its heap, written from the host) or one already on this device (contour_front_gpu.js,
+    //  copied inside this run's encoder, so it is read in submission order)
+    const upload = (target, source, wordCount) => {
+      if (source.gpuBuffer) { copy(source.gpuBuffer, source.offset ?? 0, target, 0, wordCount * 4); return }
+      device.queue.writeBuffer(target, 0, source, 0, wordCount)
+    }
+    upload(points, input.points, segmentCount * 2)
+    upload(polygonLayers, input.polyLayer, polygonCount)
+    upload(layers, input.layerInfo, layerCount * 4)
+    upload(polygons, input.polyInfo, polygonCount * 4)
     const segments = pooled(segmentCount * 16, BUFFER.STORAGE), segmentInfo = pooled(segmentCount * 16, BUFFER.STORAGE)
     const segmentPolygon = pooled(segmentCount * 4, BUFFER.STORAGE)
     const unused = [0, 1, 2, 3, 4].map(() => pooled(16, BUFFER.STORAGE))   // bindings a pass does not write in its counting mode
@@ -348,10 +356,12 @@ export async function makeContourGpu(device) {
     return outcome
   }
 
+  const front = await makeContourFront(device)
   const dispose = () => {
     release()
     for (const buffers of pool.values()) for (const buffer of buffers) buffer.destroy()
     pool.clear()
+    front.dispose()
   }
-  return { union, dispose }
+  return { union, front, dispose }
 }

@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -127,6 +128,15 @@ bool pass1_run(SliceCtx& C) {
     //  ≈ 500M visits. The inclusion condition is unchanged (zmin<=z<zmax -> lower_bound + *it<zmax) and the tri_plane
     //  input is identical -> segment values are unchanged. Per-thread 'contiguous triangle ranges' merged in range order keep the in-layer segment
     //  order in ascending triangle index (same as the old full scan) -> the chain_polys input is unchanged = byte-identical.
+    // MESH (contour_phase.h): the GPU cuts and chains the layers; hand it the triangles as seated and the planes as cut
+    if (contour_phase::mode == contour_phase::MESH) {
+      static_assert(sizeof(Tri) == 9 * sizeof(float), "mesh_tris copies Tri as 9 packed floats");
+      contour_phase::mesh_planes = zsv;
+      contour_phase::mesh_tris.resize(tris.size() * 9);
+      if (!tris.empty()) std::memcpy(contour_phase::mesh_tris.data(), tris.data(), tris.size() * sizeof(Tri));
+      contour_phase::captured = true;
+      return false;
+    }
     std::vector<std::vector<Seg>> layerSegs(N);
     // The union done outside the kernel (contour_phase.h). OFF leaves every line below as it was.
     const bool captureLoops = contour_phase::mode == contour_phase::CAPTURE;

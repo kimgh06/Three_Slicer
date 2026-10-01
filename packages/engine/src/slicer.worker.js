@@ -82,7 +82,11 @@ const runSlice = async (Module, d, onProgress) => {
   const gpu = await contourGpuOf()
   if (!gpu) return cpu('no WebGPU device')
   const canceled = () => { const flag = Module.cancel_flag_view?.(); return !!flag && flag[0] !== 0 }
-  return sliceWithContourGpu({ kernel: Module, contourGpu: gpu, stl, paramsText: text, onProgress, canceled })
+  // The mesh route (the GPU cuts and chains the layers too) only on the single-threaded kernel. Measured on a 3M-facet
+  //  model (node, Dawn): st's own cut and chain is 419-442 ms against 34-154 ms of mesh hand-over + 64-153 ms on the GPU;
+  //  mt's is 64-77 ms on its threads, and the mesh route came out 20 ms slower in the front and 0.02-0.18 s in the slice.
+  const meshRoute = kernelKind === 'st'
+  return sliceWithContourGpu({ kernel: Module, contourGpu: gpu, stl, paramsText: text, onProgress, canceled, meshRoute })
 }
 
 // Stage 20 painting states = upstream's EnforcerBlockerType (see packages/wasm-core/selector_bridge.h):

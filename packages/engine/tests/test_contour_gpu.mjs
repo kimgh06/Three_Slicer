@@ -6,6 +6,11 @@
 //   [coincident] two boxes sharing a wall — segments coinciding in opposite directions, which the pipeline cannot
 //                order by itself — still slice with no layer on the CPU
 //   [repeat]     the same input gives the same G-code twice
+//   [mesh]       with the GPU's cut and chain (contour_front_gpu.js) the kernel hands over its mesh, and the slice is the
+//                capture route's
+//   [capture]    a GPU module without the cut and chain takes the capture route
+//   [open layer] a layer whose chain does not close (a box with a missing facet) is cut, chained and unioned by the
+//                kernel from the mesh it kept, and counted
 //   [refusal]    a device that fails leaves the kernel's own slice
 // The GPU checks run only with a device (Dawn under node: CONTOUR_GPU_WEBGPU_PATH=<webgpu index.js>, or the `webgpu`
 //  package when installed); without one they SKIP — the CPU slice is the contract, the GPU the bonus.
@@ -36,6 +41,8 @@ function toSTL(triangles) {
 // two boxes that overlap (their outlines cross) and a third that shares a whole wall with the first
 const overlapping = toSTL([...boxTriangles(-10, -10, 0, 20, 20, 6), ...boxTriangles(0, 0, 0, 20, 20, 6)])
 const sharedWall = toSTL([...boxTriangles(-10, -10, 0, 10, 20, 6), ...boxTriangles(0, -10, 0, 10, 20, 6)])
+// a box with one side facet missing: every layer's chain stops at the gap
+const holed = toSTL(boxTriangles(-10, -10, 0, 20, 20, 6).filter((_, index) => index !== 4 + 2))
 const paramsText = JSON.stringify({ layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2, infill_density: 0.15,
   bed_width: 180, bed_depth: 180, printable_height: 180, skirt_loops: 0 })
 const FILAMENT_TOLERANCE = 0.01   // the GPU's contours have the CPU union's area and other vertices (measured: within 0.3 %)
@@ -59,13 +66,14 @@ try {
 
 const filamentOf = (result) => Number(result.stats.filament_mm ?? result.stats.filament)
 if (!device) {
-  for (const name of ['[gpu]', '[coincident]', '[repeat]']) skip(`${name} no WebGPU device`)
+  for (const name of ['[gpu]', '[coincident]', '[capture]', '[mesh]', '[open layer]', '[repeat]']) skip(`${name} no WebGPU device`)
 } else {
   const contourGpu = await makeContourGpu(device)
   const job = (stl) => sliceWithContourGpu({ kernel, contourGpu, stl, paramsText, onProgress: () => {} })
 
   const gpuSlice = await job(overlapping)
   assert.equal(gpuSlice.stats.contour_engine, 'gpu', `engine: ${gpuSlice.stats.contour_engine_reason}`)
+  assert.equal(gpuSlice.stats.contour_front, 'gpu', 'the mesh route cut and chained the layers')
   assert.equal(gpuSlice.layers.length, cpu.layers.length)
   assert.equal(gpuSlice.stats.contour_fallback_layers, 0)
   assert.ok(gpuSlice.stats.contour_crossings > 0, 'the two outlines cross')
@@ -80,6 +88,24 @@ if (!device) {
   const wallDrift = Math.abs(filamentOf(wallGpu) - filamentOf(wallCpu)) / filamentOf(wallCpu)
   assert.ok(wallDrift < FILAMENT_TOLERANCE, `filament ${filamentOf(wallGpu)} vs ${filamentOf(wallCpu)}`)
   ok(`[coincident] a shared wall: no layer on the CPU, filament within ${(wallDrift * 100).toFixed(3)} %`)
+
+  const captureRoute = await sliceWithContourGpu({ kernel, contourGpu: { union: contourGpu.union }, stl: overlapping, paramsText, onProgress: () => {} })
+  assert.equal(captureRoute.stats.contour_front, 'cpu')
+  assert.equal(captureRoute.stats.contour_engine, 'gpu')
+  const declined = await sliceWithContourGpu({ kernel, contourGpu, stl: overlapping, paramsText, onProgress: () => {}, meshRoute: false })
+  assert.equal(declined.stats.contour_front, 'cpu')
+  assert.equal(declined.gcode, captureRoute.gcode)
+  ok('[capture] a GPU module without the cut and chain, or meshRoute false, takes the capture route')
+  assert.equal(gpuSlice.gcode, captureRoute.gcode, 'the GPU cut and chain gave the kernel\'s loops on a clean mesh')
+  ok('[mesh] the mesh route gives the capture route\'s G-code on a clean mesh')
+
+  const holedCpu = kernel.slice(holed, paramsText, () => {})
+  const holedGpu = await job(holed)
+  assert.equal(holedGpu.stats.contour_engine, 'gpu', `engine: ${holedGpu.stats.contour_engine_reason}`)
+  assert.ok(holedGpu.stats.contour_open_layers > 0, 'the gap leaves chains open')
+  assert.ok(holedGpu.stats.contour_fallback_layers >= holedGpu.stats.contour_open_layers)
+  assert.equal(holedGpu.gcode, holedCpu.gcode, 'every layer of the holed box came from the kernel\'s own cut, chain and union')
+  ok(`[open layer] ${holedGpu.stats.contour_open_layers} open layers rebuilt by the kernel from the mesh; the CPU slice's G-code`)
 
   const again = await job(overlapping)
   assert.equal(again.gcode, gpuSlice.gcode)
