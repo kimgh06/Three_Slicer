@@ -265,7 +265,7 @@ export function makeModelLoad(deps) {
         closeImportedGcode?.()
         const loaded = []
         for (const ob of objs) {
-          const added = apiRef.current?.addObject(ob.name, ob.modelPos, ob.paint)
+          const added = apiRef.current?.addObject(ob.name, ob.modelPos, ob.paint, ob.baked)
           totalTri += ob.modelPos.length / 9
           if (ob.paint) anyPaint = true
           if (added && ob.objectid) loaded.push({ objectid: ob.objectid, id: added.id, paint: ob.paint, bbox: ob.bbox })

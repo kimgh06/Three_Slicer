@@ -12,18 +12,9 @@ import { createPaintInput } from './paint_input.js'
 import { createSectionPlane } from './section_plane.js'
 import { DEFAULT_BED, DEFAULT_FILAMENT_COLORS } from '../core/viewer_defaults.js'
 import { THEME } from '../core/theme.js'
+import { bakeModel, flatNormals, positionBounds } from '../core/bake_local.js'
 
-// Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26). Only the model->three local transform remains here.
-// model -> three-local (R=RotX(-90°)), centered in XZ, minY=0
-function bakeLocal(modelPos) {
-  const n = modelPos.length, p = new Float32Array(n)
-  for (let i = 0; i < n; i += 3) { p[i] = modelPos[i]; p[i + 1] = modelPos[i + 2]; p[i + 2] = -modelPos[i + 1] }
-  let minx = Infinity, miny = Infinity, minz = Infinity, maxx = -Infinity, maxy = -Infinity, maxz = -Infinity
-  for (let i = 0; i < n; i += 3) { minx = Math.min(minx, p[i]); maxx = Math.max(maxx, p[i]); miny = Math.min(miny, p[i + 1]); maxy = Math.max(maxy, p[i + 1]); minz = Math.min(minz, p[i + 2]); maxz = Math.max(maxz, p[i + 2]) }
-  const cx = (minx + maxx) / 2, cz = (minz + maxz) / 2
-  for (let i = 0; i < n; i += 3) { p[i] -= cx; p[i + 1] -= miny; p[i + 2] -= cz }
-  return { localPos: p, size: { w: maxx - minx, d: maxz - minz, h: maxy - miny } }
-}
+// Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26); the model->three local transform is core/bake_local.js.
 
 // Toolpath colors/geometry/shaders moved to toolpath_gpu.js (port of the upstream libvgcode) — the CPU ribbon builder is gone (stage 24).
 // The renderer/scene/camera/OrbitControls/TransformControls, the pointer/key handlers and the imperative apiRef surface.
@@ -493,8 +484,12 @@ export function useThreeScene(deps) {
     //  absent, and a restore always carries one.)
     const spawnMesh = (name, localPos, rot = null, scale = null, pos = null, opts = null) => {
       const geo = new THREE.BufferGeometry()
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(localPos, 3)); geo.computeVertexNormals()
-      geo.computeBoundingBox()
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(localPos, 3))
+      // A load hands over the normals and bounds the parse worker already computed (core/bake_local.js); the other
+      //  spawns (duplicate, paste, undo, split) compute the same values here.
+      geo.setAttribute('normal', new THREE.BufferAttribute(opts?.normals ?? flatNormals(localPos), 3))
+      const bounds = opts?.bounds ?? positionBounds(localPos)
+      geo.boundingBox = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max))
       const col0 = extruderColorsRef.current[0] || DEFAULT_FILAMENT_COLORS[0]   // apply the T1 filament color
       const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(col0), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide }))
       if (rot) mesh.rotation.copy(rot)
@@ -636,8 +631,10 @@ export function useThreeScene(deps) {
       // `paint` is a 3mf's painted facets ({color,supports,…}: Map(localTriangleIndex -> split-tree hex)), held on the
       //  object until something registers the selector — only then is the merged facet numbering they must be rebased
       //  onto known. bakeLocal is a per-vertex transform, so the triangle ORDER the indices refer to survives it.
-      addObject: (name, modelPos, paint = null) => {
-        const added = spawnMesh(name, bakeLocal(modelPos).localPos)
+      //  `baked` is bakeModel's result when the parse worker already made it.
+      addObject: (name, modelPos, paint = null, baked = null) => {
+        const local = baked ?? bakeModel(modelPos)
+        const added = spawnMesh(name, local.localPos, null, null, null, { normals: local.normals, bounds: local.bounds })
         if (paint) { const o = objectsRef.current.find(x => x.id === added.id); if (o) o.paint = paint }
         return added
       },
