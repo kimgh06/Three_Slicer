@@ -21,6 +21,7 @@ const DEMOS = [
   { name: 'printer-showcase', integration: 'src/slicer_section.jsx' },
   { name: 'cad-embed', integration: 'src/print_feedback.js' },
   { name: 'farm-dashboard', integration: 'src/submit_job.js' },
+  { name: 'octoprint', integration: 'src/octoprint.js' },
 ]
 
 await mkdir(out, { recursive: true })

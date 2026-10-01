@@ -6,7 +6,7 @@ DEV_PORT ?= 5173
 UP_PORT  ?= 8080
 
 EXAMPLES := ../examples
-DEMOS    := instant-quote printer-showcase cad-embed farm-dashboard
+DEMOS    := instant-quote printer-showcase cad-embed farm-dashboard octoprint
 
 .PHONY: dev up down logs kill pkg demos demos-install demos-clean sync-viewer
 
