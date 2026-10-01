@@ -1,0 +1,23 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: #0d1016; color: #e8eaf0; font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+.page { display: flex; flex-direction: column; height: 100%; }
+.bar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #222833; }
+.brand { align-self: center; margin-right: 8px; }
+.bar label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #97a1b2; }
+.bar label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: #e8eaf0; }
+.bar input[type="url"], .bar input[type="password"] {
+  width: 220px; max-width: 100%; padding: 6px 8px; border: 1px solid #2a2f3a; border-radius: 6px;
+  background: #141821; color: inherit; font: inherit;
+}
+.bar button { padding: 7px 12px; border: 1px solid #4c8dff; border-radius: 6px; background: #4c8dff1f; color: inherit; font: inherit; cursor: pointer; }
+.bar button:disabled { opacity: .5; cursor: default; }
+.status { flex: 1 1 100%; margin: 0; font-size: 13px; color: #97a1b2; }
+.status-ok { color: #5fd38d; }
+.status-error { color: #ff7a7a; }
+.status .inline { margin-left: 10px; padding: 2px 8px; font-size: 12px; }
+
+/* The viewer fills its nearest positioned ancestor. */
+.frame { position: relative; flex: 1; min-height: 0; }

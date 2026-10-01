@@ -1,14 +1,14 @@
 # three-slicer example demo specs
 
-This directory defines five ways to integrate `three-slicer` into a real product. Each demo is an
+This directory defines six ways to integrate `three-slicer` into a real product. Each demo is an
 independent project deployed to a different site than this repository and installs the package from npm
-(§2). Four of the five are implemented; the remaining one (marketplace) is still an **implementation
+(§2). Five of the six are implemented; the remaining one (marketplace) is still an **implementation
 spec**.
 
-The four implemented demos: [`instant-quote/`](./instant-quote/),
+The five implemented demos: [`instant-quote/`](./instant-quote/),
 [`printer-showcase/`](./printer-showcase/), [`cad-embed/`](./cad-embed/),
-[`farm-dashboard/`](./farm-dashboard/) — each `npm i && npm run dev`.
-All four deploy as static hosting (no backend). The remaining one (marketplace) can only start once the
+[`farm-dashboard/`](./farm-dashboard/), [`octoprint/`](./octoprint/) — each `npm i && npm run dev`.
+All five deploy as static hosting (no backend). The remaining one (marketplace) can only start once the
 package publishes a project-codec export.
 
 ## Demo catalog
@@ -20,6 +20,7 @@ package publishes a project-codec export.
 | CAD Embed | printability feedback while designing | `client`, `settings`, `toggle`, `viewer/toolpath` | **implemented** | [spec](./cad-embed.md) · [app](./cad-embed/) |
 | Marketplace | 3MF project preservation and retargeting | project codec, `viewer`, `settings` | needs prerequisite API work | [marketplace.md](./marketplace.md) |
 | Farm Dashboard | distributed browser slicing | `client`, `settings`, `viewer/gcode`, `viewer/toolpath`, `viewer/loaders` | **implemented** | [spec](./farm-dashboard.md) · [app](./farm-dashboard/) |
+| Send to OctoPrint | upload G-code to a printer server | `viewer` (`onExport`), `components` | **implemented** | [README](./octoprint/README.md) · [app](./octoprint/) |
 
 Each demo answers exactly one question.
 
@@ -28,6 +29,7 @@ Each demo answers exactly one question.
 - A CAD developer: "can I wire design changes straight to print time and material use?"
 - A marketplace developer: "can I preserve the whole 3MF project, not just the mesh?"
 - A print-farm developer: "can I prepare jobs for several printers without a slicing server?"
+- An OctoPrint user: "can a sliced plate go straight to my printer instead of Downloads?"
 
 ## 1. Shared implementation principles
 
@@ -57,7 +59,8 @@ examples/
 ├── instant-quote/        # each an independent project (own node_modules, own deployment)
 ├── printer-showcase/
 ├── cad-embed/
-└── farm-dashboard/        # marketplace is spec-only (marketplace.md)
+├── farm-dashboard/
+└── octoprint/             # marketplace is spec-only (marketplace.md)
 ```
 
 ### Installation
@@ -67,7 +70,7 @@ peers `react >=18`, `react-dom >=18`, `three ^0.160.0`. Which peers are needed d
 demo uses.
 
 ```bash
-# demos using viewer/components (printer-showcase, marketplace, cad-embed)
+# demos using viewer/components (printer-showcase, marketplace, cad-embed, octoprint)
 npm i three-slicer three react react-dom
 
 # demos not using the viewer — but three-slicer/viewer/loaders imports three
@@ -409,6 +412,7 @@ gallery app.
 3. `cad-embed`: verifies host-controlled geometry and the automatic re-slice API.
 4. `marketplace`: adds the project codec's public export, then verifies the 3MF semantic round-trip.
 5. `farm-dashboard`: puts the queue and mock printers on top of the browser-slicing flow above.
+6. `octoprint`: verifies that the host's `onExport` can send the viewer's G-code to a real printer server.
 
 ## 11. Definition of Done
 
@@ -439,3 +443,4 @@ A demo is complete only when all of the below hold.
 | cad-embed | the programmable feedback loop | a CAD kernel, the 3MF marketplace |
 | marketplace | 3MF project preservation and printer retargeting | search/review/account CRUD |
 | farm-dashboard | the client-compute queue architecture | real printer protocols |
+| octoprint | the `onExport` hook against a real printer server | an OctoPrint plugin, printer status |
