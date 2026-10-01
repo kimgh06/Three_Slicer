@@ -4,7 +4,7 @@
 //   Run: node viewer-package/tests/test_bake_local.mjs
 import assert from 'node:assert'
 import * as THREE from 'three'
-import { bakeLocal, bakeModel, flatNormals, positionBounds } from '../src/core/bake_local.js'
+import { bakeLocal, bakeModel, flatNormals, positionBounds, positionSphere } from '../src/core/bake_local.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
@@ -41,6 +41,16 @@ const bounds = positionBounds(localPos), box = geometry.boundingBox
 check('positionBounds equals computeBoundingBox', bounds.min.join() === box.min.toArray().join() && bounds.max.join() === box.max.toArray().join(),
   `${JSON.stringify(bounds)} vs ${JSON.stringify([box.min, box.max])}`)
 
+geometry.computeBoundingSphere()
+const sphere = positionSphere(localPos, bounds), threeSphere = geometry.boundingSphere
+check('positionSphere equals computeBoundingSphere', sphere.center.join() === threeSphere.center.toArray().join() && sphere.radius === threeSphere.radius,
+  `${JSON.stringify(sphere)} vs ${JSON.stringify(threeSphere)}`)
+const emptyGeometry = new THREE.BufferGeometry()
+emptyGeometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(0), 3))
+emptyGeometry.computeBoundingSphere()
+const emptySphere = positionSphere(new Float32Array(0), positionBounds(new Float32Array(0)))
+check('positionSphere of no positions equals three (centre 0, radius 0)', emptySphere.center.join() === emptyGeometry.boundingSphere.center.toArray().join() && emptySphere.radius === emptyGeometry.boundingSphere.radius)
+
 console.log('\n[bake: the local frame — y up, seated, centred]')
 check('seated: lowest y is 0', bounds.min[1] === 0)
 check('centred in x and z', Math.abs(bounds.min[0] + bounds.max[0]) < 1e-3 && Math.abs(bounds.min[2] + bounds.max[2]) < 1e-3)
@@ -49,7 +59,8 @@ check('model z becomes local y', Math.abs(localPos[1] - (modelPos[2] - Math.min(
 console.log('\n[bake: bakeModel is the three pieces together]')
 const baked = bakeModel(modelPos)
 check('same localPos, normals and bounds', baked.localPos.every((v, i) => v === localPos[i])
-  && baked.normals.every((v, i) => v === geometry.attributes.normal.array[i]) && baked.bounds.max.join() === bounds.max.join())
+  && baked.normals.every((v, i) => v === geometry.attributes.normal.array[i]) && baked.bounds.max.join() === bounds.max.join()
+  && baked.sphere.radius === threeSphere.radius)
 
 if (failures) console.log(`\n${failures} CHECK(S) FAILED`)
 else console.log('\nALL BAKE CHECKS PASSED')

@@ -49,8 +49,26 @@ export function positionBounds(positions) {
   return { min, max }
 }
 
+/**
+ * The bounding sphere three.js computeBoundingSphere makes on the first render (it culls with it): the box centre,
+ *  then the largest squared distance to it, in that order. 60ms of the first frame after a haaland.3mf load.
+ *  -> { center: [x,y,z], radius }
+ */
+export function positionSphere(positions, bounds) {
+  const center = [0, 0, 0]
+  const empty = bounds.max[0] < bounds.min[0] || bounds.max[1] < bounds.min[1] || bounds.max[2] < bounds.min[2]
+  if (!empty) for (let axis = 0; axis < 3; axis++) center[axis] = (bounds.min[axis] + bounds.max[axis]) * 0.5
+  let maxRadiusSq = 0
+  for (let i = 0; i < positions.length; i += 3) {
+    const dx = center[0] - positions[i], dy = center[1] - positions[i + 1], dz = center[2] - positions[i + 2]
+    maxRadiusSq = Math.max(maxRadiusSq, dx * dx + dy * dy + dz * dz)
+  }
+  return { center, radius: Math.sqrt(maxRadiusSq) }
+}
+
 /** Everything the scene builds a loaded mesh from, in one pass a worker can make. */
 export function bakeModel(modelPos) {
   const { localPos, size } = bakeLocal(modelPos)
-  return { localPos, size, normals: flatNormals(localPos), bounds: positionBounds(localPos) }
+  const bounds = positionBounds(localPos)
+  return { localPos, size, normals: flatNormals(localPos), bounds, sphere: positionSphere(localPos, bounds) }
 }

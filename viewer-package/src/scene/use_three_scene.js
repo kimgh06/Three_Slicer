@@ -496,6 +496,7 @@ export function useThreeScene(deps) {
       geo.setAttribute('normal', new THREE.BufferAttribute(opts?.normals ?? flatNormals(localPos), 3))
       const bounds = opts?.bounds ?? positionBounds(localPos)
       geo.boundingBox = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max))
+      if (opts?.sphere) geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(...opts.sphere.center), opts.sphere.radius)
       const col0 = extruderColorsRef.current[0] || DEFAULT_FILAMENT_COLORS[0]   // apply the T1 filament color
       const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(col0), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide }))
       if (rot) mesh.rotation.copy(rot)
@@ -640,7 +641,7 @@ export function useThreeScene(deps) {
       //  `baked` is bakeModel's result when the parse worker already made it.
       addObject: (name, modelPos, paint = null, baked = null) => {
         const local = baked ?? bakeModel(modelPos)
-        const added = spawnMesh(name, local.localPos, null, null, null, { normals: local.normals, bounds: local.bounds })
+        const added = spawnMesh(name, local.localPos, null, null, null, { normals: local.normals, bounds: local.bounds, sphere: local.sphere })
         if (paint) { const o = objectsRef.current.find(x => x.id === added.id); if (o) o.paint = paint }
         return added
       },
