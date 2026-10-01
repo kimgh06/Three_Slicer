@@ -2,8 +2,9 @@
 //  Serial by default, exactly as before. parallel_for/task_group use real threads only inside a scope the bridge
 //  (generate_normal, grid/snug) opened with ParallelScope, or around one tree-path loop with ParallelSection. The rest of
 //  the tree path stays serial because the concurrent_* stubs are not thread-safe (they are std aliases): a loop is
-//  threaded there only after its shared state is locked or made per-index (TreeSupport.cpp: draw_circles,
-//  generate_toolpaths, the avoidance precompute and drop_nodes' move pass).
+//  threaded there only after its shared state is locked or made per-index (TreeSupport.cpp: detect_overhangs' layer
+//  loops, draw_circles, generate_toolpaths, the avoidance precompute, drop_nodes' spanning trees and move pass; and
+//  TreeSupport::generate takes one thread with take(1) to build the preview cache beside detect_overhangs).
 //  budget: a global budget so nested spawning cannot exceed the emscripten pthread pool (hardwareConcurrency).
 //  When the budget runs out the work runs serially on the calling thread (same results, deadlock impossible).
 #pragma once

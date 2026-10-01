@@ -136,6 +136,10 @@ public:
     //  slice dereference null: a std::length_error on st, "memory access out of bounds" on mt, on any model.
     std::shared_ptr<TreeSupportData> alloc_tree_support_preview_cache();   // defined in Support/TreeSupport.cpp
     void clear_tree_support_preview_cache() { m_tree_support_preview_cache.reset(); }
+    // (this port) the cache alloc_tree_support_preview_cache would make, without keeping it: TreeSupport::generate builds
+    //  it on a thread of its own while detect_overhangs runs, and installs it with set_tree_support_preview_cache
+    std::shared_ptr<TreeSupportData> make_tree_support_preview_cache() const;   // defined in Support/TreeSupport.cpp
+    void set_tree_support_preview_cache(std::shared_ptr<TreeSupportData> cache) { m_tree_support_preview_cache = std::move(cache); }
     // adapter helpers (PrintObject is a friend of Layer/SupportLayer -> can build & read them).
     Layer* add_layer(int id, coordf_t height, coordf_t print_z, coordf_t slice_z) {
         m_layers.push_back(new Layer(size_t(id), this, height, print_z, slice_z));
