@@ -2,7 +2,6 @@ import { log } from '../core/log.js'
 import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { exportedGcode } from 'three-slicer-viewer/gcode'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
@@ -29,7 +28,7 @@ export function useSlicer(deps) {
     settings, plateSettings, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
     paintStateCountsRef, extruderColorsRef, rebuildToolpaths, rebuildPaintOverlay,
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount,
-    setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
+    setLayerLo, setLayerHi, setGcodeResult, setCanvasMode, setPaintCounts, setSliceNotice,
     // Which kernel the selector worker loaded ('mt'|'st'), for the UI badge and the pool size. Optional.
     setKernelKind,
     // features.warmup / features.logs — `quiet` rides on the worker messages because the worker is a separate
@@ -207,7 +206,7 @@ export function useSlicer(deps) {
     setStats(statsFromKernel(result.stats, result.throughput))
     setOverBed(!!result.stats.over_bed)
     setLayerCount(n)
-    setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(new Blob([exportedGcode(result, extruderColorsRef?.current)], { type: 'text/plain' })) })
+    setGcodeResult(result)
   }
 
   useEffect(() => () => {

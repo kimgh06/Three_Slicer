@@ -11,6 +11,8 @@ import { resultToolColors } from '../core/gcode_parse.js'
 // Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once).
 // The component keeps owning the refs/state; this factory only receives what it uses and is rebuilt each
 //  render so the values it closes over (settings) stay fresh.
+const legendOf = (cc) => ({ min: cc.min, max: cc.max, label: cc.label, unit: cc.unit, cont: cc.cont })
+
 export function makeToolpathView(deps) {
   const {
     three, apiRef, plateTpRef, toolpathRef, segDataRef, layersDataRef, plateResultsRef, plateOffsetsRef,
@@ -51,7 +53,8 @@ export function makeToolpathView(deps) {
     ctl.setLayerRange(0, Math.max(0, layers.length - 1))            // unfocused default: full range
     const cc = computeColors(seg, viewTypeRef.current, plateCtx(idx, viewCtx()))   // apply the current view type colors
     ctl.setColors(cc.color)
-    const entry = { group, ctl, seg, layers }   // layers = source reference (used to detect a re-slice)
+    // layers = source reference (used to detect a re-slice); colorRange = the legend for the colours just applied
+    const entry = { group, ctl, seg, layers, colorRange: legendOf(cc) }
     plateTpRef.current[idx] = entry
     return entry
   }
@@ -116,10 +119,13 @@ export function makeToolpathView(deps) {
     for (const [idx, e] of Object.entries(plateTpRef.current)) {
       const cc = computeColors(e.seg, viewTypeRef.current, plateCtx(Number(idx), ctx))
       e.ctl.setColors(cc.color)
-      if (e.ctl === toolpathRef.current)
-        setColorRange({ min: cc.min, max: cc.max, label: cc.label, unit: cc.unit, cont: cc.cont })
+      e.colorRange = legendOf(cc)
+      if (e.ctl === toolpathRef.current) setColorRange(e.colorRange)
     }
   }
+  // A plate focus changes which legend is shown, not any plate's colours: each entry keeps the range of the colours
+  //  it was last painted with. Recolouring every plate here was 266-279ms per switch on haaland.3mf (6 plates).
+  function showFocusedColorRange(entry) { setColorRange(entry.colorRange) }
   // Rebuilds the focused plate's (selectedPlateRef) toolpath and refreshes aliases/stats. Other plates' objects are kept.
   function rebuildToolpaths() {
     const idx = selectedPlateRef.current
@@ -140,5 +146,5 @@ export function makeToolpathView(deps) {
   }
   function applyLayerRange() { toolpathRef.current?.setLayerRange(layerLoRef.current, layerHiRef.current) }
 
-  return { disposePlateToolpath, clearToolpaths, buildPlateToolpath, ensurePlateToolpaths, viewCtx, applyViewColors, rebuildToolpaths, applyLayerRange, plateToolColors }
+  return { disposePlateToolpath, clearToolpaths, buildPlateToolpath, ensurePlateToolpaths, viewCtx, applyViewColors, showFocusedColorRange, rebuildToolpaths, applyLayerRange, plateToolColors }
 }
