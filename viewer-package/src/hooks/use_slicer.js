@@ -438,6 +438,10 @@ export function useSlicer(deps) {
       if (merged.splits?.length) { params.mm_group_splits = merged.splits; params.mm_group_tools = merged.tools }
       params.wipe_tower_real = !!effective.wipe_tower_real
     }
+    // Every object of the plate on one filament that is not the first: the single-material path prints it with that
+    //  filament, and the start template loads it. Without this a plate assigned to filament 4 loaded filament 1
+    //  (measured on a Bambu Lab X2D project: `M620 S0A` where Bambu Studio's own slice starts on filament 4).
+    if (merged.extruders === 1 && merged.tools[0] > 0) params.single_tool = merged.tools[0]
     // Material painting assigns tools per facet, so `merged` — which reads whole-object assignment only — cannot
     //  see it. The kernel gates its multi-tool path on `extruder_count >= 2 && (groups || painted tools)`, so a
     //  painted-but-unassigned model short-circuits on the FIRST term and the paint is silently ignored: measured
