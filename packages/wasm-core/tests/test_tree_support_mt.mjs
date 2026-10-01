@@ -1,6 +1,6 @@
-// Tree support (slim / strong / hybrid) runs four of its loops threaded on mt: draw_circles, generate_toolpaths, the
-//  avoidance precompute and drop_nodes' move pass. Each has to give the serial loop's result, so the mt G-code must
-//  equal the st G-code, run after run. The move pass is where this broke first: the SupportNode constructor also points
+// Tree support (slim / strong / hybrid) runs its loops threaded on mt: detect_overhangs' layer passes, draw_circles,
+//  generate_toolpaths, the avoidance precompute, and drop_nodes' spanning trees and move pass. Each has to give the
+//  serial loop's result, so the mt G-code must equal the st G-code, run after run. The move pass is where this broke first: the SupportNode constructor also points
 //  the nodes merged into its parent at the new node, one node can be merged into several parents, and the last of those
 //  writes followed the thread order (measured on a 1.13M-facet hybrid plate: a different G-code on every mt run).
 //  The model is built to reach that code: stacked slabs whose branches merge on the way down, and build-plate-only
@@ -57,6 +57,20 @@ for (const treeStyle of ['slim', 'strong', 'hybrid']) {
     console.log(`  ${same ? 'ok' : 'FAIL'}: ${treeStyle} mt run ${run} equals st (${serial.gcode.length} bytes)`)
     if (!same) failures++
   }
+}
+// Arachne walls are written by the threaded G-code writers too (slicer_core.cpp parEmit). The toolpath stream and its
+//  per-segment widths are what the preview draws, so they are compared as well as the text.
+const layerBytes = (result) => result.layers.map((layer) => [layer.z, Array.from(layer.paths), Array.from(layer.widths)])
+{
+  const arachne = JSON.stringify({ ...params, tree_style: 'hybrid', wall_generator: 'arachne' })
+  const serial = st.slice(model, arachne, () => {})
+  assert.ok(!serial.error, `arachne: st slices (${serial.error})`)
+  const threaded = mt.slice(model, arachne, () => {})
+  const sameText = threaded.gcode === serial.gcode
+  let sameLayers = true
+  try { assert.deepStrictEqual(layerBytes(threaded), layerBytes(serial)) } catch { sameLayers = false }
+  console.log(`  ${sameText && sameLayers ? 'ok' : 'FAIL'}: arachne walls, mt G-code ${sameText ? 'equals' : 'differs from'} st, toolpaths and widths ${sameLayers ? 'equal' : 'differ'}`)
+  if (!sameText || !sameLayers) failures++
 }
 if (failures) { console.log(`${failures} TREE SUPPORT MT CHECK(S) FAILED`); process.exit(1) }
 console.log('ALL TREE SUPPORT MT CHECKS PASSED')

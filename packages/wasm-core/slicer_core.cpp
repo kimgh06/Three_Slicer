@@ -293,7 +293,10 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   int preNext = 0, preConsumed = -1;
   unsigned preHW = std::thread::hardware_concurrency(); if (!preHW) preHW = 4;
   const bool parEmit = !p.spiral_mode && !scarfOn && gw.pe_slope <= 0.0 && !gw.emit_pe_tags
-                       && p.wall_generator != "arachne" && !realPE;   // conditions under which G003 parallel emission is possible (otherwise serial fallback)
+                       && !realPE;   // conditions under which G003 parallel emission is possible (otherwise serial fallback)
+  //  Arachne walls emit through the writer's own GW and the thread_local width state like every other role, so arachne is
+  //  not among them: it was, and a 1.13M-facet hybrid plate with arachne walls emitted on one thread (emit 3.2 -> 1.7 s
+  //  threaded; G-code, toolpaths and widths byte-identical to st on it and on a 3M-facet arachne model).
   unsigned preNT = std::min<unsigned>(std::max(1u, parEmit ? preHW / 2 : preHW - 1), (unsigned)std::max(1, N));
   const int PRE_WINDOW = (int)preNT * 2 + 4;
   auto preWork = [&]{

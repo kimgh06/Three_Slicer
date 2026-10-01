@@ -140,7 +140,7 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
 }
 
 // G003 step 2: full emission of one layer (setup + the empty/normal branches) — a single implementation shared by the serial path and the parallel writer.
-//  Spiral mode is inlined at the call site (guarded out of parallelism), and scarf/PE tags/PE-lite/arachne/real PE also fall back to serial via the parEmit guard.
+//  Spiral mode is inlined at the call site (guarded out of parallelism), and scarf/PE tags/PE-lite/real PE also fall back to serial via the parEmit guard.
 void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
                            int i, LayerData& ld, EmitPre& pre, const Params& p,
                            double zE, double w, int N, int nraft, int fTravel,
