@@ -14,7 +14,7 @@ import { DEFAULT_BED, DEFAULT_FILAMENT_COLORS } from '../core/viewer_defaults.js
 import { THEME } from '../core/theme.js'
 import { bakeModel, flatNormals, positionBounds } from '../core/bake_local.js'
 
-// Model loading (STL/OBJ/3MF/AMF/PLY) moved to model_loaders.js (stage 26); the model->three local transform is core/bake_local.js.
+// Model loading (every format in SUPPORTED_EXT) moved to model_loaders.js (stage 26); the model->three local transform is core/bake_local.js.
 
 // Toolpath colors/geometry/shaders moved to toolpath_gpu.js (port of the upstream libvgcode) — the CPU ribbon builder is gone (stage 24).
 // The renderer/scene/camera/OrbitControls/TransformControls, the pointer/key handlers and the imperative apiRef surface.
