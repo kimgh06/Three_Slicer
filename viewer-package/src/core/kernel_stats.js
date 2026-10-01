@@ -11,7 +11,8 @@
 //  when it was not.
 function contourOf(s) {
   if (!s.contour_engine) return null
-  return { engine: s.contour_engine, reason: s.contour_engine_reason ?? null, fallbackLayers: s.contour_fallback_layers ?? 0, gpuMs: s.contour_gpu_ms ?? null }
+  return { engine: s.contour_engine, reason: s.contour_engine_reason ?? null, fallbackLayers: s.contour_fallback_layers ?? 0, gpuMs: s.contour_gpu_ms ?? null,
+    front: s.contour_front ?? null }
 }
 export function statsFromKernel(s, throughput = null) {
   return {

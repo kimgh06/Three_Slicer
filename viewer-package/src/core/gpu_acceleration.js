@@ -2,10 +2,12 @@
 //  and the kernel that loaded. `gpu_acceleration` is a viewer knob in the settings map, like `slice_workers` and
 //  `sla_antialias`: absent means 'auto'. It is a worker option, never a kernel parameter.
 //
-// What the GPU does is PASS1's union of every layer's loops (three-slicer's contour_gpu.js). Measured in node with a
-//  3M-facet model and tree slim support: the single-threaded kernel 9.8 -> 7.6 s, the threaded kernel unchanged within
-//  run-to-run spread (the same union is already spread over its threads). So 'auto' asks for the GPU only on the
-//  single-threaded kernel. 'on' asks for it on either; 'off' never does.
+// What the GPU does is PASS1's front: with a kernel that hands over its mesh, the cut, chain and union of every layer
+//  (three-slicer's contour_front_gpu.js and contour_gpu.js, `front: 'gpu'` in the result); with an older kernel, the
+//  union of the loops the kernel cut and chained (`front: 'cpu'`). Measured in node with a 3M-facet model and tree slim
+//  support: the single-threaded kernel 9.8 -> 7.6 s for the union alone, the threaded kernel unchanged within run-to-run
+//  spread (the same work is already spread over its threads). So 'auto' asks for the GPU only on the single-threaded
+//  kernel. 'on' asks for it on either; 'off' never does.
 // Whatever the mode, the worker decides whether it can: without a WebGPU device, or when the GPU refuses a slice, the
 //  kernel slices by itself and the result says so (kernel_stats.js `contour`). A GPU slice's contours have the CPU
 //  union's area and other vertices, so its G-code is not the CPU slice's byte for byte.
@@ -37,6 +39,8 @@ export function contourEngineText(contour) {
   if (!contour) return null
   if (contour.engine === 'reused') return 'Contours reused from the previous slice'
   if (contour.engine !== 'gpu') return `Contours on the CPU (${contour.reason ?? 'GPU not used'})`
-  if (contour.fallbackLayers > 0) return `Contours on the GPU, ${contour.fallbackLayers} layers on the CPU`
-  return 'Contours on the GPU'
+  let text = 'Contours on the GPU'
+  if (contour.front === 'gpu') text = 'Contours cut and unioned on the GPU'
+  if (contour.fallbackLayers > 0) return `${text}, ${contour.fallbackLayers} layers on the CPU`
+  return text
 }
