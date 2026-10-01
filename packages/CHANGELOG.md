@@ -18,6 +18,12 @@
 
 ### Changed
 
+- The threaded kernel ships its wasm as a file, `engine/src/slicer_core.mt.wasm`, instead of inlining it in
+  `slicer_core.mt.js` (6.4 MB -> 107 KB). Every pthread worker loads the glue, and the inlined bytes cost each of
+  them about 60 MB of V8 heap; Chrome holds every isolate of a tab in one 4 GB heap region, so slicing several plates
+  at once crashed the tab ("V8 javascript OOM"; 3 workers on a 6-plate project: 4 crashes in 6 runs). With the file,
+  3 to 8 workers ran without a crash and peaked at 1.2-1.9 GB. A bundler emits the file as an asset; see
+  "Multithreaded WASM" in the README for serving it.
 - Tree support (slim, strong, hybrid) runs four of its loops on every thread of the threaded kernel: a 1.13M-facet
   hybrid plate went from 91 to 21 s, with the same G-code as the single-threaded kernel.
 - Tree support unions each layer's support circles per group of overlapping circles instead of all at once. On the
@@ -42,12 +48,6 @@
   the single-threaded kernel.
 
 ### Fixed
-- The threaded kernel ships its wasm as a file, `engine/src/slicer_core.mt.wasm`, instead of inlining it in
-  `slicer_core.mt.js` (6.4 MB -> 107 KB). Every pthread worker loads the glue, and the inlined bytes cost each of
-  them about 60 MB of V8 heap; Chrome holds every isolate of a tab in one 4 GB heap region, so slicing several plates
-  at once crashed the tab ("V8 javascript OOM"; 3 workers on a 6-plate project: 4 crashes in 6 runs). With the file,
-  3 to 8 workers ran without a crash and peaked at 1.2-1.9 GB. A bundler emits the file as an asset; see
-  "Multithreaded WASM" in the README for serving it.
 
 - Tree support could lose a whole support island's paths on a layer: reordering a layer's paths dropped any group of
   paths whose first or last member was empty, with every path in it (a 3M-facet tree-slim model lost 64.6 mm of
@@ -58,6 +58,10 @@
   tree was broken by memory address).
 - A Bambu Lab X2D or H2D project failed every slice with `CUSTOM_GCODE_ERROR`: the start G-code reads
   `first_filaments` and `first_non_support_filaments` per physical nozzle, which were missing or not mapped.
+- A plate whose objects are all on one filament other than the first printed with filament 1: the start G-code
+  loaded it (`M620 S0A` on a Bambu Lab printer) and its temperature, flow and retraction were used. The kernel
+  takes `single_tool`, which the viewer sends for such a plate, and prints with that filament's values; the
+  start and end G-code see it as `initial_extruder` / `current_extruder` and the footer reports its use.
 
 ## 0.3.2 — 2026-09-21
 

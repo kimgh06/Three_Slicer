@@ -539,6 +539,17 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   dropped, and the plate is re-queued to run alone on the selector worker after the pool drains — so a too-high
   count degrades to serial instead of to a row of failed plates. Selection no longer follows the run; the tabs
   carry each plate's state (`plateRun`), with the failure reason in the tooltip.
+- **The threaded kernel's wasm is a file, never inlined in its glue** (`build.sh`: no `SINGLE_FILE` on the mt link).
+  Every pthread worker is started from the glue file itself and parses all of it, while it takes the compiled
+  module from the main thread. Inlined, the wasm was a 6.3MB string literal in each of ~16 isolates per kernel,
+  ~60MB of V8 heap each, and Chrome keeps every isolate of a renderer in one 4GB pointer-compression cage: three
+  slicing workers filled it and the tab died with `V8 javascript OOM (CALL_AND_RETRY_LAST)` (haaland.3mf, 6 plates,
+  4 of 6 runs) while the renderer's RSS read 4.5-5.2GB and the isolate that failed held 598MB. RSS does not show
+  this; the sum of `--js-flags=--trace-gc` heap sizes over all isolates does. Split, the glue is 107KB, a pthread
+  isolate ~1MB, and 3-8 workers peaked at 1.2-1.9GB. The glue reaches the file through the literal
+  `new URL("slicer_core.mt.wasm", import.meta.url)`, the shape Vite and webpack emit as an asset; the bare name
+  beside it is the `locateFile()` branch. `test_mt_glue.mjs` fails on an inlined wasm and `pack_check.sh` on a
+  tarball, Vite dist or Next build without the file. The st kernel keeps `SINGLE_FILE`: it has one isolate.
 - **Every resin plate keeps a preview in the scene, not just the focused one.** The focused resin plate is the
   clipped `setSlaPreview` slot the layer slider cuts; every other resin plate with a result gets a static,
   unclipped group through `setSlaStatic` (`scene/sla_preview_mesh.js` builds both), the resin counterpart of the
@@ -551,17 +562,6 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `packages/wasm-core/slasupport_port/` is PrusaSlicer 2.9.6 verbatim — its own guide is
   `slasupport_port/PORT_NOTES.md`, and `test_sla_source_manifest.mjs` fails the build when a ported file
   drifts from its recorded upstream hash. It builds against real vendored deps, not shims: NLopt 2.5.0
-- **The threaded kernel's wasm is a file, never inlined in its glue** (`build.sh`: no `SINGLE_FILE` on the mt link).
-  Every pthread worker is started from the glue file itself and parses all of it, while it takes the compiled
-  module from the main thread. Inlined, the wasm was a 6.3MB string literal in each of ~16 isolates per kernel,
-  ~60MB of V8 heap each, and Chrome keeps every isolate of a renderer in one 4GB pointer-compression cage: three
-  slicing workers filled it and the tab died with `V8 javascript OOM (CALL_AND_RETRY_LAST)` (haaland.3mf, 6 plates,
-  4 of 6 runs) while the renderer's RSS read 4.5-5.2GB and the isolate that failed held 598MB. RSS does not show
-  this; the sum of `--js-flags=--trace-gc` heap sizes over all isolates does. Split, the glue is 107KB, a pthread
-  isolate ~1MB, and 3-8 workers peaked at 1.2-1.9GB. The glue reaches the file through the literal
-  `new URL("slicer_core.mt.wasm", import.meta.url)`, the shape Vite and webpack emit as an asset; the bare name
-  beside it is the `locateFile()` branch. `test_mt_glue.mjs` fails on an inlined wasm and `pack_check.sh` on a
-  tarball, Vite dist or Next build without the file. The st kernel keeps `SINGLE_FILE`: it has one isolate.
   (Prusa's exact pin) and SGI glu-libtess in `third_party/deps_src/`, plus brew CGAL headers with
   `-DCGAL_DISABLE_GMP=1` on every CGAL-compiling group (the GMP auto-detect otherwise links `__gmpn_*`
   symbols no wasm provides).
