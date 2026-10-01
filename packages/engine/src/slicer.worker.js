@@ -1,6 +1,7 @@
 // Runs slicing off the main thread (non-blocking UI) plus stage-30 layer streaming.
 // Vite module worker: new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' }).
-// SINGLE_FILE means the wasm is inlined into slicer_core.js -> no external fetch from the worker either.
+// SINGLE_FILE means the wasm is inlined into slicer_core.js -> no external fetch from the worker either. The mt glue
+//  loads slicer_core.mt.wasm from beside itself instead: its pthread workers each parse the glue (build.sh, mt link).
 //
 // Stage 30 (OOM tolerance): set_layer_sink lets the kernel emit layers as it produces them; each is transferred to main
 //  immediately (Float32Array buffers moved -> the worker copy is released at once) and the kernel frees that layer buffer
@@ -18,6 +19,8 @@
 import { assertLegacySlaFallback, parseSlaJob } from './sla_request.js'
 import { withSliceWarnings } from './warnings.js'
 import { withSliceThroughput } from './throughput.js'
+import { acquireContourDevice, makeContourGpu } from './contour_gpu.js'
+import { kernelHasContourPhase, sliceWithContourGpu } from './contour_slice.js'
 import { FILL_TOOLS } from 'three-slicer-viewer/paint'
 
 // The kernel parses `params` as JSON text, so the raw protocol used to require a string — while the direct handle
@@ -49,6 +52,42 @@ const loadCore = async () => {
 }
 
 let modPromise = null
+
+// The contour union on the GPU (contour_gpu.js), made on the first slice that asks for it. `false` once this worker
+//  found no usable device, so the next slice does not ask again; a lost device is asked for again.
+let contourGpu = null
+const contourGpuOf = async () => {
+  if (contourGpu !== null) return contourGpu
+  try {
+    const device = await acquireContourDevice(self.navigator?.gpu)
+    if (!device) { contourGpu = false; return contourGpu }
+    contourGpu = await makeContourGpu(device)
+    device.lost.then(() => { contourGpu = null })
+  } catch (error) {
+    say('warn', '[slicer.worker] contour GPU unavailable:', error)
+    contourGpu = false
+  }
+  return contourGpu
+}
+// A slice's kernel call, through the GPU when the host asked for it (`gpu: true`) and this worker can.
+const runSlice = async (Module, d, onProgress) => {
+  const stl = new Uint8Array(d.stl), text = paramsText(d.params)
+  if (!d.gpu) return Module.slice(stl, text, onProgress)
+  const cpu = (reason) => {
+    const result = Module.slice(stl, text, onProgress)
+    if (result?.stats) { result.stats.contour_engine = 'cpu'; result.stats.contour_engine_reason = reason }
+    return result
+  }
+  if (!kernelHasContourPhase(Module)) return cpu('this kernel build has no contour phase')
+  const gpu = await contourGpuOf()
+  if (!gpu) return cpu('no WebGPU device')
+  const canceled = () => { const flag = Module.cancel_flag_view?.(); return !!flag && flag[0] !== 0 }
+  // The mesh route (the GPU cuts and chains the layers too) only on the single-threaded kernel. Measured on a 3M-facet
+  //  model (node, Dawn): st's own cut and chain is 419-442 ms against 34-154 ms of mesh hand-over + 64-153 ms on the GPU;
+  //  mt's is 64-77 ms on its threads, and the mesh route came out 20 ms slower in the front and 0.02-0.18 s in the slice.
+  const meshRoute = kernelKind === 'st'
+  return sliceWithContourGpu({ kernel: Module, contourGpu: gpu, stl, paramsText: text, onProgress, canceled, meshRoute })
+}
 
 // Stage 20 painting states = upstream's EnforcerBlockerType (see packages/wasm-core/selector_bridge.h):
 //  0=NONE, 1=ENFORCER(==Extruder1), 2=BLOCKER(==Extruder2), 3..16=Extruder3..Extruder16.
@@ -138,7 +177,14 @@ const paintedReply = (Module, message, paintedState) => {
   return answer
 }
 
-self.onmessage = async (e) => {
+// One message at a time. A GPU slice awaits the device between its two kernel calls, and a message handled in that
+//  gap would reach a kernel that is holding another slice's loops.
+let messageChain = Promise.resolve()
+self.onmessage = (e) => {
+  messageChain = messageChain.then(() => handleMessage(e)).catch((error) => say('warn', '[slicer.worker] message failed:', error))
+  return messageChain   // a caller that drives the handler directly (tests) can await its message
+}
+const handleMessage = async (e) => {
   const d = e.data
   // Every reply to a request that carried a `requestId` carries it back, the error reply included — so a caller
   //  waiting on one request cannot take another request's answer (or another command's error) for its own. A
@@ -375,7 +421,7 @@ self.onmessage = async (e) => {
     // Timed around the kernel call INCLUDING the layer sink, which posts each layer to the main thread from inside
     //  it — that transfer is part of what a streamed slice costs and leaving it out would flatter the number.
     const started = performance.now()
-    try { r = Module.slice(new Uint8Array(d.stl), paramsText(d.params), onProgress) }
+    try { r = await runSlice(Module, d, onProgress) }
     finally { Module.clear_layer_sink() }
     if (r && r.error) { reply({ type: 'error', error: String(r.error) }); return }
     // streamed=true -> g-code/layers were already emitted as 'layer' (result holds stats only). batch/MM keep them in result.

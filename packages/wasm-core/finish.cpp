@@ -16,6 +16,12 @@ em::val build_stats(const SliceCtx& C, const GW& gw, const gcode_time::Result& t
   stats.set("raft_layers", nraft);
   stats.set("path_segments", (double)gw.segments);
   stats.set("filament_mm", gw.filament);
+  if (C.p->single_tool > 0) {   // the whole print on one filament other than the first: indexed by tool, as slice_multimaterial reports it
+    em::val byTool = em::val::array();
+    for (int tool = 0; tool < C.p->single_tool; ++tool) byTool.call<void>("push", 0.0);
+    byTool.call<void>("push", gw.filament);
+    stats.set("filament_mm_by_tool", byTool);
+  }
   stats.set("wall_crossings", (double)gw.wall_crossings);   // number of wall-crossing travels (cross-check for reduce_crossing_wall)
   { double tw_end = emscripten_get_now();                    // phase timing (ms) — for deciding what to parallelize
     stats.set("t_pass1_ms",   tw_p1  - tw0);

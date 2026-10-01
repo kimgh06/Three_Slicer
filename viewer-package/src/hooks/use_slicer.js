@@ -2,12 +2,12 @@ import { log } from '../core/log.js'
 import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { exportedGcode } from 'three-slicer-viewer/gcode'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
 import { isTypedRefusal } from '../core/slice_errors.js'
+import { gpuAccelerationMode, resolveGpuAcceleration } from '../core/gpu_acceleration.js'
 import { poolPaintAction, paintedExtruderCount, paintBeyondFilaments } from '../core/paint_store.js'
 
 // Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
@@ -28,7 +28,7 @@ export function useSlicer(deps) {
     settings, plateSettings, workerRef, apiRef, layersDataRef, layerLoRef, layerHiRef,
     paintStateCountsRef, extruderColorsRef, rebuildToolpaths, rebuildPaintOverlay,
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount,
-    setLayerLo, setLayerHi, setGcodeUrl, setCanvasMode, setPaintCounts, setSliceNotice,
+    setLayerLo, setLayerHi, setGcodeResult, setCanvasMode, setPaintCounts, setSliceNotice,
     // Which kernel the selector worker loaded ('mt'|'st'), for the UI badge and the pool size. Optional.
     setKernelKind,
     // features.warmup / features.logs — `quiet` rides on the worker messages because the worker is a separate
@@ -41,6 +41,8 @@ export function useSlicer(deps) {
   const downgradeRef = useRef(false)    // stage 30: a downgrade (simplified) retry is in progress — buildParams simplifies infill + economy
   const lastGeomRef = useRef(null)      // G003 incremental: geometry digest of the last successful slice (plate-agnostic — a different plate yields a different digest)
   const kernelKindRef = useRef(null)    // 'mt' | 'st' | null — what the selector worker's 'warm' reply said
+  const gpuSliceRef = useRef(false)     // the slice being posted to the selector worker asks for the GPU contour union
+  const cachedGpuSliceRef = useRef(false)   // ...and whether the slice the worker's stage cache came from did
   const poolRef = useRef(new Set())     // live pool contexts (an all-plates run's extra workers) — cancel and unmount reach them here
   // Where the selector worker's progress goes. Normally the component's own state; during an all-plates run the
   //  pool re-routes it to that run's plate entry, so the one worker that also paints reports like the others do.
@@ -204,7 +206,7 @@ export function useSlicer(deps) {
     setStats(statsFromKernel(result.stats, result.throughput))
     setOverBed(!!result.stats.over_bed)
     setLayerCount(n)
-    setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(new Blob([exportedGcode(result, extruderColorsRef?.current)], { type: 'text/plain' })) })
+    setGcodeResult(result)
   }
 
   useEffect(() => () => {
@@ -257,7 +259,12 @@ export function useSlicer(deps) {
       }, ms) }
       pendingSliceRef.current = { resolve, reject, kick, stop, note, sla: cmd === 'sla' }
       kick()
-      getWorker().postMessage({ ...(cmd ? { cmd } : {}), stl: buf, params: paramsStr, stall })
+      const message = { stl: buf, params: paramsStr, stall }
+      if (cmd) message.cmd = cmd
+      // Only the selector worker's FFF slice: a pool worker is thrown away after its run, so a device and its buffers
+      //  there would be made for one slice.
+      if (!cmd && gpuSliceRef.current) message.gpu = true
+      getWorker().postMessage(message)
       if (cmd !== 'sla') startP1Poll()   // real PASS1 progress (0 -> 35%) — a no-op when SAB is unsupported (st); SLA reports linearly itself
     })
   }
@@ -431,6 +438,10 @@ export function useSlicer(deps) {
       if (merged.splits?.length) { params.mm_group_splits = merged.splits; params.mm_group_tools = merged.tools }
       params.wipe_tower_real = !!effective.wipe_tower_real
     }
+    // Every object of the plate on one filament that is not the first: the single-material path prints it with that
+    //  filament, and the start template loads it. Without this a plate assigned to filament 4 loaded filament 1
+    //  (measured on a Bambu Lab X2D project: `M620 S0A` where Bambu Studio's own slice starts on filament 4).
+    if (merged.extruders === 1 && merged.tools[0] > 0) params.single_tool = merged.tools[0]
     // Material painting assigns tools per facet, so `merged` — which reads whole-object assignment only — cannot
     //  see it. The kernel gates its multi-tool path on `extruder_count >= 2 && (groups || painted tools)`, so a
     //  painted-but-unassigned model short-circuits on the FIRST term and the paint is silently ignored: measured
@@ -565,7 +576,13 @@ export function useSlicer(deps) {
         return withTower(await sliceLadder(merged.buf, params, ctx, () => ctx.syncPaint(merged.buf, storedPaint)))
       }
       treeSupportRef.current = params.support_style === 'tree'
+      const plateSettingsMap = effectiveSettings(settings, plateSettings, merged.plate)
+      gpuSliceRef.current = resolveGpuAcceleration({ mode: gpuAccelerationMode(plateSettingsMap), kernelKind: kernelKindRef.current }).engine === 'gpu'
       applyIncremental(params, dig)
+      // The stage cache holds the contours of the slice that filled it. A slice that asks for the other engine must
+      //  compute its own, or switching the GPU on would change nothing until the model moved.
+      if (gpuSliceRef.current !== cachedGpuSliceRef.current) params.reuse_stages = 0
+      cachedGpuSliceRef.current = gpuSliceRef.current
       // sliceLadder posts the slice before its first await, so the hold is released once the call returns.
       const slicing = sliceLadder(merged.buf, params, selectorCtx, resyncPaint)   // on a normal failure: classic walls -> economy retry
       releaseSelector()

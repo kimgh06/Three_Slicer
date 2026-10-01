@@ -10,7 +10,6 @@
 // ponytail: only the T command is switched — the extruder's own filament diameter/flow (Params::forTool) is not
 //  reloaded for the support block, so a support filament of a different diameter still extrudes at the object's
 //  E-per-mm. Wire loadTool-style reloading here once the single-material path tracks per-tool flow at all.
-static const int OBJECT_TOOL = 0;   // the tool the model itself prints with on the single-material path
 static int support_tool_of(int filament_index) { return filament_index > 0 ? filament_index - 1 : -1; }
 // The T command and the toolpath stream's tool channel have to move together, or the preview colours support with
 //  the object's filament while the G-code prints it with another. -1 ("Default", keep the loaded tool) leaves both
@@ -52,14 +51,14 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
       gw.raw("; support");
       if (!supI.empty()) { use_tool(gw, interfaceTool); flow(FlowRole::SupportInterface); emit_lines(gw, tp, supI, zE, 5.0f, fPrint, fTravel); }
       if (!supB.empty()) { use_tool(gw, supportTool);   flow(FlowRole::Support); emit_lines(gw, tp, supB, zE, 5.0f, fPrint, fTravel); }
-      use_tool(gw, OBJECT_TOOL);
+      use_tool(gw, p.single_tool);
     }
     if (p.enable_support && !ld.supTree.empty()) {                    // stages 18/19: the real organic tree support (per-path width)
       gw.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(gw, supportTool);                                       // branches are one body: the base filament covers them
       gw.role_flow = role_flow_ratio(p, FlowRole::Support, gw.on_first_layer);   // emit_lines_vw sets each branch's own section
       emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fPrint, fTravel);
-      use_tool(gw, OBJECT_TOOL);
+      use_tool(gw, p.single_tool);
     }
     if (!flExtra.empty()) {
       flow(FlowRole::Skirt);
@@ -140,7 +139,7 @@ static void emit_layer_full(GW& gw, std::vector<float>& tp, std::vector<float>& 
 }
 
 // G003 step 2: full emission of one layer (setup + the empty/normal branches) — a single implementation shared by the serial path and the parallel writer.
-//  Spiral mode is inlined at the call site (guarded out of parallelism), and scarf/PE tags/PE-lite/arachne/real PE also fall back to serial via the parEmit guard.
+//  Spiral mode is inlined at the call site (guarded out of parallelism), and scarf/PE tags/PE-lite/real PE also fall back to serial via the parEmit guard.
 void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
                            int i, LayerData& ld, EmitPre& pre, const Params& p,
                            double zE, double w, int N, int nraft, int fTravel,
@@ -170,14 +169,14 @@ void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
       auto supportFlow = [&](FlowRole role){ gw.set_role_flow(role_flow_ratio(p, role, gw.on_first_layer)); };
       if (!eI.empty()) { use_tool(gw, interfaceTool); supportFlow(FlowRole::SupportInterface); emit_lines(gw, tp, eI, zE, 5.0f, fSup, fTravel); }
       if (!eB.empty()) { use_tool(gw, supportTool);   supportFlow(FlowRole::Support); emit_lines(gw, tp, eB, zE, 5.0f, fSup, fTravel); }
-      use_tool(gw, OBJECT_TOOL);
+      use_tool(gw, p.single_tool);
     }
     if (p.enable_support && !ld.supTree.empty()) {
       gw.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(gw, supportTool);
       gw.role_flow = role_flow_ratio(p, FlowRole::Support, gw.on_first_layer);   // emit_lines_vw sets each branch's section
       emit_lines_vw(gw, tp, ld.supTree, zE, ld.h, p, 5.0f, fSup, fTravel);
-      use_tool(gw, OBJECT_TOOL);
+      use_tool(gw, p.single_tool);
     }
     return;
   }

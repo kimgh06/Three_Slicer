@@ -197,7 +197,7 @@ export default function Viewport({
   const initialColors = (Array.isArray(defaultExtruderColors) && defaultExtruderColors.length)
     ? defaultExtruderColors.slice(0, MAX_PAINT_EXTRUDERS) : DEFAULT_FILAMENT_COLORS.slice(0, 2)
   const [extruderColors, setExtruderColors, extruderColorsRef] = useStateRef(initialColors)
-  const [gcodeUrl, setGcodeUrl] = useState('')
+  const [gcodeResult, setGcodeResult] = useState(null)   // the result "Export G-code" saves; its Blob is built on click
   const [showTravel, setShowTravel, showTravelRef] = useStateRef(false)
   // Ring or real WipeTower, per plate: the settings key `wipe_tower_real` (a viewer knob, not a schema key). Off
   //  until the ported WipeTower is deterministic. It was briefly the default here on the grounds that the fallback
@@ -260,7 +260,7 @@ export default function Viewport({
     brushRadiusRef, materialExtruderRef, extruderColorsRef, showTravelRef, viewTypeRef, layerLoRef, layerHiRef,
     setOk, setStatus, setGmode, setCtxMenu, setBrushRadius, setObjects, setTriWarn, setDragOver, setExporting, setSl1Ready,
     setProgress, setSliceRate, setSlicing, setError, setStats, setOverBed, setLayerCount, setLayerLo, setLayerHi,
-    setPlateRun, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setCanvasMode, setSliceNotice, setDowngradeOffer,
+    setPlateRun, setSegCount, setColorRange, setRoleLegend, setGcodeResult, setCanvasMode, setSliceNotice, setDowngradeOffer,
     setPaintCounts, setPaintModeState, setPaintStateCounts, setFillAngle,
     setSlicedPlateCount, setSliceMenu, setPlateCount, setSelectedPlate, clearError: () => setError(''),
     clearSliceNotice: () => setSliceNotice(''), clearTriWarn: () => setTriWarn(''), }   // "nothing to show", named once
@@ -387,7 +387,7 @@ export default function Viewport({
   // ---- Toolpath build (stage 24: upstream libvgcode GPU instancing / all plates rendered at once) ----
   const {
     disposePlateToolpath, clearToolpaths, buildPlateToolpath, ensurePlateToolpaths,
-    applyViewColors, rebuildToolpaths, applyLayerRange, plateToolColors,
+    applyViewColors, showFocusedColorRange, rebuildToolpaths, applyLayerRange, plateToolColors,
   } = makeToolpathView({ ...wiring, three })
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
@@ -410,11 +410,11 @@ export default function Viewport({
 
   // ---- Per-plate slicing/caching/export + the plate tabs (stage 29-2) ----
   const {
-    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
+    showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlainGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
   } = makePlateActions({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
     runSlice, createPoolContext, kernelKindRef, progressSinkRef,
-    ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
+    ensurePlateToolpaths, buildPlateToolpath, showFocusedColorRange, disposePlateToolpath,
     // The selector worker's kernel reads its painting from the selector, so before it cuts ANY plate the selector
     //  must hold that plate's mesh — loaded from the per-object store when it is another one. A move can also reach
     //  a slice without a gizmo commit (keyboard nudge, plate re-arrange). Needed when a selector exists (it may hold
@@ -877,10 +877,10 @@ export default function Viewport({
               <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 plateRun={plateRun} kernelKind={kernelKind} workers={Number(settings?.slice_workers) || 0} autoWorkers={autoWorkers} maxWorkers={cores} memoryWorkers={memoryWorkers}
-                onWorkers={(n) => setSettings?.(prev => ({ ...prev, slice_workers: n }))}
+                onSetting={(key, value) => setSettings?.(prev => ({ ...prev, [key]: value }))} gpuSetting={settings?.gpu_acceleration}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
                 canSlice={objects.length > 0 && !gcodeOnly} onSlice={onSlice} onCancel={cancelSlice}
-                onExportAll={exportAllGcode} gcodeUrl={gcodeUrl}
+                onExportAll={exportAllGcode} gcodeReady={!!gcodeResult} onExportGcode={() => exportPlainGcode(gcodeResult)}
                 slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla} slaTech={tech === 'SLA'}
                 onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready} onExportGcode3mf={exportAllGcode} onExportPlateGcode3mf={() => exportPlateGcode3mf()}
                 bedWarning={bedOver || overBed

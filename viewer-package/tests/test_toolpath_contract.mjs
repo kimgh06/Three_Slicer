@@ -19,6 +19,8 @@ import { buildSegmentData, roleRatios } from '../src/core/toolpath_segments.js'
 import { computeColors, VIEW_TYPES } from '../src/core/toolpath_views.js'
 import { TYPE_COLOR, TYPE_LABEL, TOOL_COLOR, DEFAULT_RANGES_COLORS, packColor, hexToRgb, rangeColorAt }
   from '../src/core/toolpath_palette.js'
+import { SEG_VS } from '../src/core/toolpath_shaders.js'
+import { VERTEX_DATA, TEMPLATE_TPL } from '../src/scene/toolpath_mesh.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
@@ -158,6 +160,30 @@ check('no layers -> zero counts and a null bbox', empty.nSeg === 0 && empty.laye
   `nSeg=${empty.nSeg} layerCount=${empty.layerCount} bbox=${empty.bbox}`)
 const zeroLen = buildSegmentData([{ z: 0.2, paths: Float32Array.from(seg(5, 5, 0.2, 5, 5, 1)), widths: Float32Array.from([0.4]) }], DEFAULT_WIDTH)
 check('a zero-length segment produces no NaN', zeroLen.hasNaN === false)
+
+// The bead material culls back faces (toolpath_mesh.js), which is only correct while every template face winds
+//  counter-clockwise seen from outside the bead. The ring -> corner mapping is read from the vertex shader's own
+//  branch, and the vertex layout from TEMPLATE_TPL, so a change to either is checked rather than restated here.
+console.log('\n[toolpath: every bead face winds outward]')
+const corners = [...SEG_VS.matchAll(/offset =\s*(-?)\s*(side|up)\s*\*/g)]
+  .map(([, sign, axis]) => ({ side: [0, 1, 0], up: [0, 0, 1] })[axis].map(v => v * ({ '-': -1 }[sign] ?? 1)))
+check('the shader names four ring corners', corners.length === 4, `found ${corners.length}`)
+const vertexAt = (index) => {
+  const end = TEMPLATE_TPL[index * 2], ring = TEMPLATE_TPL[index * 2 + 1]
+  const along = [end * 10, 0, 0]   // a segment 10 along +x
+  return corners[ring].map((v, axis) => v + along[axis])
+}
+const sub = (a, b) => a.map((v, i) => v - b[i])
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+let inward = 0
+for (let t = 0; t < VERTEX_DATA.length; t += 3) {
+  const [a, b, c] = [VERTEX_DATA[t], VERTEX_DATA[t + 1], VERTEX_DATA[t + 2]].map(vertexAt)
+  const normal = cross(sub(b, a), sub(c, a))
+  const centroid = [0, 1, 2].map(axis => (a[axis] + b[axis] + c[axis]) / 3)
+  const outward = [0, centroid[1], centroid[2]]   // away from the segment's own axis
+  if (normal.reduce((sum, v, axis) => sum + v * outward[axis], 0) <= 0) inward++
+}
+check(`all ${VERTEX_DATA.length / 3} triangles face away from the bead axis`, inward === 0, `${inward} face inward`)
 
 // ---- Snapshot ------------------------------------------------------------------------------------------
 // Printed, not asserted: a rewrite is expected to differ in the exact floats. This is the record to diff

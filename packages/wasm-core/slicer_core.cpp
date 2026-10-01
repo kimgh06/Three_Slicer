@@ -61,6 +61,7 @@
 #include "geom_helpers.h"
 #include "layer_data.h"
 #include "params.h"
+#include "contour_phase.h"
 #include "selector_bridge.h"  // stage 20 -> MMU painting: the painted facet states decide whether a layer is multi-tool
 #include "slice_api.h"
 #include "custom_gcode.h"
@@ -149,6 +150,21 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   if (p.extruder_count >= 2 && (hasGroups || hasPaintedTools || hasFeatureTools))
     return slice_multimaterial(tris, p, onProgress, height, over_bed);
 
+  // A single-material slice on a filament other than the first (every object of the plate on filament 4): that
+  //  filament's values replace the scalars, as slice_multimaterial reloads them on a T change. Upstream switches to
+  //  the initial extruder after the start block (GCode.cpp:3643), which on a single-extruder machine writes no T,
+  //  so none is written here either; the start template loads the filament from initial_extruder.
+  const int singleTool = p.single_tool;
+  if (singleTool > 0) {
+    p.nozzle_temp       = Params::forTool(p.extruder_nozzle_temp, singleTool, p.nozzle_temp);
+    p.filament_diameter = Params::forTool(p.extruder_filament_diameter, singleTool, p.filament_diameter);
+    p.flow_ratio        = Params::forTool(p.extruder_flow_ratio, singleTool, p.flow_ratio);
+    p.retract_length    = Params::forTool(p.extruder_retract_length, singleTool, p.retract_length);
+    p.retract_speed     = Params::forTool(p.extruder_retract_speed, singleTool, p.retract_speed);
+    p.z_hop             = Params::forTool(p.extruder_z_hop, singleTool, p.z_hop);
+  }
+  g_seg_tool = singleTool;                             // the preview's tool channel: the filament the model prints with
+
   // Count the z levels (the progress total)
   int N = 0; for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) ++N;
   int total = 2*N + 2;   // +2 = the surface and support completion ticks. Previously nothing was reported between PASS1 (50%) and the end of support -> it looked "stuck at 50%".
@@ -177,7 +193,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     treeSupLayers = g_scache.treeSupLayers; treeZMaxResid = g_scache.treeZMaxResid;
     report(N, total); report(N+1, total);
   } else {
-    if (!pass1_run(C)) { em::val r=em::val::object(); r.set("error", std::string("canceled")); return r; }
+    contour_phase::captured = false;
+    if (!pass1_run(C)) { em::val r=em::val::object();
+      // pass1 stopped on purpose, with every layer's loops held for the union outside the kernel (contour_phase.h)
+      if (contour_phase::captured) { r.set("captured", true); r.set("layers", N); return r; }
+      r.set("error", std::string("canceled")); return r; }
 
   tw_p1 = emscripten_get_now();
 
@@ -206,6 +226,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   GW gw; gw.s.reserve(1<<17);
   EmitFlags EF = gw_setup_preamble(gw, p, treeSupLayers, treeZMaxResid, startBlock);
+  gw.cur_tool = singleTool;                      // loaded by the start template, so a support T change returns to it
   bool realPE = EF.realPE, ironOn = EF.ironOn, scarfOn = EF.scarfOn;
   int  seamMode = EF.seamMode;
   SeamCtx seamCtx;
@@ -228,14 +249,16 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   TimeFeeder feeder;
   const bool overlapBatch = !streaming && !realPE && p.time_engine != "transcribed";
   size_t fedOff = 0;                            // batch overlap: how much of gw.s has already been fed
-  if (streamTime || overlapBatch) feeder.begin(gl);
+  const gcode_time::Limits* fallback = nullptr;   // batch keeps gw.s resident, so the hand-over's kept text costs no new ceiling; streaming stays stream-notime
+  if (overlapBatch) fallback = &glim;
+  if (streamTime || overlapBatch) feeder.begin(gl, fallback);
   auto feed_batch_tail = [&]{                   // feed everything after the last flush (including the footer)
     std::string c = gw.s.substr(fedOff); fedOff = gw.s.size();
     if (gw.emit_pe_tags && p.pe_strip_tags) strip_pe_tags(c);   // batch feeds the estimator the same tag-stripped input as streaming
     feeder.feed(std::move(c));
   };
 #else
-  if (streamTime) gcodeproc_bridge::estimate_begin(gl);
+  if (streamTime) gcodeproc_bridge::estimate_begin(gl, nullptr);
 #endif
   // Layer emission: batch accumulates into layersArr; streaming emits a chunk (everything in gw.s since the last flush) plus the toolpaths, then releases gw.s.
   //  The preamble goes into the first flush chunk and the footer into the last -> concatenating the chunks is byte-identical to the batch gw.s.
@@ -286,7 +309,10 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   int preNext = 0, preConsumed = -1;
   unsigned preHW = std::thread::hardware_concurrency(); if (!preHW) preHW = 4;
   const bool parEmit = !p.spiral_mode && !scarfOn && gw.pe_slope <= 0.0 && !gw.emit_pe_tags
-                       && p.wall_generator != "arachne" && !realPE;   // conditions under which G003 parallel emission is possible (otherwise serial fallback)
+                       && !realPE;   // conditions under which G003 parallel emission is possible (otherwise serial fallback)
+  //  Arachne walls emit through the writer's own GW and the thread_local width state like every other role, so arachne is
+  //  not among them: it was, and a 1.13M-facet hybrid plate with arachne walls emitted on one thread (emit 3.2 -> 1.7 s
+  //  threaded; G-code, toolpaths and widths byte-identical to st on it and on a 3M-facet arachne model).
   unsigned preNT = std::min<unsigned>(std::max(1u, parEmit ? preHW / 2 : preHW - 1), (unsigned)std::max(1, N));
   const int PRE_WINDOW = (int)preNT * 2 + 4;
   auto preWork = [&]{
@@ -325,6 +351,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     std::mutex emu; std::condition_variable ecv;
     int wNext = 0, dispatched = 0;
     GW base = gw; base.s.clear(); base.island.clear(); base.dry = false;   // the template GW for writers
+    // A writer's totals are its layer's alone: flushJob adds them to gw's. Copied as they stood, every layer re-added
+    //  what the raft had already counted (measured on a 20mm cube with 2 raft layers: 9018.83mm of filament, st 1084.41).
+    base.filament = 0; base.segments = 0; base.wall_crossings = 0;
     unsigned wHW = std::thread::hardware_concurrency(); if (!wHW) wHW = 4;
     unsigned WN = std::max(1u, wHW / 2);
     auto writerFn = [&]{
@@ -336,6 +365,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
           k = wNext++; }
         EmitJob& J = *jobs[k];
         GW g = base;
+        g_seg_tool = singleTool;   // thread_local: a pool thread keeps the tool the previous slice left on it
         g.px = J.entry.px; g.py = J.entry.py; g.curF = J.entry.curF; g.lastFan = J.entry.lastFan;
         g.island = std::move(J.island);
         SeamCtx sc = J.entry.sc;
@@ -368,10 +398,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         gw.s += J.gcode;
         if (overlapBatch) feed_batch_tail();
       } else {
-        if (streamTime) feeder.feed(J.gcode);
+        // Text written outside the writers — the preamble, and anything else still in gw.s — goes ahead of the layer,
+        //  as flush_layer sends it and as the batch branch above appends it. Sending J.gcode alone held the preamble
+        //  back until the footer flush, so a streamed mt slice put M83 and the temperatures after the last layer.
+        std::string chunk; chunk.swap(gw.s);
+        chunk += J.gcode;
+        if (streamTime) feeder.feed(chunk);
         em::val paths = economy ? em::val::array() : to_f32(J.tp);
         em::val wid   = economy ? em::val::array() : to_f32(J.widths);
-        sink(zk, k, J.gcode, paths, wid);
+        sink(zk, k, chunk, paths, wid);
       }
       J.gcode = std::string(); J.tp = {}; J.widths = {}; J.pre = EmitPre{};
       if (!keepStages) { int old = k - std::max(p.bottom_shell_layers, 1) - 1 - FW;   // release only outside the writer/dry reference window
@@ -461,7 +496,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   if (customGcode) {
     // Upstream's end block instead of the kernel's heater/fan shutdown: the printer's end G-code owns it.
     gw.raw("; end");
-    std::string error = custom_gcode_end(gw, N + nraft - 1, gw.z, gw.z, 0);
+    std::string error = custom_gcode_end(gw, N + nraft - 1, gw.z, gw.z, singleTool);
     if (!error.empty()) {
 #ifdef __EMSCRIPTEN_PTHREADS__
       if (streamTime || overlapBatch) (void)feeder.finish();
@@ -478,7 +513,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
   }                                            // end of the raw path's finish
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm", gw.filament); gw.raw(h); }
-  emit_gcode_footer_blocks(gw, p, {}, 0);
+  {
+    std::vector<double> filamentByTool;                // empty: the footer reports the whole print as filament 1
+    if (singleTool > 0) { filamentByTool.assign(singleTool + 1, 0.0); filamentByTool[singleTool] = gw.filament; }
+    emit_gcode_footer_blocks(gw, p, filamentByTool, 0);
+  }
 
   gcode_time::Result te; std::string engine_used;
   auto absorb = [&](const gcodeproc_bridge::Result& fr){
@@ -515,8 +554,10 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 #else
       gcodeproc_bridge::Result fr = gcodeproc_bridge::estimate(gw.s, gl);
 #endif
-      if (fr.ok) { absorb(fr); engine_used = "full"; }
-      else { te = gcode_time::estimate(gw.s, glim); engine_used = "full-fallback-transcribed"; }
+      if (fr.ok) {
+        absorb(fr); engine_used = "full";
+        if (fr.transcribed) engine_used = "full-fallback-transcribed";   // handed over inside the feeder, past the move cap
+      } else { te = gcode_time::estimate(gw.s, glim); engine_used = "full-fallback-transcribed"; }
     }
   }
 

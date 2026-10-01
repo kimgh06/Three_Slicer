@@ -6,6 +6,7 @@
 // drives it by PARSING the emitted g-code, with machine limits param-injected (the PE pattern).
 #pragma once
 #include <string>
+#include <cstddef>
 #include <vector>
 #include <map>
 
@@ -35,5 +36,20 @@ struct Result {
 
 // Parse g-code text and estimate print time with the original trapezoidal planner.
 Result estimate(const std::string& gcode, const Limits& lim);
+
+// The same estimate fed in pieces: begin (construct) -> feed any number of chunks, split anywhere (a partial trailing line is
+//  carried into the next feed) -> end. estimate() is begin + one feed + end, so the two agree to the bit. This is what lets the
+//  mt feeder keep parsing while the kernel is still emitting, instead of re-reading the whole text after the last layer.
+class Estimator {
+public:
+    explicit Estimator(const Limits& lim);
+    ~Estimator();
+    void feed(const char* data, size_t len);
+    void feed(const std::string& chunk) { feed(chunk.data(), chunk.size()); }
+    Result end();
+private:
+    struct Impl;
+    Impl* impl_;
+};
 
 } // namespace gcode_time

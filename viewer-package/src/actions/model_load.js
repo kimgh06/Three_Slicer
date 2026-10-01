@@ -101,7 +101,7 @@ export function makeModelLoad(deps) {
     clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
     selectedPlateRef, disposePlateToolpath, plateCountRef, setPlateCount, bedRef,
     setError, clearError, setTriWarn, clearTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
-    setColorRange, setSliceNotice, clearSliceNotice, setDowngradeOffer, setGcodeUrl, setCanvasMode, setObjects, setDragOver,
+    setColorRange, setSliceNotice, clearSliceNotice, setDowngradeOffer, setGcodeResult, setCanvasMode, setObjects, setDragOver,
     openGcodePlates, closeImportedGcode,
   } = deps
 
@@ -247,7 +247,7 @@ export function makeModelLoad(deps) {
     //  AFTER the state reset above, or the reset's clearSliceNotice() wipes the "Loaded machine: …" notice
     //  (measured: the notice never appeared when a preset and an STL arrived in one pass).
     for (const f of presetFiles) await loadPresetFile(f)
-    setGcodeUrl(prev => { if (prev) URL.revokeObjectURL(prev); return '' })
+    setGcodeResult(null)
     setCanvasMode('prepare')   // S2: a new model goes back to Prepare
     apiRef.current?.showObjects()
     let totalTri = 0
@@ -265,7 +265,7 @@ export function makeModelLoad(deps) {
         closeImportedGcode?.()
         const loaded = []
         for (const ob of objs) {
-          const added = apiRef.current?.addObject(ob.name, ob.modelPos, ob.paint)
+          const added = apiRef.current?.addObject(ob.name, ob.modelPos, ob.paint, ob.baked)
           totalTri += ob.modelPos.length / 9
           if (ob.paint) anyPaint = true
           if (added && ob.objectid) loaded.push({ objectid: ob.objectid, id: added.id, paint: ob.paint, bbox: ob.bbox })

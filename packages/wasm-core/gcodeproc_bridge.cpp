@@ -90,32 +90,61 @@ static Result build_result(GCodeProcessor& gp, double filament_mm) {
 namespace {
     GCodeProcessor* g_gp = nullptr;
     double g_fil_total = 0.0, g_fil_e_abs = 0.0; bool g_fil_relative = false;
+    // hand-over past the move cap: the text fed so far (kept only when a fallback was given — in batch mode the whole G-code is
+    //  resident in gw.s anyway, so this is at most one more copy of the part before the cap), and the transcribed estimator that
+    //  takes over. Measured on a 774k-facet model (2.2M moves, 58.6MB): without the hand-over the feeder's work was discarded at
+    //  the cap and the whole text was re-parsed serially after the last layer, 3.2-3.7s of a 6.8s mt slice.
+    bool g_keep_text = false; std::string g_kept; gcode_time::Limits g_fb_lim; gcode_time::Estimator* g_fb = nullptr;
+
+    void reset_fallback() { delete g_fb; g_fb = nullptr; g_kept.clear(); g_kept.shrink_to_fit(); g_keep_text = false; }
 }
 
-void estimate_begin(const Limits& lim) {
+void estimate_begin(const Limits& lim, const gcode_time::Limits* fallback) {
     delete g_gp; g_gp = new GCodeProcessor();
     PrintConfig cfg; fill_limits(cfg, lim);   // in-place (apply_config copies values out; no retained ref)
     g_gp->apply_config(cfg);
     g_fil_total = 0.0; g_fil_e_abs = 0.0; g_fil_relative = false;
+    reset_fallback();
+    if (fallback) { g_keep_text = true; g_fb_lim = *fallback; }
 }
 // ponytail: resident move cap — GCodeProcessor keeps ~100B per move resident in result.moves (measured at 4.45M moves,
 //  an estimated +1.04GB on its own), and blocks write times back by absolute index, so draining midway is impossible.
-//  Past the cap the estimator is released entirely -> streaming degrades to "stream-notime" and batch (mt overlap) falls back
-//  to the existing transcribed path. Reviving time estimation for large models needs port surgery toward incremental move aggregation.
+//  Past the cap the estimator is released: streaming degrades to "stream-notime", and batch (mt overlap) hands the kept text plus
+//  every later chunk to gcode_time::Estimator inside the same feeder thread (estimate_feed below), so the estimate keeps
+//  overlapping emission. Reviving GCodeProcessor itself for large models needs port surgery toward incremental move aggregation.
 static const size_t MOVES_CAP = 2000000;
 
 void estimate_feed(const std::string& chunk) {
-    if (!g_gp || chunk.empty()) return;
+    if (chunk.empty()) return;
+    if (g_fb) { g_fb->feed(chunk); return; }
+    if (!g_gp) return;
     try { g_gp->process_buffer(chunk); } catch (...) {}
-    if (g_gp->get_result().moves.size() > MOVES_CAP) { delete g_gp; g_gp = nullptr; return; }
+    if (g_gp->get_result().moves.size() > MOVES_CAP) {
+        delete g_gp; g_gp = nullptr;
+        if (!g_keep_text) return;
+        g_fb = new gcode_time::Estimator(g_fb_lim);      // the same input the whole-text fallback used to parse, in the same order
+        g_fb->feed(g_kept); g_kept.clear(); g_kept.shrink_to_fit();
+        g_fb->feed(chunk);
+        return;
+    }
     parse_filament_chunk(chunk, g_fil_total, g_fil_e_abs, g_fil_relative);
+    if (g_keep_text) g_kept += chunk;
 }
 Result estimate_end() {
     Result out;
-    if (!g_gp) return out;
+    if (g_fb) {
+        gcode_time::Result r = g_fb->end();
+        out.total_s = r.total_s; out.layer_s = std::move(r.layer_s); out.first_layer_s = r.first_layer_s;
+        out.extrude_s = r.extrude_s; out.travel_s = r.travel_s; out.role_s = std::move(r.role_s);
+        out.filament_mm = r.filament_mm; out.moves = r.moves; out.ok = true; out.transcribed = true;
+        reset_fallback();
+        return out;
+    }
+    if (!g_gp) { reset_fallback(); return out; }
     try { g_gp->finalize(false); out = build_result(*g_gp, g_fil_total); }
     catch (...) { out.ok = false; }
     delete g_gp; g_gp = nullptr;
+    reset_fallback();
     return out;
 }
 

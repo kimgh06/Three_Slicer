@@ -181,11 +181,60 @@ void set_start_variables(Session& session) {
   const int extruder_id = extruder_of(config, initial_extruder_id);
   const size_t nozzle_count = config.option<ConfigOptionFloats>("nozzle_diameter")->values.size();
 
+  // ToolOrdering::cal_non_support_filaments (ToolOrdering.cpp:1058) over the filaments in first-use order: one entry
+  //  per extruder, its first filament and its first filament that is not support (-1 = none), with the same early
+  //  returns. filament_map is 1-based; a static map only (this kernel has no dynamic nozzle grouping).
+  std::vector<int> first_filaments(nozzle_count, -1);
+  std::vector<int> first_non_support_filaments(nozzle_count, -1);
+  {
+    const auto* filament_map = config.option<ConfigOptionInts>("filament_map");
+    const auto* is_support = config.option<ConfigOptionBools>("filament_is_support");
+    const bool has_map = filament_map != nullptr && !filament_map->values.empty();
+    const bool has_non_support = std::any_of(facts.used_filaments.begin(), facts.used_filaments.end(),
+                                             [&](int filament) { return !is_support->get_at(filament); });
+    auto extruder_for = [&](int filament) { return filament_map->get_at(filament) - 1; };
+    auto in_range = [&](int extruder) { return extruder >= 0 && extruder < int(nozzle_count); };
+    int first_count = 0;
+    int non_support_count = 0;
+    for (int filament : facts.filament_order) {
+      if (has_map && in_range(extruder_for(filament)) && first_filaments[extruder_for(filament)] == -1) {
+        first_filaments[extruder_for(filament)] = filament;
+        first_count++;
+      }
+      if (has_non_support) {
+        if (is_support->get_at(filament))
+          continue;
+        if (!has_map)
+          break;
+        if (in_range(extruder_for(filament)) && first_non_support_filaments[extruder_for(filament)] == -1) {
+          first_non_support_filaments[extruder_for(filament)] = filament;
+          non_support_count++;
+        }
+        if (non_support_count == int(nozzle_count))
+          break;
+      } else if (first_count == int(nozzle_count) || !has_map) {
+        break;
+      }
+    }
+  }
+  // match_physical_extruder_for_each_filament (GCode.cpp:3172): logical extruder e is physical_extruder_map[e]. A
+  //  map entry outside the extruder range is skipped, where upstream would write past the vector.
+  auto to_physical = [&](const std::vector<int>& filaments) {
+    const auto* physical_map = config.option<ConfigOptionInts>("physical_extruder_map");
+    std::vector<int> physical(filaments.size(), 0);
+    for (size_t extruder = 0; extruder < filaments.size(); ++extruder) {
+      const int target = physical_map->get_at(extruder);
+      if (target >= 0 && target < int(physical.size()))
+        physical[target] = filaments[extruder];
+    }
+    return physical;
+  };
+  first_filaments = to_physical(first_filaments);
+  parser.set("first_tools", new ConfigOptionInts(first_filaments));
+  parser.set("first_filaments", new ConfigOptionInts(first_filaments));
   parser.set("initial_tool", initial_extruder_id);
   parser.set("initial_extruder", initial_extruder_id);
-  // One entry per physical extruder: its first filament that is not support (-1 = none).
-  std::vector<int> first_non_support_filaments(nozzle_count, -1);
-  first_non_support_filaments[std::min<size_t>(extruder_of(config, initial_non_support_extruder_id), nozzle_count - 1)] = initial_non_support_extruder_id;
+  first_non_support_filaments = to_physical(first_non_support_filaments);
   std::vector<int> first_non_support_hotends;
   for (int filament_id : first_non_support_filaments) {
     if (filament_id < 0)

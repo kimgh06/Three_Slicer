@@ -38,8 +38,11 @@ void append_bbox(std::vector<double>& out, const Paths& paths, double offX, doub
 custom_gcode_bridge::Facts single_material_facts(const Params& p, const std::vector<LayerData>& L, int N,
                                                  double offX, double offY) {
   custom_gcode_bridge::Facts facts;
-  facts.used_filaments = {0};
-  facts.first_layer_filaments = {0};
+  facts.used_filaments = {p.single_tool};
+  facts.filament_order = {p.single_tool};
+  facts.first_layer_filaments = {p.single_tool};
+  facts.initial_extruder = p.single_tool;
+  facts.initial_no_support_extruder = p.single_tool;
   if (L.empty())
     return facts;
   const double w = p.line_width;

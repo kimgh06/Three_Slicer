@@ -2,6 +2,7 @@
 #define TREESUPPORT_H
 
 #include <forward_list>
+#include <mutex>
 #include <unordered_set>
 #include "ExPolygon.hpp"
 #include "Point.hpp"
@@ -62,8 +63,10 @@ struct SupportNode
     {}
 
     // when dist_mm_to_top_==0, new node's dist_mm_to_top=parent->dist_mm_to_top + parent->height;
+    // (this port) link_to_parent false leaves the parent's and its merged neighbours' child links to the caller (drop_nodes'
+    //  threaded move pass writes them afterwards, in node order)
     SupportNode(const Point position, const int distance_to_top, const int obj_layer_nr, const int support_roof_layers_below, const bool to_buildplate, SupportNode* parent,
-        coordf_t     print_z_, coordf_t height_, coordf_t dist_mm_to_top_ = 0, coordf_t radius_ = 0)
+        coordf_t     print_z_, coordf_t height_, coordf_t dist_mm_to_top_ = 0, coordf_t radius_ = 0, bool link_to_parent = true)
         : distance_to_top(distance_to_top)
         , position(position)
         , obj_layer_nr(obj_layer_nr)
@@ -83,9 +86,11 @@ struct SupportNode
                 dist_mm_to_top = parent->dist_mm_to_top + parent->height;
             if (radius == 0 && parent->radius>0)
                 radius = parent->radius + (dist_mm_to_top - parent->dist_mm_to_top) * diameter_angle_scale_factor;
-            parent->child = this;
+            if (link_to_parent)
+                parent->child = this;
             for (auto& neighbor : parent->merged_neighbours) {
-                neighbor->child = this;
+                if (link_to_parent)
+                    neighbor->child = this;
                 parents.push_back(neighbor);
             }
             is_sharp_tail = parent->is_sharp_tail;
@@ -242,7 +247,7 @@ public:
     Polygons get_contours_with_holes(size_t layer_nr) const;
 
     SupportNode* create_node(const Point position, const int distance_to_top, const int obj_layer_nr, const int support_roof_layers_below, const bool to_buildplate, SupportNode* parent,
-        coordf_t     print_z_, coordf_t height_, coordf_t dist_mm_to_top_ = 0, coordf_t radius_ = 0);
+        coordf_t     print_z_, coordf_t height_, coordf_t dist_mm_to_top_ = 0, coordf_t radius_ = 0, bool link_to_parent = true);
     void clear_nodes();
     std::vector<LayerHeightData> layer_heights;
 
@@ -335,6 +340,9 @@ public:
      * coconut: previously stl::unordered_map is used which seems problematic with tbb::parallel_for.
      * So we change to tbb::concurrent_unordered_map
      */
+    // Guards both caches below: drop_nodes reads them from several threads (the concurrent_* types are std aliases here).
+    //  A value is a function of its key alone, so two threads computing the same key insert the same bytes.
+    mutable std::mutex m_cache_mutex;
     mutable tbb::concurrent_unordered_map<RadiusLayerPair, ExPolygons, RadiusLayerPairHash, RadiusLayerPairEquality> m_collision_cache;
     mutable tbb::concurrent_unordered_map<RadiusLayerPair, ExPolygons, RadiusLayerPairHash, RadiusLayerPairEquality> m_avoidance_cache;
 

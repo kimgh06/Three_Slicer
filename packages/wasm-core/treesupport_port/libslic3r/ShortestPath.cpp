@@ -41,6 +41,24 @@ static bool extrusion_entity_has_endpoints(const ExtrusionEntity *entity)
     return true;
 }
 
+// (this port) Removes, depth first, every entity reordering cannot place: one without endpoints, and a collection that
+//  is left empty by that. Upstream drops a collection whenever its FIRST or LAST child has no endpoints, which threw away
+//  every path in it: on a 3M-facet tree-slim model three support layers lost 64.6 mm of toolpaths (one a 37 mm outline of
+//  a whole support island), and which layers lost them moved with any change to the support's shape. The entities
+//  belong to the collection whose vector this is, so a removed one is deleted.
+static void remove_entities_without_endpoints(ExtrusionEntitiesPtr &entities)
+{
+    for (ExtrusionEntity *&entity : entities) {
+        if (auto *collection = dynamic_cast<ExtrusionEntityCollection *>(entity))
+            remove_entities_without_endpoints(collection->entities);
+        if (!extrusion_entity_has_endpoints(entity)) {
+            delete entity;
+            entity = nullptr;
+        }
+    }
+    entities.erase(std::remove(entities.begin(), entities.end(), nullptr), entities.end());
+}
+
 // Naive implementation of the Traveling Salesman Problem, it works by always taking the next closest neighbor.
 // This implementation will always produce valid result even if some segments cannot reverse.
 template<typename EndPointType, typename KDTreeType, typename CouldReverseFunc>
@@ -1062,10 +1080,7 @@ void chain_and_reorder_extrusion_entities(std::vector<ExtrusionEntity*> &entitie
 void chain_and_reorder_extrusion_entities(std::vector<ExtrusionEntity*> &entities, const Point *start_near)
 {
     // Orca: Reordering queries first_point() / last_point(); drop entities that cannot provide valid endpoints.
-    entities.erase(std::remove_if(entities.begin(), entities.end(), [](ExtrusionEntity *entity) {
-        return !extrusion_entity_has_endpoints(entity);
-    }),
-                   entities.end());
+    remove_entities_without_endpoints(entities);
 	reorder_extrusion_entities(entities, chain_extrusion_entities(entities, start_near));
 }
 

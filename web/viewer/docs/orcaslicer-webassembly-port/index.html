@@ -284,7 +284,7 @@ return await (await import('./slicer_core.js')).default()</code></pre>
       <div class="scroll">
       <table>
         <tr><th>Flag</th><th>Why</th></tr>
-        <tr><td><code>SINGLE_FILE=1</code></td><td>The wasm is inlined as base64 into the JS. Self-contained on any static host, no MIME configuration, no second fetch from inside a worker. It costs about a third in transfer size and buys the package the ability to be installed from npm and just work.</td></tr>
+        <tr><td><code>SINGLE_FILE=1</code></td><td>The single-threaded build only: its wasm is inlined into the JS. Self-contained on any static host, no MIME configuration, no second fetch from inside a worker. The threaded build ships <code>slicer_core.mt.wasm</code> beside its glue instead, because every pthread worker loads the glue itself: inlined, each of the ~16 workers per kernel held about 60MB of V8 heap for bytes it never reads, and Chrome keeps every V8 heap of a tab in one 4GB region, so three kernels slicing at once crashed the tab. Split, a pthread worker holds about 1MB.</td></tr>
         <tr><td><code>MODULARIZE=1</code></td><td>The kernel is a library, not a page. Callers get a factory, not global side effects.</td></tr>
         <tr><td><code>ALLOW_MEMORY_GROWTH=1</code></td><td>Model size is unbounded and unknown at load time. Emscripten warns about combining this with pthreads; it is functionally valid and was kept on measurement.</td></tr>
         <tr><td><code>ENVIRONMENT=web,worker,node</code></td><td>The same build runs headless in Node, which is what makes the invariant suite possible at all.</td></tr>

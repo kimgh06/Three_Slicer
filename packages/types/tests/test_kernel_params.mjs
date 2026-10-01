@@ -63,6 +63,12 @@ check('a consumed key is not reported ignored', ignoredKernelSettings({ wall_loo
 check('support_type is consumed (tree routing)',
   !ignoredKernelSettings({ support_type: 'tree(auto)' }).length
   && deriveKernelParams({ support_type: 'tree(auto)' }).support_style === 'tree')
+// The tree style reaches the kernel: slim / strong / hybrid run upstream's TreeSupport, organic (the kernel default, and
+//  what a tree type on 'default' resolves to upstream) is left out so an organic slice keeps its exact parameter set.
+check('support_style tree_slim / tree_strong / tree_hybrid set tree_style',
+  ['slim', 'strong', 'hybrid'].every(style => deriveKernelParams({ support_style: `tree_${style}` }).tree_style === style))
+check('organic, default and grid send no tree_style',
+  ['organic', 'default', 'grid'].every(style => !('tree_style' in deriveKernelParams({ support_style: style }))))
 check('an unconsumed key is reported', ignoredKernelSettings({ spaghetti_detector: true }).includes('spaghetti_detector'))
 check('null map reports nothing', ignoredKernelSettings(null).length === 0)
 

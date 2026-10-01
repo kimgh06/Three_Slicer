@@ -1,5 +1,6 @@
 import React from 'react'
 import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
+import { contourEngineText } from '../core/gpu_acceleration.js'
 
 const hms = (seconds) => {
   const s = Math.round(seconds)
@@ -39,6 +40,7 @@ export default function StatsCard({ stats, overBed, overBedText, overBedModel = 
   return (
     <>
       <div><b>{stats.layers}</b> layers · <b>{stats.segments}</b> segments</div>
+      {contourEngineText(stats.contour) && <div data-testid="contour-engine">{contourEngineText(stats.contour)}</div>}
       {stats.sla
         ? <div data-testid="resin-total">Resin <b>{(stats.resinMl ?? 0).toFixed(1)}</b> ml</div>
         : <div>Filament <b>{stats.filament.toFixed(1)}</b> mm</div>}

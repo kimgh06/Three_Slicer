@@ -130,9 +130,16 @@ public:
     }
     // has_brim: kernel does brim separately and tree support does not need it here -> false (documented).
     bool has_brim() const { return false; }
-    // Preview cache: empty in the adapter (no GUI preview). alloc returns empty; clear is a no-op.
-    std::shared_ptr<TreeSupportData> alloc_tree_support_preview_cache() { return {}; }
-    void clear_tree_support_preview_cache() {}
+    // The tree-support data cache (upstream PrintObject.cpp:1133). It is not only a GUI preview: the non-organic TreeSupport
+    //  (slim / strong / hybrid) builds its layer outlines and collision cache in it (TreeSupport.cpp:1742) and reads them in
+    //  generate_contact_points (m_ts_data->m_layer_outlines). Returning an empty pointer here made every non-organic tree
+    //  slice dereference null: a std::length_error on st, "memory access out of bounds" on mt, on any model.
+    std::shared_ptr<TreeSupportData> alloc_tree_support_preview_cache();   // defined in Support/TreeSupport.cpp
+    void clear_tree_support_preview_cache() { m_tree_support_preview_cache.reset(); }
+    // (this port) the cache alloc_tree_support_preview_cache would make, without keeping it: TreeSupport::generate builds
+    //  it on a thread of its own while detect_overhangs runs, and installs it with set_tree_support_preview_cache
+    std::shared_ptr<TreeSupportData> make_tree_support_preview_cache() const;   // defined in Support/TreeSupport.cpp
+    void set_tree_support_preview_cache(std::shared_ptr<TreeSupportData> cache) { m_tree_support_preview_cache = std::move(cache); }
     // adapter helpers (PrintObject is a friend of Layer/SupportLayer -> can build & read them).
     Layer* add_layer(int id, coordf_t height, coordf_t print_z, coordf_t slice_z) {
         m_layers.push_back(new Layer(size_t(id), this, height, print_z, slice_z));
@@ -203,6 +210,7 @@ public:
     LayerPtrs        m_layers;
     SupportLayerPtrs m_support_layers;
     PrintObjectConfig m_config;
+    std::shared_ptr<TreeSupportData> m_tree_support_preview_cache;
     Print*           m_print = nullptr;
     ModelObject*     m_model_object = nullptr;
     SlicingParameters m_slicing_params;

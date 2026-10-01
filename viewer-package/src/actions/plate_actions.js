@@ -44,8 +44,8 @@ export function makePlateActions(deps) {
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
     settings, plateSettings, setPlateSettings, canvasMode, downgradeOffer, onExport,
     runSlice, createPoolContext, kernelKindRef, progressSinkRef, setPlateRun, setSliceRate,
-    ensurePlateToolpaths, buildPlateToolpath, applyViewColors, disposePlateToolpath,
-    setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeUrl, setExporting, setSl1Ready,
+    ensurePlateToolpaths, buildPlateToolpath, showFocusedColorRange, disposePlateToolpath,
+    setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeResult, setExporting, setSl1Ready,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice, clearError, clearSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
     onSlicedRef, extruderColorsRef,
@@ -69,7 +69,7 @@ export function makePlateActions(deps) {
     if (!r || r.error || !r.layers || !r.layers.length) {    // plate without a result: clear the focus UI
       layersDataRef.current = null; toolpathRef.current = null; segDataRef.current = null
       setStats(null); setOverBed(false); setLayerCount(0); setSegCount(0); setColorRange(null); setRoleLegend([])
-      setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl); return '' })
+      setGcodeResult(null)
       apiRef.current?.setSlaPreview?.(null)
       apiRef.current?.setSlaRaster?.(null)
       return
@@ -93,7 +93,7 @@ export function makePlateActions(deps) {
     if (entry) {
       toolpathRef.current = entry.ctl; segDataRef.current = entry.seg
       entry.ctl.setLayerRange(0, n - 1)
-      applyViewColors()
+      showFocusedColorRange(entry)
       setSegCount(entry.seg.nSeg); setRoleLegend(roleRatios(entry.seg.typeLengths))
     } else if (isSla) {
       toolpathRef.current = null; segDataRef.current = null
@@ -104,9 +104,15 @@ export function makePlateActions(deps) {
     setStats(statsFromKernel(r.stats, r.throughput))
     setOverBed(!!r.stats.over_bed); setLayerCount(n)
     // A resin result has no G-code; its export (.sl1) is built on click by exportPlateSl1 — see SliceBar.
-    setGcodeUrl(prevUrl => { if (prevUrl) URL.revokeObjectURL(prevUrl)
-      if (r.stats.sla) return ''
-      return URL.createObjectURL(new Blob([gcodeForExport(r)], { type: 'text/plain' })) })
+    let exportable = r
+    if (r.stats.sla) exportable = null
+    setGcodeResult(exportable)
+  }
+  // The plain .gcode of the result on screen, built on click. Building its Blob on every plate focus copied the
+  //  whole G-code each time (33-203ms per switch on haaland.3mf) for a file that is rarely saved.
+  async function exportPlainGcode(result) {
+    if (!result) return
+    await download(gcodeForExport(result), `plate_${selectedPlateRef.current + 1}.gcode`, 'text/plain', onExport)
   }
   // Build and save the focused plate's SL1 archive. Built on demand — rasterizing hundreds of layer PNGs is
   //  seconds of work, and paying it on every plate focus for a file that may never be saved is the same waste
@@ -617,5 +623,5 @@ export function makePlateActions(deps) {
     showPlateResult(i)
   }
 
-  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
+  return { showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlainGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate }
 }

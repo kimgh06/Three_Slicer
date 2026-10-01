@@ -166,7 +166,7 @@ export async function loadModel(name, buffer) {
       // Own parser — three's ThreeMFLoader cannot read the production extension (p:path), so every slicer-saved 3mf came out empty.
       // A slicer-written 3mf is a project: `paint` and `project` carry the preset/painting/plate state next to the mesh.
       const { objects, project } = await parse3mf(buffer, name)
-      const objs = objects.map(o => ({ name: o.name, modelPos: o.tris, objectid: o.objectid, paint: o.paint, bbox: o.bbox, project }))
+      const objs = objects.map(o => ({ name: o.name, modelPos: o.tris, baked: o.baked, objectid: o.objectid, paint: o.paint, bbox: o.bbox, project }))
       // A .gcode.3mf is a print job with no mesh: one entry carrying its plates' G-code instead of a model.
       if (!objs.length && project.gcodePlates) return [{ name, gcodePlates: project.gcodePlates, project }]
       if (!objs.length) throw new Error('No mesh in 3MF')

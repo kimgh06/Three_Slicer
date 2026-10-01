@@ -7,8 +7,16 @@
 //  none of which exist yet when the viewer runs its own pre-slice bed check against the model's bounding box.
 // `throughput` is the one field that does NOT come from the kernel's stats object — it is measured around the
 //  call and sits beside them on the result, so it has to be handed in rather than read out of `s`.
+// What the worker reported about the contour union when the GPU was asked for (three-slicer's contour_slice.js); null
+//  when it was not.
+function contourOf(s) {
+  if (!s.contour_engine) return null
+  return { engine: s.contour_engine, reason: s.contour_engine_reason ?? null, fallbackLayers: s.contour_fallback_layers ?? 0, gpuMs: s.contour_gpu_ms ?? null,
+    front: s.contour_front ?? null }
+}
 export function statsFromKernel(s, throughput = null) {
   return {
+    contour: contourOf(s),
     layers: s.layers, segments: s.path_segments, filament: s.filament_mm, timeSec: s.time_estimate,
     engine: s.time_engine, limits: s.machine_limits, throughput,
     overBedBy: { x: s.over_bed_x ?? 0, y: s.over_bed_y ?? 0, z: s.over_bed_z ?? 0 },

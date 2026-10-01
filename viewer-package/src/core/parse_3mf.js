@@ -3,23 +3,26 @@
 //  Nearly every 3mf written by OrcaSlicer/BambuStudio/PrusaSlicer uses it (3D/3dmodel.model holds only component
 //  shells, the real meshes live in 3D/Objects/*.model), so the loader returned an empty Group and "no 3MF mesh" errors.
 // We only need triangles (materials/textures/colors are irrelevant), so we go straight from zip -> .model XML -> triangle stream.
-// The XML is read with regexes: vertex/triangle/component/item in 3mf are all attribute-only self-closing tags and
-//  objects do not nest, so no scanner is needed. With no DOMParser dependency it is testable under node as-is.
+// The .model parts are read from their bytes (model_xml.js); the metadata is small and read with the regexes below.
+// With no DOMParser dependency it is testable under node as-is.
 import { unzipSync, unzip } from 'three/examples/jsm/libs/fflate.module.js'
 import { SLA_POINT_RADIUS } from './viewer_defaults.js'
+import { scanModelXml, parseTransform, PAINT_ATTRS, emptyPaint, paintIsEmpty } from './model_xml.js'
+import { zipEntries, entryData, inflateEntry } from './zip_entries.js'
+import { bakeModel } from './bake_local.js'
 
-// Decompression is the single largest fixed cost of reading a project (measured on a 52MB / 315MB-inflated
-//  MakerWorld file: ~600ms of a 2.0s parse), and it is embarrassingly parallel — 18 independent .model parts.
-//  fflate's async entry point spreads them over a Web Worker pool; unzipSync does them one after another.
-// The fallback is not defensive padding: `unzip` needs the `Worker` global and throws SYNCHRONOUSLY without it,
-//  which is every non-browser caller (this package's own node tests) and any environment that refuses nested
-//  workers — this parser itself runs inside a worker. Both failure shapes land on the same synchronous path.
+export { emptyPaint, paintIsEmpty }
+
+// The fallback for an archive zipEntries() cannot list (zip64, encryption): fflate's async entry point spreads the
+//  members over a Web Worker pool; unzipSync does them one after another. `unzip` needs the `Worker` global and throws
+//  SYNCHRONOUSLY without it, which is every non-browser caller and any environment that refuses nested workers —
+//  both failure shapes land on the same synchronous path.
 function unzipAll(bytes) {
   return new Promise((resolve) => {
     let settled = false
     const done = (files) => { if (!settled) { settled = true; resolve(files) } }
     try {
-      unzip(bytes, (err, files) => done(err ? unzipSync(bytes) : files))
+      unzip(bytes, (err, files) => { if (err) done(unzipSync(bytes)); else done(files) })
     } catch {
       done(unzipSync(bytes))
     }
@@ -33,110 +36,18 @@ function mul(a, b) {
   const o = new Array(12)
   for (let r = 0; r < 4; r++) {
     for (let c = 0; c < 3; c++) {
-      o[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c] + (r === 3 ? b[9 + c] : 0)
+      let translation = 0
+      if (r === 3) translation = b[9 + c]
+      o[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c] + translation
     }
   }
   return o
 }
 
-function parseTransform(s) {
-  if (!s) return IDENT
-  const t = s.trim().split(/\s+/).map(Number)
-  return t.length === 12 && t.every(Number.isFinite) ? t : IDENT
-}
-
 const A_RE = {}
 function attr(tag, name) {
   const re = A_RE[name] || (A_RE[name] = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))
-  const m = re.exec(tag)
-  return m ? m[1] : null
-}
-
-const VERT_FAST = /<vertex\s+x="([^"]*)"\s+y="([^"]*)"\s+z="([^"]*)"/g
-// The trailing group captures whatever follows v3 on the same tag — that is where the painted-facet attributes live.
-const TRI_FAST = /<triangle\s+v1="([^"]*)"\s+v2="([^"]*)"\s+v3="([^"]*)"([^>]*)/g
-
-// Painting is stored ON the <triangle> tag, not in Metadata/model_settings.config as the rest of the per-object
-//  state is (slicer/src/libslic3r/Format/bbs_3mf.cpp:329-332). Each value is upstream's split-tree bitstream
-//  rendered as hex by FacetsAnnotation::get_triangle_as_string — opaque here, decoded by the kernel's selector.
-// paint_seam / paint_fuzzy_skin are read too so a project that carries them can be REPORTED as dropped rather
-//  than silently losing them; the kernel has no seam or fuzzy-skin painting to apply them to.
-const PAINT_ATTRS = [
-  ['paint_color', 'color'],        // multi-material: state 1..16 == Extruder1..16
-  ['paint_supports', 'supports'],  // support enforcer/blocker: states 1 and 2
-  ['paint_seam', 'seam'],          // unsupported by the kernel — collected for the warning only
-  ['paint_fuzzy_skin', 'fuzzy'],   // ditto
-]
-export function emptyPaint() { return { color: new Map(), supports: new Map(), seam: new Map(), fuzzy: new Map() } }
-export function paintIsEmpty(paint) { return !paint || PAINT_ATTRS.every(([, slot]) => paint[slot].size === 0) }
-
-function readPaint(tag, triIndex, paint) {
-  for (const [attrName, slot] of PAINT_ATTRS) {
-    // includes() first: the overwhelmingly common tag has no paint at all, and a substring scan is far cheaper
-    //  than building/running four attribute regexes per triangle on a mesh with hundreds of thousands of them.
-    if (!tag.includes(attrName)) continue
-    const value = attr(tag, attrName)
-    if (value) paint[slot].set(triIndex, value)
-  }
-}
-
-function parseMesh(body) {
-  const verts = []
-  VERT_FAST.lastIndex = 0
-  let m
-  while ((m = VERT_FAST.exec(body))) verts.push(+m[1], +m[2], +m[3])
-  if (!verts.length) {
-    // Tolerates writers with a different attribute order (x/y/z order irrelevant)
-    for (const t of body.match(/<vertex\b[^>]*>/g) || []) verts.push(+attr(t, 'x'), +attr(t, 'y'), +attr(t, 'z'))
-  }
-  if (verts.length < 9) return null
-
-  const tris = []
-  const paint = emptyPaint()
-  TRI_FAST.lastIndex = 0
-  while ((m = TRI_FAST.exec(body))) {
-    const triIndex = tris.length / 3
-    tris.push(+m[1], +m[2], +m[3])
-    // A self-closing tag with nothing painted leaves "/" here, so anything shorter than an attribute cannot carry one.
-    if (m[4].length > 2) readPaint(m[4], triIndex, paint)
-  }
-  if (!tris.length) {
-    for (const t of body.match(/<triangle\b[^>]*>/g) || []) {
-      const triIndex = tris.length / 3
-      tris.push(+attr(t, 'v1'), +attr(t, 'v2'), +attr(t, 'v3'))
-      readPaint(t, triIndex, paint)
-    }
-  }
-  if (!tris.length) return null
-  return { verts, tris, paint }
-}
-
-// One .model XML -> { objects: Map(id -> {mesh|components}), items: [{objectid, path, transform}] }
-function parseModelXml(xml) {
-  const objects = new Map()
-  const OBJ_RE = /<object\b([^>]*)>([\s\S]*?)<\/object>/g
-  let m
-  while ((m = OBJ_RE.exec(xml))) {
-    const id = attr(m[1], 'id')
-    if (!id) continue
-    const body = m[2]
-    const comps = []
-    for (const c of body.match(/<component\b[^>]*>/g) || []) {
-      const oid = attr(c, 'objectid')
-      if (oid) comps.push({ objectid: oid, path: attr(c, 'p:path') || attr(c, 'path'), transform: parseTransform(attr(c, 'transform')) })
-    }
-    objects.set(id, comps.length ? { components: comps } : { mesh: parseMesh(body) })
-  }
-
-  const items = []
-  const build = /<build\b[^>]*>([\s\S]*?)<\/build>/.exec(xml)
-  if (build) {
-    for (const it of build[1].match(/<item\b[^>]*>/g) || []) {
-      const oid = attr(it, 'objectid')
-      if (oid) items.push({ objectid: oid, path: attr(it, 'p:path') || attr(it, 'path'), transform: parseTransform(attr(it, 'transform')) })
-    }
-  }
-  return { objects, items }
+  return re.exec(tag)?.[1] ?? null
 }
 
 function normPath(p) {
@@ -309,31 +220,173 @@ function readProject(files, dec) {
   return project
 }
 
+// ---- Build items ------------------------------------------------------------------------------------------
+// One build item becomes one object: its meshes (reached through components, possibly in other .model parts) with
+//  the build transform applied, its painted facets rebased onto the output numbering, its modifier volumes split
+//  off, its XY box, and — when asked — the scene geometry (bakeModel). An item is described by its REFS: the
+//  (objectid, path, transform, depth) entries emit() starts from, so an item whose root object lives in the root
+//  part can hand its first level of components to a worker that never sees the root part.
+
+// Thrown by a job's getModel for a part that exists in the archive but was not sent to the job; the item is then
+//  built where the whole archive is.
+const NOT_IN_JOB = Symbol('part not in job')
+
+function walk(objectid, path, xf, depth, getModel, visit) {
+  if (depth > 16) return   // guards against circular references
+  const obj = getModel(path)?.objects.get(objectid)
+  if (!obj) return
+  if (obj.components) {
+    for (const c of obj.components) walk(c.objectid, c.path || path, mul(c.transform, xf), depth + 1, getModel, visit)
+    return
+  }
+  if (obj.mesh) visit(obj.mesh, xf)
+}
+
+// The item's triangles, as Float32 values of the double-precision transform — what `new Float32Array(sinkArray)`
+//  held when they were pushed onto a JS array first. Counted first, so the stream is written once into its final array.
+function emitItem(refs, getModel) {
+  let values = 0
+  for (const r of refs) walk(r.objectid, r.path, r.xf, r.depth, getModel, (mesh) => { values += mesh.tris.length * 3 })
+  const sink = new Float32Array(values)
+  const paintSink = emptyPaint()
+  let written = 0
+  for (const r of refs) walk(r.objectid, r.path, r.xf, r.depth, getModel, ({ verts, tris, paint }, xf) => {
+    const triBase = written / 9   // output index of this mesh's first triangle
+    for (let i = 0; i < tris.length; i++) {
+      const o = tris[i] * 3
+      const x = verts[o], y = verts[o + 1], z = verts[o + 2]
+      sink[written] = x * xf[0] + y * xf[3] + z * xf[6] + xf[9]
+      sink[written + 1] = x * xf[1] + y * xf[4] + z * xf[7] + xf[10]
+      sink[written + 2] = x * xf[2] + y * xf[5] + z * xf[8] + xf[11]
+      written += 3
+    }
+    for (const [, slot] of PAINT_ATTRS)
+      for (const [localTri, hex] of paint[slot]) paintSink[slot].set(triBase + localTri, hex)
+  })
+  return { sink, paintSink }
+}
+
+// Modifier volumes out of the printable mesh, the XY box, and the scene geometry. -> null for an item with no triangle.
+function finishItem({ sink, paintSink }, volumeRecords, bake) {
+  if (sink.length < 9) return null
+  let tris = sink
+  const modifiers = []
+  if (volumeRecords.length) {
+    const modifierFaces = new Set()
+    for (let volume = 0; volume < volumeRecords.length; volume++) {
+      const record = volumeRecords[volume]
+      const start = record.firstTriangle * 9
+      const end = Math.min(sink.length, (record.lastTriangle + 1) * 9)
+      if (start >= end) continue
+      for (let face = record.firstTriangle; face <= record.lastTriangle; face++) modifierFaces.add(face)
+      modifiers.push({ volume, kind: record.kind, tris: sink.slice(start, end) })
+    }
+    if (modifierFaces.size) {
+      const printable = new Float32Array(sink.length - [...modifierFaces].filter(face => face < sink.length / 9).length * 9)
+      let at = 0
+      for (let face = 0; face < sink.length / 9; face++) {
+        if (modifierFaces.has(face)) continue
+        printable.set(sink.subarray(face * 9, face * 9 + 9), at); at += 9
+      }
+      tris = printable
+    }
+  }
+  // The XY box in the file's own coordinates. A slicer-written 3mf lays its PLATES OUT IN WORLD SPACE — plate 2's
+  //  objects simply sit a few hundred mm along x from plate 1's — so this box is the only record of the
+  //  arrangement the author made. The scene's bakeLocal centres every object and drops it, which is why the
+  //  importer has to capture it here and re-apply it per plate.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (let v = 0; v < tris.length; v += 3) {
+    const x = tris[v], y = tris[v + 1]
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  let paint = paintSink
+  if (paintIsEmpty(paintSink)) paint = null
+  const built = { tris, paint, modifiers, bbox: { minX, minY, maxX, maxY } }
+  if (bake) built.baked = bakeModel(tris)
+  return built
+}
+
+/**
+ * Builds the items of one job from the compressed parts it was sent. Pure — it is what a parse worker's helper
+ *  workers run, and what runs in-thread when there are none.
+ *   job: { members: [{ path, data, entry }], names: [every part path in the archive], items: [{ index, refs, volumeRecords }], bake }
+ *   ->   { items: [{ index, built } | { index, local: true }] }
+ */
+export async function runItemJob(job) {
+  const models = new Map()
+  await Promise.all(job.members.map(async (member) => {
+    models.set(member.path, scanModelXml(await inflateEntry(member.data, member.entry)))
+  }))
+  const names = new Set(job.names)
+  const getModel = (path) => {
+    const normalized = normPath(path)
+    if (models.has(normalized)) return models.get(normalized)
+    if (names.has(normalized)) throw NOT_IN_JOB
+    return null
+  }
+  return {
+    items: job.items.map((item) => {
+      try {
+        return { index: item.index, built: finishItem(emitItem(item.refs, getModel), item.volumeRecords, job.bake) }
+      } catch (error) {
+        if (error === NOT_IN_JOB) return { index: item.index, local: true }
+        throw error
+      }
+    }),
+  }
+}
+
+const runJobsInThread = (jobs) => Promise.all(jobs.map(runItemJob))
+
+// The archive's members, inflated on demand. zipEntries() lists them without inflating anything; an archive it cannot
+//  read goes through fflate whole, and its items are then all built in-thread.
+async function openArchive(bytes) {
+  const entries = zipEntries(bytes)
+  if (!entries) {
+    const files = new Map()
+    const zip = await unzipAll(bytes)
+    for (const k of Object.keys(zip)) files.set(normPath(k), zip[k])
+    return { names: [...files.keys()], entry: () => null, read: async (path) => files.get(path) ?? null }
+  }
+  const byPath = new Map()
+  for (const [name, entry] of entries) byPath.set(normPath(name), entry)
+  const inflated = new Map()
+  return {
+    names: [...byPath.keys()],
+    entry: (path) => byPath.get(path) ?? null,
+    read: (path) => {
+      const entry = byPath.get(path)
+      if (!entry) return Promise.resolve(null)
+      if (!inflated.has(path)) inflated.set(path, inflateEntry(entryData(bytes, entry), entry))
+      return inflated.get(path)
+    },
+  }
+}
+
+const isModelPart = (path) => path.toLowerCase().endsWith('.model')
+
 /**
  * 3MF (ArrayBuffer|Uint8Array) -> {objects, project}
- *   objects: [{name, tris: Float32Array(N*9), objectid, paint}]  (z-up mm, build transform baked in)
+ *   objects: [{name, tris: Float32Array(N*9), objectid, paint, sla, bbox, baked?}]  (z-up mm, build transform baked in)
  *            One build item = one object. When there are no items, every top-level object with a mesh is used.
  *   project: the Metadata/*.config side — preset, per-object state, plate layout (all nullable).
+ *   options.runJobs: runs a list of runItemJob jobs (a worker pool); in-thread when absent.
+ *   options.bake:    also return each object's scene geometry (bakeModel) as `baked`.
  */
-export async function parse3MFProject(buffer, baseName = 'model') {
+export async function parse3MFProject(buffer, baseName = 'model', { runJobs = runJobsInThread, bake = false } = {}) {
   // TypedArray/Buffer may sit on a pooled ArrayBuffer, so offset/length must be preserved.
-  const bytes = ArrayBuffer.isView(buffer)
-    ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-    : new Uint8Array(buffer)
-  const zip = await unzipAll(bytes)
-  const files = new Map()
-  for (const k of Object.keys(zip)) files.set(normPath(k), zip[k])
-
+  let bytes = new Uint8Array(buffer)
+  if (ArrayBuffer.isView(buffer)) bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+  const archive = await openArchive(bytes)
   const dec = new TextDecoder()
-  const models = new Map()   // path → parsed
-  const getModel = (path) => {
-    const p = normPath(path)
-    if (models.has(p)) return models.get(p)
-    const raw = files.get(p)
-    const parsed = raw ? parseModelXml(dec.decode(raw)) : null
-    models.set(p, parsed)
-    return parsed
-  }
+
+  // Every member but the .model parts is metadata: small, and read synchronously by readProject.
+  const files = new Map()
+  await Promise.all(archive.names.filter(path => !isModelPart(path)).map(async (path) => files.set(path, await archive.read(path))))
 
   // Root part: the 3dmodel relationship in _rels/.rels -> the conventional path when absent
   let rootPath = '3D/3dmodel.model'
@@ -344,93 +397,80 @@ export async function parse3MFProject(buffer, baseName = 'model') {
     }
   }
   const project = readProject(files, dec)
-  const root = getModel(rootPath)
+  const rootBytes = await archive.read(rootPath)
+  const root = rootBytes && scanModelXml(rootBytes)
   // A .gcode.3mf holds no meshes (upstream writes it with SkipModel), so a missing root is its normal shape.
   if (!root && project.gcodePlates) return { objects: [], project }
   if (!root) throw new Error(`3MF root model not found: ${rootPath}`)
 
-  const out = []
-  // Expand objects recursively -> push triangles into the tris array. depth guards against circular references.
-  // `paintSink` collects the painted facets of every mesh reached, rebased onto the OUTPUT triangle numbering:
-  //  one build item may pull in several component meshes, each with its own local facet indices, and the kernel's
-  //  selector only ever sees the flattened result.
-  const emit = (objectid, path, xf, sink, paintSink, depth) => {
-    if (depth > 16) return
-    const model = getModel(path)
-    const obj = model?.objects.get(objectid)
-    if (!obj) return
-    if (obj.components) {
-      for (const c of obj.components) emit(c.objectid, c.path || path, mul(c.transform, xf), sink, paintSink, depth + 1)
-      return
+  let items = root.items
+  if (!items.length) items = [...root.objects.keys()].filter(id => root.objects.get(id).mesh).map(id => ({ objectid: id, path: rootPath, transform: IDENT }))
+
+  // Which items can be built from their own parts: the item's object (or its first level of components) must sit in
+  //  a part other than the root. Items that share a part go to the same job, so no part is inflated twice.
+  const jobs = [], jobOfPart = new Map(), local = []
+  // The item as emit() starts it from the build: its own object, at depth 0. Any item can be built from this.
+  const wholeItem = (index) => {
+    const it = items[index]
+    return { index, refs: [{ objectid: it.objectid, path: it.path || rootPath, xf: it.transform, depth: 0 }], volumeRecords: project.volumeMeta.get(it.objectid) || [] }
+  }
+  items.forEach((it, index) => {
+    const itemPath = it.path || rootPath
+    const volumeRecords = project.volumeMeta.get(it.objectid) || []
+    let refs = [{ objectid: it.objectid, path: itemPath, xf: it.transform, depth: 0 }]
+    if (normPath(itemPath) === rootPath) {
+      const obj = root.objects.get(it.objectid)
+      if (obj?.components) refs = obj.components.map(c => ({ objectid: c.objectid, path: c.path || itemPath, xf: mul(c.transform, it.transform), depth: 1 }))
     }
-    if (!obj.mesh) return
-    const { verts, tris, paint } = obj.mesh
-    const triBase = sink.length / 9   // output index of this mesh's first triangle (9 values pushed per triangle)
-    for (let i = 0; i < tris.length; i++) {
-      const o = tris[i] * 3
-      const x = verts[o], y = verts[o + 1], z = verts[o + 2]
-      sink.push(
-        x * xf[0] + y * xf[3] + z * xf[6] + xf[9],
-        x * xf[1] + y * xf[4] + z * xf[7] + xf[10],
-        x * xf[2] + y * xf[5] + z * xf[8] + xf[11],
-      )
+    const parts = [...new Set(refs.map(r => normPath(r.path)))]
+    if (parts.some(part => part === rootPath || !archive.entry(part))) { local.push(wholeItem(index)); return }
+    let job = parts.map(part => jobOfPart.get(part)).find(Boolean)
+    if (!job) { job = { parts: new Set(), items: [] }; jobs.push(job) }
+    for (const part of parts) {
+      const other = jobOfPart.get(part)
+      if (other && other !== job) {            // two jobs now share a part: fold the other one in
+        for (const p of other.parts) { job.parts.add(p); jobOfPart.set(p, job) }
+        job.items.push(...other.items); jobs.splice(jobs.indexOf(other), 1)
+      }
+      job.parts.add(part); jobOfPart.set(part, job)
     }
-    if (paint) for (const [, slot] of PAINT_ATTRS)
-      for (const [localTri, hex] of paint[slot]) paintSink[slot].set(triBase + localTri, hex)
+    job.items.push({ index, refs, volumeRecords })
+  })
+
+  const built = new Array(items.length).fill(null)
+  // Largest first: the slowest job bounds the parse, so it should start first.
+  const payloads = jobs.map(job => ({
+    members: [...job.parts].map(path => { const entry = archive.entry(path); return { path, data: entryData(bytes, entry).slice(), entry: { method: entry.method, size: entry.size } } }),
+    names: archive.names, items: job.items, bake,
+  })).sort((a, b) => b.members.reduce((s, m) => s + m.data.length, 0) - a.members.reduce((s, m) => s + m.data.length, 0))
+  for (const result of await runJobs(payloads)) {
+    for (const item of result.items) {
+      if (item.local) local.push(wholeItem(item.index))
+      else built[item.index] = item.built
+    }
   }
 
-  const items = root.items.length
-    ? root.items
-    : [...root.objects.keys()].filter(id => root.objects.get(id).mesh).map(id => ({ objectid: id, path: rootPath, transform: IDENT }))
+  if (local.length) {
+    const models = new Map([[rootPath, root]])
+    for (const path of archive.names) if (isModelPart(path) && path !== rootPath) models.set(path, scanModelXml(await archive.read(path)))
+    const getModel = (path) => models.get(normPath(path)) ?? null
+    for (const item of local) built[item.index] = finishItem(emitItem(item.refs, getModel), item.volumeRecords, bake)
+  }
 
+  const out = []
   items.forEach((it, i) => {
-    const sink = []
-    const paintSink = emptyPaint()
-    emit(it.objectid, it.path || rootPath, it.transform, sink, paintSink, 0)
-    if (sink.length < 9) return
-    let tris = new Float32Array(sink)
-    const modifiers = []
-    const volumeRecords = project.volumeMeta.get(it.objectid) || []
-    if (volumeRecords.length) {
-      const modifierFaces = new Set()
-      for (let volume = 0; volume < volumeRecords.length; volume++) {
-        const record = volumeRecords[volume]
-        const start = record.firstTriangle * 9
-        const end = Math.min(sink.length, (record.lastTriangle + 1) * 9)
-        if (start >= end) continue
-        for (let face = record.firstTriangle; face <= record.lastTriangle; face++) modifierFaces.add(face)
-        modifiers.push({ id: `${it.objectid}:modifier:${volume}`, kind: record.kind, tris: new Float32Array(sink.slice(start, end)) })
-      }
-      if (modifierFaces.size) {
-        const printable = []
-        for (let face = 0; face < sink.length / 9; face++) if (!modifierFaces.has(face)) printable.push(...sink.slice(face * 9, face * 9 + 9))
-        tris = new Float32Array(printable)
-      }
-    }
+    const item = built[i]
+    if (!item) return
     const supportPoints = (project.sla.supportPoints.get(i + 1) || []).map(point => ({ ...point, position: transformPoint(it.transform, point.position) }))
     const drainHoles = (project.sla.drainHoles.get(i + 1) || []).map(hole => ({
       ...hole, position: transformPoint(it.transform, hole.position), normal: transformDirection(it.transform, hole.normal),
     }))
-    // The XY box in the file's own coordinates. A slicer-written 3mf lays its PLATES OUT IN WORLD SPACE — plate 2's
-    //  objects simply sit a few hundred mm along x from plate 1's — so this box is the only record of the
-    //  arrangement the author made. The scene's bakeLocal centres every object and drops it, which is why the
-    //  importer has to capture it here and re-apply it per plate.
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (let v = 0; v < tris.length; v += 3) {
-      const x = tris[v], y = tris[v + 1]
-      if (x < minX) minX = x
-      if (x > maxX) maxX = x
-      if (y < minY) minY = y
-      if (y > maxY) maxY = y
-    }
-    out.push({
-      name: items.length > 1 ? `${baseName}#${i + 1}` : baseName,
-      tris,
-      objectid: it.objectid,
-      paint: paintIsEmpty(paintSink) ? null : paintSink,
-      sla: { supportPoints, drainHoles, modifierVolumes: modifiers },
-      bbox: { minX, minY, maxX, maxY },
-    })
+    const modifierVolumes = item.modifiers.map(({ volume, kind, tris }) => ({ id: `${it.objectid}:modifier:${volume}`, kind, tris }))
+    let name = baseName
+    if (items.length > 1) name = `${baseName}#${i + 1}`
+    const object = { name, tris: item.tris, objectid: it.objectid, paint: item.paint, sla: { supportPoints, drainHoles, modifierVolumes }, bbox: item.bbox }
+    if (item.baked) object.baked = item.baked
+    out.push(object)
   })
   return { objects: out, project }
 }

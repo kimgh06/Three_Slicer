@@ -3,6 +3,7 @@
 //  The two cancel sites inside PASS 1 return `false` instead of building the canceled em::val — slice() builds it
 //  at the call site, so the observable result is unchanged.
 #include "slice_ctx.h"
+#include "contour_phase.h"
 
 #include "arachne_bridge.h"
 #include "classic_bridge.h"
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -126,8 +128,21 @@ bool pass1_run(SliceCtx& C) {
     //  ≈ 500M visits. The inclusion condition is unchanged (zmin<=z<zmax -> lower_bound + *it<zmax) and the tri_plane
     //  input is identical -> segment values are unchanged. Per-thread 'contiguous triangle ranges' merged in range order keep the in-layer segment
     //  order in ascending triangle index (same as the old full scan) -> the chain_polys input is unchanged = byte-identical.
+    // MESH (contour_phase.h): the GPU cuts and chains the layers; hand it the triangles as seated and the planes as cut
+    if (contour_phase::mode == contour_phase::MESH) {
+      static_assert(sizeof(Tri) == 9 * sizeof(float), "mesh_tris copies Tri as 9 packed floats");
+      contour_phase::mesh_planes = zsv;
+      contour_phase::mesh_tris.resize(tris.size() * 9);
+      if (!tris.empty()) std::memcpy(contour_phase::mesh_tris.data(), tris.data(), tris.size() * sizeof(Tri));
+      contour_phase::captured = true;
+      return false;
+    }
     std::vector<std::vector<Seg>> layerSegs(N);
-    if (N > 0) {
+    // The union done outside the kernel (contour_phase.h). OFF leaves every line below as it was.
+    const bool captureLoops = contour_phase::mode == contour_phase::CAPTURE;
+    const bool injectContours = contour_phase::mode == contour_phase::INJECT && (int)contour_phase::contours.size() == N;
+    if (captureLoops) contour_phase::loops.assign(N, Paths());
+    if (N > 0 && !injectContours) {
       auto collect = [&](size_t a, size_t b, std::vector<std::vector<Seg>>& out){
         Seg sg;
         for (size_t ti = a; ti < b; ++ti) {
@@ -147,7 +162,10 @@ bool pass1_run(SliceCtx& C) {
         for (unsigned t2 = 0; t2 < snt; ++t2) {
           size_t a = t2*schunk, b = std::min(tris.size(), a+schunk);
           if (a >= b) break;
-          sths.emplace_back([&, a, b, t2]{ collect(a, b, tb[t2]); });
+          // an empty pthread pool refuses the thread (PTHREAD_POOL_SIZE_STRICT=2): the caller sweeps the range itself,
+          //  into the same bucket, so the segment order is unchanged
+          try { sths.emplace_back([&, a, b, t2]{ collect(a, b, tb[t2]); }); }
+          catch (...) { collect(a, b, tb[t2]); }
         }
         for (auto& th : sths) th.join();
         for (int li = 0; li < N; ++li) {
@@ -163,8 +181,16 @@ bool pass1_run(SliceCtx& C) {
       const double z = zsv[i];
       LayerData ld; ld.z=z; ld.idx=i; ld.h=(i==0)?p.first_layer_height:p.layer_height;
       std::vector<Seg> segs; segs.swap(layerSegs[i]);
+      if (captureLoops) {
+        contour_phase::loops[i] = chain_polys(segs);
+        contour_phase::cancel_coincident(contour_phase::loops[i]);
+        return;
+      }
+      if (injectContours) ld.contour = contour_phase::contours[i];
+      else {
       Paths loops = chain_polys(segs);
-      ld.contour = SimplifyPolygons(loops, pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
+      ld.contour = SimplifyPolygons(loops, pftNonZero);
+      }   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
       // [early simplification — matching upstream] Upstream simplifies every contour to resolution right after slicing the mesh
       //  (TriangleMeshSlicer.cpp:2042 ex.simplify). The kernel passed raw contours straight through, so everything downstream (walls, infill,
       //  support, emission clipping) paid for high-density polygons. CleanPolygons (removal by perpendicular distance) gives an equivalent reduction —
@@ -247,15 +273,17 @@ bool pass1_run(SliceCtx& C) {
       auto workfn = [&]{ int i; while (!CX() && (i = nextIdx.fetch_add(1)) < N) { computeLayer(i);
         unsigned d = p1done.fetch_add(1) + 1; p1prog->store((unsigned)((unsigned long long)d * 1000u / (unsigned)N)); } };
       std::vector<std::thread> ths; ths.reserve(nt-1);
-      for (unsigned t=1; t<nt; ++t) ths.emplace_back(workfn);
+      for (unsigned t=1; t<nt; ++t) { try { ths.emplace_back(workfn); } catch (...) { break; } }   // the threads that started take the rest
       workfn();                                  // the main thread joins in too
       for (auto& th : ths) th.join();
       p1prog->store(0);                          // avoid polluting the support band (clear the leftover value before ParallelScope resets it)
       if (CX()) { return false; }   // G002
+      if (captureLoops) { contour_phase::captured = true; return false; }
       report(N, total);                          // JS callbacks are main-thread only -> report at coarse granularity
     }
 #else
     for (int i=0;i<N;++i){ if (CX()) { return false; } computeLayer(i); report(i+1, total); }
+    if (captureLoops) { contour_phase::captured = true; return false; }
 #endif
   }
   return true;

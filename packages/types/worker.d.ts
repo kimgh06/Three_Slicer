@@ -94,8 +94,11 @@ export type SlicerRequest =
    * stringified for you (it was string-only through 0.2.2, which made this the one call path with a different
    * contract from `createSlicer().slice()` and `createSlicerClient().slice()`).
    * Replies: `progress` and `layer` while it runs, then `done` — or `error`.
+   * `gpu: true` asks the worker to compute the layer contours with WebGPU (src/contour_gpu.js). The worker uses it
+   * when it has a device and the slice reaches the contour union; `done`'s `stats.contour_engine` says what ran
+   * ('gpu', 'cpu' with `contour_engine_reason`, or 'reused' for layers from the stage cache).
    */
-  | { stl: ArrayBuffer; params: string | object }
+  | { stl: ArrayBuffer; params: string | object; gpu?: boolean }
 
 export type SlicerResponse =
   /** `kernel` says which variant loaded: 'mt' under crossOriginIsolated, 'st' otherwise (or after an mt load failure). */

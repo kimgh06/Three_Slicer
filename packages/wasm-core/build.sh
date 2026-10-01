@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build of the browser-only slicing mini kernel (track C)
-# Output: ../engine/src/slicer_core.js  (SINGLE_FILE=1 -> the wasm is inlined as base64,
+# Output: ../engine/src/slicer_core.js  (SINGLE_FILE=1 -> the wasm is inlined into the glue,
 #         no external .wasm fetch -> self-contained on any static server or vite preview)
+#         ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm  (the threaded kernel ships its wasm as a file,
+#         see the mt link step below for why)
 #
 # Stage 7: the real OrcaSlicer Arachne (WallToolPaths) port is linked in as well.
 #  - The kernel's own clipper (global ClipperLib) and the Arachne port's clipper (Slic3r::ClipperLib / ClipperLib_Z) live in
@@ -213,13 +215,16 @@ ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachn
 #  preamble -> raft -> PASS2 precompute -> finish stats, leaving slice() as the orchestrator. Same rule — listed in
 #  the order their code had inside slicer_core.cpp.
 #  (clip_util.h / slice_planes.h / gcode_writer.h / layer_data.h / slice_api.h / slice_ctx.h are header-only.)
-MAIN_SRC="slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
+MAIN_SRC="contour_phase.cpp slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
 # -DNDEBUG: turns off assert() exactly like an upstream OrcaSlicer release build (CMAKE_BUILD_TYPE=Release).
 #  Without it, asserts upstream treats as "debug-only invariants" kill the worker in a shipped build — e.g. meshes with unwelded vertices and
 #  sliver triangles, such as OCCT tessellations (STEP import), hit Voronoi.cpp:334 (*inside* the recovery routine),
 #  VoronoiUtils.cpp:322 and FillBase.cpp:1407 (zero-length closed edge). Upstream has recovery paths for all of them, so they
 #  slice fine in release. The tree support group (TS_CFLAGS) already had -DNDEBUG.
-MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $ARACHNE_INC"
+# -DCGAL_ALWAYS_ROUND_TO_NEAREST: wasm cannot switch the FPU rounding mode, so CGAL's interval filter (VoronoiUtilsCgal.cpp, the Arachne
+#  Voronoi planarity check) widens each bound with nextafter instead. Only the main group compiles CGAL interval code (llvm-nm: no IA_up /
+#  Interval_nt symbol in ts_group.o or sla_group.o), so the define is scoped here. Measured st, 774k facets, arachne: 48.8s -> 34.7s, G-code byte-identical.
+MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 -DCGAL_ALWAYS_ROUND_TO_NEAREST $ARACHNE_INC"
 echo "compiling main sources (st, parallel x$NCPU)"
 pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
@@ -244,6 +249,12 @@ ls -la ../engine/src/slicer_core.js
 # ---- Multithreaded (mt) build: PASS 1 layers in parallel (__EMSCRIPTEN_PTHREADS__) ----
 #  A separate artifact — the default (st) stays zero-config, while mt needs COOP/COEP (crossOriginIsolated) in the browser.
 #  emscripten warns about the ALLOW_MEMORY_GROWTH + pthreads combination, but it is functionally valid (judged by measurement).
+#  No SINGLE_FILE here: every pthread worker is started from the glue itself (new Worker(new URL("slicer_core.mt.js",
+#  import.meta.url))) and parses all of it, while it takes the compiled module from the main thread and never reads the
+#  inlined bytes. Inlined, that was a 6.3MB string literal in each of ~16 isolates per kernel, ~60MB of V8 heap each,
+#  and Chrome puts every isolate of a renderer in one 4GB pointer-compression cage: three slicing workers filled it and
+#  the tab died with "V8 javascript OOM" (haaland.3mf, 6 plates, 4 of 6 runs; renderer RSS only 4.5-5.2GB at the time).
+#  With the wasm as a file the glue is ~106KB, a pthread isolate ~1MB, and three to five workers peaked at 1.3-1.8GB.
 echo "compiling treesupport group (mt, parallel x$NCPU) -> /tmp/ts_group_mt.o"
 pcompile /tmp/ws_obj/ts_mt "-pthread $TS_CFLAGS" $TS_UNIQUE_SRC
 em++ -O2 $EXCEPTION_FLAGS -pthread -r $(objs /tmp/ws_obj/ts_mt $TS_UNIQUE_SRC) -o /tmp/ts_group_mt.o
@@ -262,13 +273,13 @@ pcompile /tmp/ws_obj/mt "-pthread $MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
-  -s SINGLE_FILE=1 \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s MAXIMUM_MEMORY=4GB \
   -s STACK_SIZE=2MB \
   -s DEFAULT_PTHREAD_STACK_SIZE=2MB \
   -s MALLOC=mimalloc \
   -s PTHREAD_POOL_SIZE='(typeof navigator!=="undefined"&&navigator.hardwareConcurrency)||4' \
+  -s PTHREAD_POOL_SIZE_STRICT=2 \
   -s EXPORT_NAME=createSlicer \
   -s ENVIRONMENT=web,worker,node \
   -o ../engine/src/slicer_core.mt.js \
@@ -278,5 +289,5 @@ sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ 
 # The same case applies to the pthread bootstrap in the mt glue: the dynamic import("node:worker_threads") inside the Node guard
 sed -i '' 's|await import("node:worker_threads")|await import(/* webpackIgnore: true */ "node:worker_threads")|' ../engine/src/slicer_core.mt.js
 
-echo "built -> ../engine/src/slicer_core.mt.js"
-ls -la ../engine/src/slicer_core.mt.js
+echo "built -> ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm"
+ls -la ../engine/src/slicer_core.mt.js ../engine/src/slicer_core.mt.wasm

@@ -1561,6 +1561,16 @@ const bedTreeCentre = sliceOnBed(makeTableSTL(), treeNoSkirt)
 ok(typeTotal(bedTreeCentre, 5) > 0, `a centred model's tree support is unaffected (type5=${typeTotal(bedTreeCentre, 5)})`)
 ok(bedTreeCentre.stats.over_bed === false, `...and is not over the bed either`)
 
+//  The non-organic tree styles (upstream smsTreeSlim / Strong / Hybrid) run TreeSupport, not TreeSupport3D, and that
+//  path keeps its layer outlines in PrintObject's tree-support cache. The adapter returned an empty pointer for it, so
+//  every one of these styles dereferenced null on any model: std::length_error on st, "memory access out of bounds" on mt.
+console.log('\n[tree support: every style slices]')
+for (const tree_style of ['organic', 'slim', 'strong', 'hybrid']) {
+  let styled = null
+  try { styled = sliceOnBed(makeTableSTL(), { ...treeNoSkirt, tree_style }) } catch (error) { styled = { error: String(error) } }
+  ok(!styled.error && typeTotal(styled, 5) > 0, `tree_style ${tree_style} slices and emits support (type5=${styled.error ?? typeTotal(styled, 5)})`)
+}
+
 // ===== ;TYPE: role tags: the G-code TEXT names the roles the stream records =======================================
 //  The viewer draws a slice from the toolpath stream, but an exported .gcode / .gcode.3mf comes back as text, and
 //  the multi-material path wrote no role marks at all: an opened painted model drew its object as prime tower (every
@@ -1601,6 +1611,15 @@ for (const [name, stl, caseParams] of tagCases) {
   const roles = [...new Set([...Object.keys(stream), ...Object.keys(text)])].sort((a, b) => a - b)
   const off = roles.filter(role => Math.abs((stream[role] ?? 0) - (text[role] ?? 0)) > 0.01 * Math.max(stream[role] ?? 0, text[role] ?? 0, 1))
   ok(off.length === 0, `${name}: text read back gives the stream's length in every role (${roles.map(role => `${role}:${(stream[role] ?? 0).toFixed(0)}/${(text[role] ?? 0).toFixed(0)}`).join(' ')})`)
+}
+
+// Reordering a layer's paths must not drop paths. Upstream's check removed a whole collection whenever its first or last
+//  child had no endpoints, so every path in it was lost: on a 3M-facet tree-slim model 64.6 mm of support toolpaths over
+//  three layers, one of them a 37 mm outline of a whole support island (ShortestPath.cpp remove_entities_without_endpoints).
+console.log('\n[path reordering]')
+{
+  const kept = Module.chain_reorder_kept_length()
+  ok(Math.abs(kept - 15) < 1e-6, `reordering keeps the paths of collections with an empty first or last child (${kept.toFixed(3)} of 15 mm)`)
 }
 
 console.log(failed === 0 ? '\nALL NODE TESTS PASSED' : `\n${failed} TEST(S) FAILED`)

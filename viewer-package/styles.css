@@ -243,6 +243,9 @@
 .side-bottom .slice-btn { flex: 1.4; margin: 0; }
 .auto-slice { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--_light-text-muted); cursor: pointer; white-space: nowrap; user-select: none; }
 .auto-slice input { margin: 0; }
+.slice-options { display: flex; flex-direction: column; gap: 2px; }
+.gpu-accel { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--_light-text-muted); white-space: nowrap; }
+.gpu-accel select { font-size: 12px; padding: 1px 2px; }
 .export-btn { flex: 1; text-align: center; padding: 9px; border-radius: 8px; background: var(--_light-control); color: var(--_info);
   border: 1px solid var(--_light-border); text-decoration: none; font-weight: 600; cursor: pointer; font-size: 13px; }
 .export-btn:hover { background: var(--_light-control-hover); }

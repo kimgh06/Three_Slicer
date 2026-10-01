@@ -29,6 +29,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   meaning is named instead: "clear the message" is `clearError()` / `clearSliceNotice()` / `clearTriWarn()`
   (`Viewport.jsx` wiring), not `setError('')` at each call site, and "no value" is `null`. `test_layers.mjs` fails on
   a `set…('')` outside those definitions.
+  Tests and guards read the owner too. A guard that types out the list it protects checks the old list once the
+  owner grows, and passes over a copy of the new entry. The fill tools are the example: `FILL_TOOLS`
+  (`core/paint_tools.js`, exported as `three-slicer-viewer/paint` so the AGPL slicer worker reads the same set) was
+  spelled out by the brush input, both paint panels and the worker, and the guard in `test_layers.mjs` that now
+  catches that builds its pattern from `FILL_TOOLS`. The same applies to a list the test file itself repeats
+  (`SOURCE_DIRS` there, typed three times before).
 - `packages/` and `web/` must run, build and publish without `slicers/` (demonstrated in stage 34). Do not make changes that break this independence.
 - Changes to the kernel (`packages/wasm-core/`) must pass the golden byte-identical check (`golden.mjs`) and the `test.mjs` invariant suite.
 - Multi-material widened what "byte-identical" has to cover. Three conditions, each with its own `test.mjs` invariant, must keep producing the output the kernel produced before the feature existed: **no painted facets**, **no per-extruder arrays** (`extruder_nozzle_temp`, `extruder_flow_ratio`, `extruder_retract_*`, `extruder_z_hop`), **`support_filament` 0**. All three hold by omission rather than by a default: `deriveKernelParams` leaves those keys out of the params object entirely (93 keys from an empty settings map today), and `Params::forTool` / `support_tool_of` fall back to the scalar and to "emit no `T` command at all".
@@ -225,12 +231,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `buildMergedSTL` used — which is why `exportObjects` must return objects in that same extruder-sorted order.
   Painting is written from the per-object store after a `flushPaint`, so every plate's brush strokes are saved in
   each object's own numbering; the writer still accepts a merge-numbered `paintExport` for a caller that has one.
-  `write3MFProject` is **async** because the deflate runs off-thread (fflate's worker pool, as the parser's `unzip`
-  already does) — a save is dominated by compression, and on the main thread that is a frozen tab. Measured on a
-  980k-facet model: 2.6s all-on-thread when this landed, 1.5s wall / 0.45s longest frame gap now. Two of that came
-  from choices worth not undoing: the weld keys vertices by their float32 BIT PATTERN rather than a decimal string
-  (708ms -> 89ms), and the zip is level **3**, which on this XML is both faster than level 6 and slightly smaller.
-  The `[vp-prof] export` line reports gather/paint/write separately, because the three scale with different things.
+  `write3MFProject` is **async** because the deflate runs off-thread (fflate's worker pool) — a save is dominated by
+  compression, and on the main thread that is a frozen tab. Measured on a 980k-facet model: 2.6s all-on-thread when
+  this landed, 1.5s wall / 0.45s longest frame gap now. Two of that came from choices worth not undoing: the weld keys
+  vertices by their float32 BIT PATTERN rather than a decimal string (708ms -> 89ms), and the zip is level **3**,
+  which on this XML is both faster than level 6 and slightly smaller. The `[vp-prof] export` line reports
+  gather/paint/write separately, because the three scale with different things.
 - **Selection is a set, and the kernel's facet numbering does not follow it.** `exportObjects({selectedOnly})` is
   upstream's `export_stl(..., selection_only, ...)`; upstream additionally rejects anything that is not a whole
   object (`Plater.cpp:16244`), which this viewer cannot hit because it has no parts. The trap is the painting: the
@@ -422,6 +428,56 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream simplifies slice contours by 0.0025mm (`PrintObjectSlice.cpp:172`, "has influence on arc fitting") and
   PASS1 by `resolution`, so a coarsely faceted round wall here can sit just past the arc tolerance and stay straight
   moves where upstream would fit it.
+- **Tree support (slim, strong, hybrid) runs its loops threaded on mt, and each must give the serial result.**
+  `tbb_stub::ParallelSection` (`treesupport_port/tbb/stub_parallel.h`) turns the tbb stub's threads on around one loop:
+  `detect_overhangs`' per-layer loops, `draw_circles`, `generate_toolpaths`, the avoidance precompute, and the
+  per-part spanning trees and the move pass of `drop_nodes` (upstream runs most of them in parallel); the preview
+  cache (`TreeSupportData`, the layer outlines) is built on a thread taken from the stub's budget while
+  `detect_overhangs` runs. The move pass creates its nodes with `link_to_parent` false and writes the child links in
+  node order afterwards, which also keeps the node constructor out of the lock. The rest of the tree path stays serial because the `concurrent_*` stubs are std aliases. The move
+  pass is not upstream's loop: a node's own exit is decided first, the moves read a neighbour's validity as the serial
+  loop would at that node, and the results are applied in node order, including the `child` links the `SupportNode`
+  constructor writes on every node merged into its parent (one node can be merged into several parents, so the last
+  write followed the thread order). `MinimumSpanningTree::prim` scans its candidates in vertex order: upstream keys
+  them by address and picks with `min_element`, so equal distances were broken by heap layout and the st kernel gave
+  different G-code for one slim input from different script paths. Measured on a 1.13M-facet hybrid plate (mt):
+  91.1 -> 20.7 s, G-code unchanged. `test_tree_support_mt.mjs` pins st == mt over three mt runs for all three styles.
+  `draw_circles` unions a layer's node circles per cluster of overlapping bboxes (`union_ex_by_clusters`) before the
+  roof diff; one union of all of them was 39 of its 47 s (st). Same region, other vertex order, so the support
+  G-code bytes moved once (measured on the same plate: 21.2 -> 18.9 s mt, support extrusion +0.01 mm). Each cluster is
+  then unioned as a tree split by position (`union_ex_by_halves`, 32 per leaf), which moved them again (draw_circles
+  4.6 -> 2.3 s mt, support extrusion +0.06 mm, worst layer 0.27 %); Clipper2's union measured slower.
+  `detect_overhangs` is two passes instead of upstream's one loop: upstream's loop stops sharp-tail detection at the
+  first layer with more than 100 overhangs, which under threads depends on the order the layers are reached; the first
+  pass finds that layer, the second checks the layers as the serial loop would (same plate: 18.6-18.9 -> 17.6-17.7 s
+  mt, G-code unchanged).
+- **PASS1's contour union can run on the GPU, between two calls of `slice()`.** The kernel is synchronous and WebGPU
+  is not, so `contour_phase.h` splits the slice: CAPTURE stops after chaining every layer's raw loops, the worker
+  runs `engine/src/contour_gpu.js` on them, INJECT reads the contours back (`engine/src/contour_slice.js` drives the
+  three). OFF is the kernel as it was and the golden output is unchanged. Four things it depends on. **(1)** Segments
+  coinciding in opposite directions are cancelled on the CPU first (`cancel_coincident`): the pipeline cannot order
+  the crossings of two segments on one line (measured on a 3M-facet scan: 164,337 such pairs; 0 layers fall back
+  with the cancel, 5 to 100 without). **(2)** Two crossings at one place on a segment are ordered in the sort shader
+  by the perturbation the crossing test uses; without it the loops do not close. **(3)** A layer whose loops stay
+  open gets the kernel's own union (`assemble`), and a device that refuses the input leaves the kernel's own slice:
+  the slice never depends on the GPU. **(4)** The GPU's contours have the CPU union's area and other vertices, so a
+  GPU slice is not byte-identical to the CPU slice; `test_contour_gpu.mjs` compares by filament within a tolerance
+  and pins that the same input gives the same G-code twice. `gpu_acceleration` is a worker option (`gpu: true`),
+  never a kernel parameter, and `auto` asks for the GPU on the st kernel only: on mt the union is already spread
+  over the threads and the measured difference is inside the run-to-run spread. The shader text
+  (`contour_gpu_shaders.js`) is the measured experiment's and is edited only with a measurement beside it.
+  **The mesh route moves the cut and chain onto the GPU too.** MESH stops pass1 before the segment sweep and keeps the
+  seated triangles and the layer planes; `contour_front_gpu.js` (shaders `contour_front_shaders.js`, same editing
+  rule) cuts in double-float, cancels coincident pairs, chains and lays the loops out as `chain_polys` and
+  `write_polygon` would, straight into the union's input buffers. Three things it depends on. **(a)** Metal compiles
+  WGSL with fast math, which folds a two_sum's error term away; every intermediate the double-float depends on goes
+  through `opaque()` (an XOR with a uniform zero), or the points are off by thousands of units. **(b)** A layer with a
+  chain the GPU did not close is marked (`open_layers`) and `assemble` cuts, chains and unions that layer itself from
+  the kept mesh, with pass1's own inclusion rule and triangle order, so it is the capture route's layer exactly
+  (`[open layer]` pins a holed box to the CPU slice's G-code). **(c)** Only cycle members are laid out (the image of
+  succ^(2^R)): a tail leading into a cycle once misplaced every slot after it. The worker takes this route on the st
+  kernel only: st's own cut and chain measured 419-442 ms against 34-154 ms of mesh hand-over plus 64-153 ms on the
+  GPU, while mt's threads do it in 64-77 ms and the mesh route was 20 ms slower there.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
   `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and
@@ -472,16 +528,28 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   The STL is COPIED to a pool worker, not transferred, because the ladder re-sends it on a retry and a transferred
   buffer is detached. Policy is measured, not designed (see the README tables): in a node harness worker count
   never made a run slower up to the core count and memory was the only ceiling; a per-worker thread budget,
-  longest-plate-first ordering and divisor counts were each measured to change nothing — do not add them. The
-  BROWSER ceiling is far lower, because the renderer process already holds every plate's STL buffer and geometry:
-  on a 143MB-STL model over nine plates, 2 workers gained 13%, 3 crashed the tab once, and Auto-by-cores (8)
-  crashed it every time. So `resolveWorkerCount` also caps Auto by the largest plate's STL size
-  (`HEAP_PER_STL_BYTE` x bytes against `POOL_HEAP_BUDGET`, both measured constants) — a manual count is not
-  capped, because the user chose it. A pool worker that dies (memory, a script that failed to load, the watchdog)
+  longest-plate-first ordering and divisor counts were each measured to change nothing — do not add them. In the
+  BROWSER, on a 143MB-STL model over nine plates, 2 workers gained 13%, 3 crashed the tab once, and Auto-by-cores (8)
+  crashed it every time. That was the shared V8 heap region described in the next rule, not the STL buffers the
+  renderer holds: with the threaded wasm moved out of its glue, 5 and 8 workers ran that model without a crash
+  (Chrome RSS peak 11.4GB on a 24GB machine). `resolveWorkerCount` still caps Auto and the select by the largest
+  plate's STL size (`HEAP_PER_STL_BYTE` x bytes against `POOL_HEAP_BUDGET`); its constants were set from those
+  crashes and have not been re-derived for physical memory. A pool worker that dies (memory, a script that failed to load, the watchdog)
   is the POOL's failure, not the plate's: the ladder does not retry it under the same pressure, the worker is
   dropped, and the plate is re-queued to run alone on the selector worker after the pool drains — so a too-high
   count degrades to serial instead of to a row of failed plates. Selection no longer follows the run; the tabs
   carry each plate's state (`plateRun`), with the failure reason in the tooltip.
+- **The threaded kernel's wasm is a file, never inlined in its glue** (`build.sh`: no `SINGLE_FILE` on the mt link).
+  Every pthread worker is started from the glue file itself and parses all of it, while it takes the compiled
+  module from the main thread. Inlined, the wasm was a 6.3MB string literal in each of ~16 isolates per kernel,
+  ~60MB of V8 heap each, and Chrome keeps every isolate of a renderer in one 4GB pointer-compression cage: three
+  slicing workers filled it and the tab died with `V8 javascript OOM (CALL_AND_RETRY_LAST)` (haaland.3mf, 6 plates,
+  4 of 6 runs) while the renderer's RSS read 4.5-5.2GB and the isolate that failed held 598MB. RSS does not show
+  this; the sum of `--js-flags=--trace-gc` heap sizes over all isolates does. Split, the glue is 107KB, a pthread
+  isolate ~1MB, and 3-8 workers peaked at 1.2-1.9GB. The glue reaches the file through the literal
+  `new URL("slicer_core.mt.wasm", import.meta.url)`, the shape Vite and webpack emit as an asset; the bare name
+  beside it is the `locateFile()` branch. `test_mt_glue.mjs` fails on an inlined wasm and `pack_check.sh` on a
+  tarball, Vite dist or Next build without the file. The st kernel keeps `SINGLE_FILE`: it has one isolate.
 - **Every resin plate keeps a preview in the scene, not just the focused one.** The focused resin plate is the
   clipped `setSlaPreview` slot the layer slider cuts; every other resin plate with a result gets a static,
   unclipped group through `setSlaStatic` (`scene/sla_preview_mesh.js` builds both), the resin counterpart of the
@@ -568,7 +636,7 @@ lives in Core rules above and is not restated here.
 - No ternary operator anywhere, JSX and tests included. Suggest an early `return`, `if`/`else`, a lookup table with
   `??`, or `cond && <Element/>`. Ternaries in touched code are converted.
 - One owner per fact. A second place that computes the same conversion, merge order, plate context or colour list,
-  or that types out a list, label or limit a constant already holds, is a defect even if it agrees today (`paint_clip.js`, `buildMergedSTL`, `plateContext`, `filament_colors.js`).
+  or that types out a list, label or limit a constant already holds, is a defect even if it agrees today (`paint_clip.js`, `buildMergedSTL`, `plateContext`, `filament_colors.js`, `paint_tools.js`). Tests included.
 - Omission, not defaults: a param is emitted only when the settings map holds its key.
 - Generated files (`PARAMS.md`, `settings-keys.d.ts`, `kernel_setting_keys.js`) change only through their generator.
 - Layer boundary: nothing under `core/` imports React, the DOM or a renderer; `ui/` does not reach into the scene or
