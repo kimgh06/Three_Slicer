@@ -30,6 +30,12 @@ for tgz in "${T[@]}"; do
   fi
 done
 
+echo "== the mt kernel's wasm ships beside its glue"
+# The threaded glue loads slicer_core.mt.wasm from beside itself (build.sh: SINGLE_FILE is off for mt, because every
+#  pthread isolate parses the glue). `files` lists `engine` whole today, so this only fails when someone narrows it.
+tar -tzf "$TMP"/tarballs/three-slicer-[0-9]*.tgz | grep -q '^package/engine/src/slicer_core\.mt\.wasm$' \
+  || { echo "FAIL: three-slicer's tarball has no engine/src/slicer_core.mt.wasm"; exit 1; }
+
 echo "== permissive consumer (three-slicer-viewer alone)"
 # The whole point of the split: this package installs and works with NO AGPL anywhere in the tree. If that
 #  ever stops holding, the MIT grant on it is one nobody had the right to give.
@@ -286,8 +292,16 @@ for (const w of workers) {
     if (!assets.includes(name)) missing.push(`${w} -> ${spec}`)
   }
 }
+// The same gap for the mt kernel's wasm, which the glue reaches through new URL("slicer_core.mt.wasm", import.meta.url)
+//  rather than an import: every .wasm a chunk's new URL(...) names must have been emitted, and the mt one must exist.
+//  The bare "slicer_core.mt.wasm" left in the glue is its locateFile() branch, taken only when a host overrides it.
+for (const chunk of assets.filter(f => f.endsWith('.js'))) {
+  for (const [, path] of readFileSync(`dist/assets/${chunk}`, 'utf8').matchAll(/new URL\(\s*["']([^"']+\.wasm)["']/g))
+    if (!assets.includes(path.split('/').pop())) missing.push(`${chunk} -> ${path}`)
+}
+if (!assets.some(f => /^slicer_core\.mt.*\.wasm$/.test(f))) missing.push('no slicer_core.mt*.wasm emitted')
 if (missing.length) { console.log('FAIL: the worker chunk imports files dist does not contain:\n  ' + missing.join('\n  ')); process.exit(1) }
-console.log(`  worker chunk ${workers[0]} resolves every import it makes`)
+console.log(`  worker chunk ${workers[0]} resolves every import it makes, and the mt wasm was emitted`)
 EOF
 echo "OK: vite build + worker chunk"
 
@@ -319,5 +333,7 @@ export default function Home() {
 EOF
 npm i --no-audit --no-fund next@14 react@18 react-dom@18 three@0.160.1 "${T[@]}" >/dev/null
 npx next build >/dev/null
-echo "OK: next build"
+# webpack emits the glue's new URL("slicer_core.mt.wasm", import.meta.url) as an asset under .next/static.
+find .next/static -name 'slicer_core.mt*.wasm' | grep -q . || { echo "FAIL: next build emitted no slicer_core.mt*.wasm"; exit 1; }
+echo "OK: next build (mt wasm emitted)"
 echo "ALL PACK CHECKS PASSED"
