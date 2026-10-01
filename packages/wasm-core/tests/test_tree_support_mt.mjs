@@ -54,8 +54,9 @@ for (const treeStyle of ['slim', 'strong', 'hybrid']) {
   for (let run = 1; run <= 3; run++) {
     const threaded = mt.slice(model, styled, () => {})
     const same = threaded.gcode === serial.gcode
-    console.log(`  ${same ? 'ok' : 'FAIL'}: ${treeStyle} mt run ${run} equals st (${serial.gcode.length} bytes)`)
-    if (!same) failures++
+    let verdict = 'ok'
+    if (!same) { verdict = 'FAIL'; failures++ }
+    console.log(`  ${verdict}: ${treeStyle} mt run ${run} equals st (${serial.gcode.length} bytes)`)
   }
 }
 // Arachne walls are written by the threaded G-code writers too (slicer_core.cpp parEmit). The toolpath stream and its
@@ -69,8 +70,13 @@ const layerBytes = (result) => result.layers.map((layer) => [layer.z, Array.from
   const sameText = threaded.gcode === serial.gcode
   let sameLayers = true
   try { assert.deepStrictEqual(layerBytes(threaded), layerBytes(serial)) } catch { sameLayers = false }
-  console.log(`  ${sameText && sameLayers ? 'ok' : 'FAIL'}: arachne walls, mt G-code ${sameText ? 'equals' : 'differs from'} st, toolpaths and widths ${sameLayers ? 'equal' : 'differ'}`)
-  if (!sameText || !sameLayers) failures++
+  let verdict = 'ok'
+  if (!sameText || !sameLayers) { verdict = 'FAIL'; failures++ }
+  let textWord = 'equals'
+  if (!sameText) textWord = 'differs from'
+  let layersWord = 'equal'
+  if (!sameLayers) layersWord = 'differ'
+  console.log(`  ${verdict}: arachne walls, mt G-code ${textWord} st, toolpaths and widths ${layersWord}`)
 }
 if (failures) { console.log(`${failures} TREE SUPPORT MT CHECK(S) FAILED`); process.exit(1) }
 console.log('ALL TREE SUPPORT MT CHECKS PASSED')

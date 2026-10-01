@@ -30,6 +30,11 @@ static bool same_result(const Result& a, const Result& b){
     return a.total_s==b.total_s && a.moves==b.moves && a.filament_mm==b.filament_mm && a.first_layer_s==b.first_layer_s
         && a.extrude_s==b.extrude_s && a.travel_s==b.travel_s && a.layer_s==b.layer_s && a.role_s==b.role_s;
 }
+// The verdict word of a comparison, for the printed lines below.
+static const char* same_word(bool eq){
+    if (eq) return "same";
+    return "DIFFERENT";
+}
 static bool check_chunked(const Limits& lim){
     std::string g = square_gcode(1200, 20) + ";_EXTRUSION_ROLE:3\n; LAYER 1 Z0.400\nG1 Z0.400\nG1 X5.000 Y5.000 E0.20000 F3000";   // no trailing newline
     Result whole = estimate(g, lim);
@@ -39,7 +44,7 @@ static bool check_chunked(const Limits& lim){
         for (size_t i=0;i<g.size();i+=step) est.feed(g.data()+i, std::min(step, g.size()-i));
         Result r = est.end();
         bool eq = same_result(whole, r);
-        printf("chunk step %zu: %s (total=%.6f moves=%ld layers=%zu)\n", step, eq ? "same" : "DIFFERENT", r.total_s, r.moves, r.layer_s.size());
+        printf("chunk step %zu: %s (total=%.6f moves=%ld layers=%zu)\n", step, same_word(eq), r.total_s, r.moves, r.layer_s.size());
         ok = ok && eq;
     }
     return ok;
@@ -62,7 +67,7 @@ static bool check_token_forms(const Limits& lim){
         "G1 X0.000 Y0.000 E1.50000 F1200\n";
     Result a = estimate(exotic, lim), b = estimate(canon, lim);
     bool eq = same_result(a, b);
-    printf("token forms: %s (total=%.6f vs %.6f, moves=%ld vs %ld, filament=%.6f vs %.6f)\n", eq ? "same" : "DIFFERENT", a.total_s, b.total_s, a.moves, b.moves, a.filament_mm, b.filament_mm);
+    printf("token forms: %s (total=%.6f vs %.6f, moves=%ld vs %ld, filament=%.6f vs %.6f)\n", same_word(eq), a.total_s, b.total_s, a.moves, b.moves, a.filament_mm, b.filament_mm);
     return eq;
 }
 int main(){
@@ -76,7 +81,7 @@ int main(){
            slow.total_s>0.0, fast.total_s < slow.total_s, (int)(std::abs(slow.filament_mm-fast.filament_mm)<1e-6));
     // manual sanity: 20 loops * 200mm/loop = 4000mm extrude at ~20mm/s -> ~200s+ (plus accel). Print time plausible.
     ok = ok && slow.total_s > 0.0 && fast.total_s < slow.total_s && std::abs(slow.filament_mm-fast.filament_mm) < 1e-6;
-    printf("%s\n", ok ? "test_time: all checks passed" : "test_time: FAILED");
-    if (!ok) return 1;
+    if (!ok) { printf("test_time: FAILED\n"); return 1; }
+    printf("test_time: all checks passed\n");
     return 0;
 }
