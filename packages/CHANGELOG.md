@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.3 — 2026-10-01
 
 ### Added
 
@@ -47,8 +47,19 @@
   thread): on the same plate emit 3.2 -> 1.7 s (11.7 -> 10.2 s slice), with the same G-code, toolpaths and widths as
   the single-threaded kernel.
 
+- The toolpath preview culls back faces and, far from the camera, draws every 2nd or 4th layer that many layers
+  thick (raft and skirt layers and a cut layer range keep full detail). Measured on a 6-plate project with 14.6M
+  segments: 67.8 -> 34.8 ms per frame, the overview 27.6 -> 9.6 ms.
+- Switching plates no longer recolours every plate or builds the focused plate's G-code Blob (332-574 ms -> no task
+  over 50 ms). "Export G-code" builds its plain `.gcode` on click and hands it to the host's `onExport` like the other
+  exports; it used to be a prefilled download link that bypassed `onExport`.
+- A 3mf loads with each part inflated by `DecompressionStream`, read from its bytes and baked (normals, bounds) in
+  the parse worker, with the build items spread over copies of that worker: 1338-1352 -> 367-372 ms on a 52 MB
+  project, with the same meshes. zip64 and encrypted archives keep the previous reader.
+
 ### Fixed
 
+- A click on a plate in Preview did nothing; it now selects the plate.
 - Tree support could lose a whole support island's paths on a layer: reordering a layer's paths dropped any group of
   paths whose first or last member was empty, with every path in it (a 3M-facet tree-slim model lost 64.6 mm of
   support paths over three layers). Only the empty members are dropped now. Models where it did not happen slice to
