@@ -17,6 +17,8 @@ export default function SliceBar({
   const title = slicing ? 'Click to cancel the slice'
     : plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)'
   const gpuMode = gpuAccelerationMode({ gpu_acceleration: gpuSetting })
+  let workersValue = 0
+  if (workers > 0) workersValue = Math.min(workers, maxWorkers, memoryWorkers)
   return (
     <div className="side-bottom">
       {/* The two slice options stack in one column so the bar keeps the export button on one line. */}
@@ -47,7 +49,7 @@ export default function SliceBar({
             <label className="slice-workers" data-testid="slice-workers"
               title={`Plates sliced at the same time. Auto = ${autoWorkers} on this machine. Each worker keeps its own copy of the model in memory.`}>
               <span>Workers</span>
-              <select value={workers > 0 ? Math.min(workers, maxWorkers, memoryWorkers) : 0} onChange={e => onSetting('slice_workers', Number(e.target.value))}>
+              <select value={workersValue} onChange={e => onSetting('slice_workers', Number(e.target.value))}>
                 <option value={0}>Auto ({autoWorkers})</option>
                 {/* Only what the memory budget allows for the loaded models is offered: past it the tab itself
                     dies (measured, five workers on a 143MB model), which nothing in the page can catch. */}
@@ -68,48 +70,9 @@ export default function SliceBar({
           </div>
         )}
       </div>
-      {/* Slicing something that hangs off the bed is fine — inspecting it is how you see the problem. Saving the
-          file is not: those coordinates drive a machine that cannot reach them, so export is where this stops.
-          A resin slice exports an .sl1 archive instead of G-code, and it is BUILT on click (a click handler, not
-          a prefilled href) — rasterizing hundreds of layer PNGs eagerly on every plate focus would freeze the tab
-          for a file the user may never save. */}
-      {slaResult
-        ? <button className="export-btn" disabled={!!bedWarning || !!exporting} onClick={onExportSl1} data-testid="sl1-dl"
-            title={bedWarning ? `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.`
-              : sl1Ready ? `${sl1Ready} is built and waiting — click to save it`
-              : 'Save the SL1 archive (per-layer PNG masks + config) of the plate you are viewing'}>
-            {/* Built-but-unsaved is its own state: the archive takes longer to rasterize than a browser keeps a
-                click "recent", so the save needs a second one. Saying so beats a download that never appears. */}
-            {exporting || (sl1Ready ? 'Save SL1' : 'Export SL1')}
-          </button>
-        : gcodeReady && !bedWarning && onExportGcode3mf
-        // The button saves EVERY sliced plate in one .gcode.3mf (upstream's "Export all sliced file"); the viewed
-        //  plate alone, and the plain .gcode a non-Bambu printer needs, sit in its ▾ menu — a native <details>, so
-        //  the menu needs no state of its own.
-        ? <div className="export-dd">
-            <button className="export-btn" onClick={onExportGcode3mf} disabled={!!exporting} data-testid="gcode3mf-dl"
-              title={`Save ${slicedPlateCount > 1 ? `all ${slicedPlateCount} sliced plates` : 'the sliced plate'} as one .gcode.3mf — reopenable here and in OrcaSlicer/Bambu Studio`}>
-              {exporting || 'Export G-code'}
-            </button>
-            <details className="export-more">
-              <summary title="Other formats" data-testid="gcode-dl-more">▾</summary>
-              <div className="slice-menu export-menu">
-                {onExportPlateGcode3mf && slicedPlateCount > 1 && (
-                  <button onClick={onExportPlateGcode3mf} title="Save only the plate you are viewing as a .gcode.3mf" data-testid="gcode3mf-plate-dl">This plate only (P{selectedPlate + 1})</button>
-                )}
-                <button onClick={onExportGcode} title="Save the plain G-code of the plate you are viewing" data-testid="gcode-dl">Plain .gcode (P{selectedPlate + 1})</button>
-              </div>
-            </details>
-          </div>
-        : gcodeReady && !bedWarning
-        ? <button className="export-btn" onClick={onExportGcode} title="Save the G-code of the plate you are viewing" data-testid="gcode-dl">Export G-code</button>
-        : <button className="export-btn" disabled data-testid="gcode-dl-blocked"
-            title={bedWarning ? `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.`
-              : `Export ${slaTech ? 'SL1' : 'G-code'} — enabled after slicing`}>
-            {/* The blocked button names what slicing WILL produce — under an SLA profile that is an SL1 archive,
-                and a placeholder that says "G-code" there reads as the wrong export being offered. */}
-            Export {slaTech ? 'SL1' : 'G-code'}
-          </button>}
+      <ExportButton slaResult={slaResult} slaTech={slaTech} bedWarning={bedWarning} exporting={exporting} sl1Ready={sl1Ready}
+        onExportSl1={onExportSl1} gcodeReady={gcodeReady} onExportGcode={onExportGcode} onExportGcode3mf={onExportGcode3mf}
+        onExportPlateGcode3mf={onExportPlateGcode3mf} slicedPlateCount={slicedPlateCount} selectedPlate={selectedPlate} />
       {/* Throughput, on its own row (the bar wraps) rather than inside the button label: the button is flex-sized
           in a narrow sidebar, and "Slicing… 62% · 21 layers/s" does not fit it at any useful font size. Rendered
           only while a rate exists, so the bar keeps its idle height between slices. Tabular figures — without them
@@ -134,6 +97,65 @@ export default function SliceBar({
       )}
     </div>
   )
+}
+
+// Slicing something that hangs off the bed is fine — inspecting it is how you see the problem. Saving the file is not:
+//  those coordinates drive a machine that cannot reach them, so export is where this stops. A resin slice exports an
+//  .sl1 archive instead of G-code, and it is BUILT on click (a click handler, not a prefilled href) — rasterizing
+//  hundreds of layer PNGs eagerly on every plate focus would freeze the tab for a file the user may never save.
+function ExportButton({
+  slaResult, slaTech, bedWarning, exporting, sl1Ready, onExportSl1, gcodeReady, onExportGcode, onExportGcode3mf,
+  onExportPlateGcode3mf, slicedPlateCount, selectedPlate,
+}) {
+  const blockedTitle = `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.`
+  if (slaResult) {
+    let title = 'Save the SL1 archive (per-layer PNG masks + config) of the plate you are viewing'
+    if (sl1Ready) title = `${sl1Ready} is built and waiting — click to save it`
+    if (bedWarning) title = blockedTitle
+    // Built-but-unsaved is its own state: the archive takes longer to rasterize than a browser keeps a click
+    //  "recent", so the save needs a second one. Saying so beats a download that never appears.
+    let label = 'Export SL1'
+    if (sl1Ready) label = 'Save SL1'
+    return (
+      <button className="export-btn" disabled={!!bedWarning || !!exporting} onClick={onExportSl1} data-testid="sl1-dl" title={title}>
+        {exporting || label}
+      </button>
+    )
+  }
+  if (gcodeReady && !bedWarning && onExportGcode3mf) {
+    // The button saves EVERY sliced plate in one .gcode.3mf (upstream's "Export all sliced file"); the viewed plate
+    //  alone, and the plain .gcode a non-Bambu printer needs, sit in its ▾ menu — a native <details>, so the menu
+    //  needs no state of its own.
+    let plates = 'the sliced plate'
+    if (slicedPlateCount > 1) plates = `all ${slicedPlateCount} sliced plates`
+    return (
+      <div className="export-dd">
+        <button className="export-btn" onClick={onExportGcode3mf} disabled={!!exporting} data-testid="gcode3mf-dl"
+          title={`Save ${plates} as one .gcode.3mf — reopenable here and in OrcaSlicer/Bambu Studio`}>
+          {exporting || 'Export G-code'}
+        </button>
+        <details className="export-more">
+          <summary title="Other formats" data-testid="gcode-dl-more">▾</summary>
+          <div className="slice-menu export-menu">
+            {onExportPlateGcode3mf && slicedPlateCount > 1 && (
+              <button onClick={onExportPlateGcode3mf} title="Save only the plate you are viewing as a .gcode.3mf" data-testid="gcode3mf-plate-dl">This plate only (P{selectedPlate + 1})</button>
+            )}
+            <button onClick={onExportGcode} title="Save the plain G-code of the plate you are viewing" data-testid="gcode-dl">Plain .gcode (P{selectedPlate + 1})</button>
+          </div>
+        </details>
+      </div>
+    )
+  }
+  if (gcodeReady && !bedWarning) {
+    return <button className="export-btn" onClick={onExportGcode} title="Save the G-code of the plate you are viewing" data-testid="gcode-dl">Export G-code</button>
+  }
+  // The blocked button names what slicing WILL produce — under an SLA profile that is an SL1 archive, and a
+  //  placeholder that says "G-code" there reads as the wrong export being offered.
+  let format = 'G-code'
+  if (slaTech) format = 'SL1'
+  let title = `Export ${format} — enabled after slicing`
+  if (bedWarning) title = blockedTitle
+  return <button className="export-btn" disabled data-testid="gcode-dl-blocked" title={title}>Export {format}</button>
 }
 
 // The GPU select's option labels and tooltips, one per GPU_ACCELERATION_MODES entry. The stats line after a slice says
