@@ -18,6 +18,12 @@
   hybrid plate went from 91 to 21 s, with the same G-code as the single-threaded kernel.
 
 ### Fixed
+- The threaded kernel ships its wasm as a file, `engine/src/slicer_core.mt.wasm`, instead of inlining it in
+  `slicer_core.mt.js` (6.4 MB -> 107 KB). Every pthread worker loads the glue, and the inlined bytes cost each of
+  them about 60 MB of V8 heap; Chrome holds every isolate of a tab in one 4 GB heap region, so slicing several plates
+  at once crashed the tab ("V8 javascript OOM"; 3 workers on a 6-plate project: 4 crashes in 6 runs). With the file,
+  3 to 8 workers ran without a crash and peaked at 1.2-1.9 GB. A bundler emits the file as an asset; see
+  "Multithreaded WASM" in the README for serving it.
 
 - Tree slim, strong and hybrid crashed the kernel on any model.
 - The same tree slim or strong input could slice to different G-code from run to run (a tie in the minimum spanning

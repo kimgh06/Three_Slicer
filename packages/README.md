@@ -679,6 +679,11 @@ Cross-Origin-Embedder-Policy: require-corp
 
 Without those headers, the engine falls back to the single-threaded kernel.
 
+The multithreaded kernel's wasm is a file beside its glue, `engine/src/slicer_core.mt.wasm`, reached through
+`new URL('slicer_core.mt.wasm', import.meta.url)`; Vite and webpack emit it as an asset. Serve it as
+`application/wasm`, and from another origin (a CDN) with `Cross-Origin-Resource-Policy: cross-origin`, or the
+cross-origin isolated page cannot load it. The single-threaded kernel still inlines its wasm.
+
 ## Data Files
 
 The package includes extracted OrcaSlicer metadata for custom interfaces:
