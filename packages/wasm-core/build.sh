@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build of the browser-only slicing mini kernel (track C)
-# Output: ../engine/src/slicer_core.js  (SINGLE_FILE=1 -> the wasm is inlined as base64,
+# Output: ../engine/src/slicer_core.js  (SINGLE_FILE=1 -> the wasm is inlined into the glue,
 #         no external .wasm fetch -> self-contained on any static server or vite preview)
+#         ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm  (the threaded kernel ships its wasm as a file,
+#         see the mt link step below for why)
 #
 # Stage 7: the real OrcaSlicer Arachne (WallToolPaths) port is linked in as well.
 #  - The kernel's own clipper (global ClipperLib) and the Arachne port's clipper (Slic3r::ClipperLib / ClipperLib_Z) live in
@@ -247,6 +249,12 @@ ls -la ../engine/src/slicer_core.js
 # ---- Multithreaded (mt) build: PASS 1 layers in parallel (__EMSCRIPTEN_PTHREADS__) ----
 #  A separate artifact — the default (st) stays zero-config, while mt needs COOP/COEP (crossOriginIsolated) in the browser.
 #  emscripten warns about the ALLOW_MEMORY_GROWTH + pthreads combination, but it is functionally valid (judged by measurement).
+#  No SINGLE_FILE here: every pthread worker is started from the glue itself (new Worker(new URL("slicer_core.mt.js",
+#  import.meta.url))) and parses all of it, while it takes the compiled module from the main thread and never reads the
+#  inlined bytes. Inlined, that was a 6.3MB string literal in each of ~16 isolates per kernel, ~60MB of V8 heap each,
+#  and Chrome puts every isolate of a renderer in one 4GB pointer-compression cage: three slicing workers filled it and
+#  the tab died with "V8 javascript OOM" (haaland.3mf, 6 plates, 4 of 6 runs; renderer RSS only 4.5-5.2GB at the time).
+#  With the wasm as a file the glue is ~106KB, a pthread isolate ~1MB, and three to five workers peaked at 1.3-1.8GB.
 echo "compiling treesupport group (mt, parallel x$NCPU) -> /tmp/ts_group_mt.o"
 pcompile /tmp/ws_obj/ts_mt "-pthread $TS_CFLAGS" $TS_UNIQUE_SRC
 em++ -O2 $EXCEPTION_FLAGS -pthread -r $(objs /tmp/ws_obj/ts_mt $TS_UNIQUE_SRC) -o /tmp/ts_group_mt.o
@@ -265,7 +273,6 @@ pcompile /tmp/ws_obj/mt "-pthread $MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
-  -s SINGLE_FILE=1 \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s MAXIMUM_MEMORY=4GB \
   -s STACK_SIZE=2MB \
@@ -282,5 +289,5 @@ sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ 
 # The same case applies to the pthread bootstrap in the mt glue: the dynamic import("node:worker_threads") inside the Node guard
 sed -i '' 's|await import("node:worker_threads")|await import(/* webpackIgnore: true */ "node:worker_threads")|' ../engine/src/slicer_core.mt.js
 
-echo "built -> ../engine/src/slicer_core.mt.js"
-ls -la ../engine/src/slicer_core.mt.js
+echo "built -> ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm"
+ls -la ../engine/src/slicer_core.mt.js ../engine/src/slicer_core.mt.wasm

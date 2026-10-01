@@ -1,6 +1,7 @@
 // Runs slicing off the main thread (non-blocking UI) plus stage-30 layer streaming.
 // Vite module worker: new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' }).
-// SINGLE_FILE means the wasm is inlined into slicer_core.js -> no external fetch from the worker either.
+// SINGLE_FILE means the wasm is inlined into slicer_core.js -> no external fetch from the worker either. The mt glue
+//  loads slicer_core.mt.wasm from beside itself instead: its pthread workers each parse the glue (build.sh, mt link).
 //
 // Stage 30 (OOM tolerance): set_layer_sink lets the kernel emit layers as it produces them; each is transferred to main
 //  immediately (Float32Array buffers moved -> the worker copy is released at once) and the kernel frees that layer buffer
