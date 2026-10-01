@@ -5,7 +5,7 @@ import SiteNav from './SiteNav.jsx'
 
 // The demos are separate npm projects under examples/. `npm run demos` builds them into
 // public/demos/<name>/ and writes the manifest this page reads; without that step the page says so
-// rather than showing four broken frames.
+// rather than showing a row of broken frames.
 //
 // They run in an iframe, not re-implemented here, so what you see is the real build: its own worker,
 // its own kernel, its own settings. Same-origin, and this app serves COOP/COEP, so the frame inherits
@@ -41,9 +41,15 @@ const CATALOG = {
     blurb: 'Queue jobs for several printers. Slicing happens here; a backend would only hold G-code.',
     surfaces: ['client', 'settings', 'viewer/gcode', 'viewer/toolpath'],
   },
+  'octoprint': {
+    title: 'Send to OctoPrint',
+    sells: 'Export hook',
+    blurb: 'The full slicer, with G-code exports uploaded to OctoPrint instead of downloaded. Needs an http page or an https OctoPrint.',
+    surfaces: ['viewer', 'components'],
+  },
 }
 
-const ORDER = ['instant-quote', 'printer-showcase', 'cad-embed', 'farm-dashboard']
+const ORDER = ['instant-quote', 'printer-showcase', 'cad-embed', 'farm-dashboard', 'octoprint']
 
 export default function Demos() {
   const [manifest, setManifest] = useState(null)
@@ -103,7 +109,7 @@ export default function Demos() {
       <SiteNav current="/demos" />
       <header className="lp-head demos-head">
         <div className="lp-kicker">three-slicer · demos</div>
-        <h1>Four ways to consume the package</h1>
+        <h1>{ORDER.length} ways to consume the package</h1>
         <p>
           Each demo is a standalone project that installs <code>three-slicer</code> from npm and sells exactly one
           integration shape. They run below as their own build — the same files you get by copying the folder.
