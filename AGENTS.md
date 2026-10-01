@@ -504,12 +504,13 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   The STL is COPIED to a pool worker, not transferred, because the ladder re-sends it on a retry and a transferred
   buffer is detached. Policy is measured, not designed (see the README tables): in a node harness worker count
   never made a run slower up to the core count and memory was the only ceiling; a per-worker thread budget,
-  longest-plate-first ordering and divisor counts were each measured to change nothing — do not add them. The
-  BROWSER ceiling is far lower, because the renderer process already holds every plate's STL buffer and geometry:
-  on a 143MB-STL model over nine plates, 2 workers gained 13%, 3 crashed the tab once, and Auto-by-cores (8)
-  crashed it every time. So `resolveWorkerCount` also caps Auto by the largest plate's STL size
-  (`HEAP_PER_STL_BYTE` x bytes against `POOL_HEAP_BUDGET`, both measured constants) — a manual count is not
-  capped, because the user chose it. A pool worker that dies (memory, a script that failed to load, the watchdog)
+  longest-plate-first ordering and divisor counts were each measured to change nothing — do not add them. In the
+  BROWSER, on a 143MB-STL model over nine plates, 2 workers gained 13%, 3 crashed the tab once, and Auto-by-cores (8)
+  crashed it every time. That was the shared V8 heap region described in the next rule, not the STL buffers the
+  renderer holds: with the threaded wasm moved out of its glue, 5 and 8 workers ran that model without a crash
+  (Chrome RSS peak 11.4GB on a 24GB machine). `resolveWorkerCount` still caps Auto and the select by the largest
+  plate's STL size (`HEAP_PER_STL_BYTE` x bytes against `POOL_HEAP_BUDGET`); its constants were set from those
+  crashes and have not been re-derived for physical memory. A pool worker that dies (memory, a script that failed to load, the watchdog)
   is the POOL's failure, not the plate's: the ladder does not retry it under the same pressure, the worker is
   dropped, and the plate is re-queued to run alone on the selector worker after the pool drains — so a too-high
   count degrades to serial instead of to a row of failed plates. Selection no longer follows the run; the tabs
@@ -526,6 +527,17 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `packages/wasm-core/slasupport_port/` is PrusaSlicer 2.9.6 verbatim — its own guide is
   `slasupport_port/PORT_NOTES.md`, and `test_sla_source_manifest.mjs` fails the build when a ported file
   drifts from its recorded upstream hash. It builds against real vendored deps, not shims: NLopt 2.5.0
+- **The threaded kernel's wasm is a file, never inlined in its glue** (`build.sh`: no `SINGLE_FILE` on the mt link).
+  Every pthread worker is started from the glue file itself and parses all of it, while it takes the compiled
+  module from the main thread. Inlined, the wasm was a 6.3MB string literal in each of ~16 isolates per kernel,
+  ~60MB of V8 heap each, and Chrome keeps every isolate of a renderer in one 4GB pointer-compression cage: three
+  slicing workers filled it and the tab died with `V8 javascript OOM (CALL_AND_RETRY_LAST)` (haaland.3mf, 6 plates,
+  4 of 6 runs) while the renderer's RSS read 4.5-5.2GB and the isolate that failed held 598MB. RSS does not show
+  this; the sum of `--js-flags=--trace-gc` heap sizes over all isolates does. Split, the glue is 107KB, a pthread
+  isolate ~1MB, and 3-8 workers peaked at 1.2-1.9GB. The glue reaches the file through the literal
+  `new URL("slicer_core.mt.wasm", import.meta.url)`, the shape Vite and webpack emit as an asset; the bare name
+  beside it is the `locateFile()` branch. `test_mt_glue.mjs` fails on an inlined wasm and `pack_check.sh` on a
+  tarball, Vite dist or Next build without the file. The st kernel keeps `SINGLE_FILE`: it has one isolate.
   (Prusa's exact pin) and SGI glu-libtess in `third_party/deps_src/`, plus brew CGAL headers with
   `-DCGAL_DISABLE_GMP=1` on every CGAL-compiling group (the GMP auto-detect otherwise links `__gmpn_*`
   symbols no wasm provides).
