@@ -354,7 +354,13 @@ export function useThreeScene(deps) {
     let downAt = null, downPlate = null
     const onDown = ev => {
       if (ev.button !== 0) return                       // left click only — right/middle clicks belong to OrbitControls pan/zoom (prevents stray selection/painting)
-      if (canvasModeRef.current === 'preview') return   // S2: no gizmo/painting in preview
+      // S2: no gizmo/painting in preview — but a click still selects the plate (onUp resolves it). The objects are
+      //  hidden there, so the plate comes from the bed plane, not a picked mesh.
+      if (canvasModeRef.current === 'preview') {
+        toPointer(ev)
+        downAt = { x: ev.clientX, y: ev.clientY }; downPlate = plateUnderPointer(null)
+        return
+      }
       if (paintModeRef.current !== 'off') {
         // A press that MISSES the model is not the brush's — upstream returns false there (GLGizmoPainterBase.cpp
         //  :833) and the canvas orbits, which is how a brush survives a camera move. OrbitControls' own pointerdown
