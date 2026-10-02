@@ -1,6 +1,7 @@
 // Where the prime tower stands, per plate — the same rules the slicer applies, so the drawn stand-in and the
 //  sliced tower are the same tower. Pure arithmetic on settings + the plate's model bounds, kept out of the
 //  component because "the box shows where it will actually print" is a claim only an assertion can hold up.
+import { bedCenter } from '../settings/bed_frame.js'
 
 /**
  * Will this plate actually change tools — the question the tower exists to answer.
@@ -39,6 +40,7 @@ export function chosenTowerCoord(settings, key, plate) {
   return (value != null && value !== '' && Number.isFinite(asNumber)) ? asNumber : NaN
 }
 
+
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi)
 export const AUTO_GAP = 5                  // mm between the model and an auto-placed tower
 export const AUTO_EDGE_MARGIN_MM = 1       // how far inside the bed edge the SLICE keeps an auto-placed tower
@@ -61,7 +63,8 @@ export function towerBoxes({ plateCount, size: sharedSize, bedWidth, bedDepth, b
     const { on = true, size = sharedSize } = towerOf?.(plate) ?? {}
     if (!on) continue
     // Each plate is clamped to ITS bed (`bedOf(plate)`, the plate context); the scalars remain for a uniform caller.
-    const { w: bedW = bedWidth, d: bedD = bedDepth } = bedOf?.(plate) ?? {}
+    //  `center` is that bed's centre in printer coordinates (settings bedCenter), which wipe_tower_x/y are written in.
+    const { w: bedW = bedWidth, d: bedD = bedDepth, center = bedCenter({ bed_width: bedW, bed_depth: bedD }) } = bedOf?.(plate) ?? {}
     const setX = chosenTowerCoord(settings, 'wipe_tower_x', plate)
     const setY = chosenTowerCoord(settings, 'wipe_tower_y', plate)
     const auto = !Number.isFinite(setX)
@@ -71,9 +74,9 @@ export function towerBoxes({ plateCount, size: sharedSize, bedWidth, bedDepth, b
     // Auto mirrors use_slicer's placement exactly: one gap to the model's left, level with the model's middle,
     //  clamped to the bed. Both read the same box in the same frame, so the drawn tower is the sliced one.
     const x = auto ? origin.x + clamp(box.minX - origin.x - AUTO_GAP - size / 2, -bedW / 2 + size / 2, bedW / 2 - size / 2)
-                   : origin.x + setX - bedW / 2 + size / 2
+                   : origin.x + setX - center.x + size / 2
     const y = auto ? -origin.z + clamp((box.minY + box.maxY) / 2 + origin.z, -bedD / 2 + size / 2, bedD / 2 - size / 2)
-                   : -origin.z + setY - bedD / 2 + size / 2
+                   : -origin.z + setY - center.y + size / 2
     boxes.push({ plate, x, y, size, height: Math.max(2, box.height) })
   }
   return boxes.length ? boxes : null
@@ -103,15 +106,16 @@ export function towerFootprint(params, real) {
   return REAL_TOWER_DEFAULT_WIDTH_MM
 }
 
-/** A chosen tower position kept on the bed: `x`/`y` are the tower's CORNER in plate-local bed coordinates (what
- *  the kernel reads as prime_tower_x/y), so the far edge is the bed minus the footprint. A drag or a typed value
+/** A chosen tower position kept on the bed: `x`/`y` are the tower's CORNER in printer coordinates (what the kernel
+ *  reads as prime_tower_x/y), the bed runs from `origin` (settings bedOrigin) for bedW x bedD, so the far edge is
+ *  the bed's end minus the footprint. A drag or a typed value
  *  used to be stored as given, and a tower off the bed was only discovered in the sliced result. */
-export function clampTowerPosition(x, y, { bedW, bedD, size }) {
-  const keep = (value, extent) => {
+export function clampTowerPosition(x, y, { bedW, bedD, size, origin = { x: 0, y: 0 } }) {
+  const keep = (value, start, extent) => {
     if (!(Number.isFinite(extent) && extent > size)) return Number(value)
-    return clamp(Number(value), 0, extent - size)
+    return clamp(Number(value), start, start + extent - size)
   }
-  return [keep(x, bedW), keep(y, bedD)]
+  return [keep(x, origin.x, bedW), keep(y, origin.y, bedD)]
 }
 
 // The tower's own outcome, so the card can show settings and result together. Tool changes are counted from the
