@@ -30,11 +30,30 @@ const routeHtmlMiddleware = (req, res, next) => {
   next()
 }
 
+// One line per crawler request, read with `make logs`. Googlebot sends no Referer, so the user agent is the signal;
+// behind Cloudflare the socket peer is an edge node and the client address is CF-Connecting-IP.
+// ponytail: user-agent match only, so a spoofed "Googlebot" is logged too — check the IP's reverse DNS
+// (*.googlebot.com) when that matters.
+const CRAWLER_AGENT = /bot|crawler|spider|slurp/i
+
+const crawlerLogMiddleware = (req, res, next) => {
+  const agent = req.headers['user-agent'] ?? ''
+  if (CRAWLER_AGENT.test(agent)) {
+    const path = req.url
+    const address = req.headers['cf-connecting-ip'] ?? req.socket.remoteAddress
+    res.on('finish', () => console.log(`[crawler] ${new Date().toISOString()} ${res.statusCode} ${address} ${path} ${agent}`))
+  }
+  next()
+}
+
 const serveRouteHtml = {
   name: 'serve-route-html',
   // Both servers, so `npm run dev` shows the head that actually ships for that route rather than the landing one.
   configureServer(server) { server.middlewares.use(routeHtmlMiddleware) },
-  configurePreviewServer(server) { server.middlewares.use(routeHtmlMiddleware) },
+  configurePreviewServer(server) {
+    server.middlewares.use(crawlerLogMiddleware)
+    server.middlewares.use(routeHtmlMiddleware)
+  },
 }
 
 export default defineConfig({
