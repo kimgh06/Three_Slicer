@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { parseGcode } from 'three-slicer-viewer/gcode'
+import { bedCenter } from 'three-slicer-viewer/settings'
 import { platePosition, MAX_PLATES } from '../core/plate_layout.js'
 import { asSl1File } from '../core/sl1_read.js'
 import { log } from '../core/log.js'
@@ -30,6 +31,7 @@ function useGcodeInjection(gcode, deps) {
     if (!entries.length) return
     if (typeof gcode === 'object') growPlates?.(Math.max(...entries.map(([plate]) => plate)) + 1)
     const bw = kp.bed_width, bd = kp.bed_depth
+    const center = bedCenter(kp)
     const shown = []
     try {
       for (const [idx, text] of entries) {
@@ -40,7 +42,8 @@ function useGcodeInjection(gcode, deps) {
         //  below still uses the GLOBAL bed (ponytail: an injected artifact on a bed-override plate lands with
         //  the global corner — refine with that plate's dims if hosts actually combine the two features).
         const origin = apiRef?.current?.platePos?.(idx) ?? platePosition(idx, plateCountRef.current, bw, bd)
-        plateOffsetsRef.current[idx] = { offX: origin.x - bw / 2, offZ: origin.z + bd / 2 }
+        // G-code is in printer coordinates, so the plate's display offset takes the bed centre in them back off.
+        plateOffsetsRef.current[idx] = { offX: origin.x - center.x, offZ: origin.z + center.y }
         plateResultsRef.current[idx] = { stats: parsed.stats, layers: parsed.layers, gcode: text }
         shown.push(idx)
       }

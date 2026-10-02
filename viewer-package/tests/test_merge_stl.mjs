@@ -108,8 +108,9 @@ assert.equal(buildMergedSTL([makeObject(1, { at: [0, 0, 0] })], { plateIndex: 2,
   assert.equal(merged.paint.color.hex, '08\n0C\n04')     // hex order follows the facet order
   assert.equal(merged.paint.supports, null, 'an unpainted slot is null, not an empty pair')
   // The merge's member order is the numbering the per-object store splits and rebuilds by (paint_store.js): the
-  //  extruder sort puts the T1 object (id 2, 5 facets) before the T3 one (id 1, 2 facets).
-  assert.deepEqual(merged.members, [{ id: 2, faceCount: 5 }, { id: 1, faceCount: 2 }])
+  //  extruder sort puts the T1 object (id 2, 5 facets) before the T3 one (id 1, 2 facets). The name rides along for
+  //  the custom G-code's object placeholders (input_filename_base).
+  assert.deepEqual(merged.members, [{ id: 2, name: 'obj2', faceCount: 5 }, { id: 1, name: 'obj1', faceCount: 2 }])
   // The store writes only the kind it holds: a paint object with just `color` (no supports/seam/fuzzy Maps) must
   //  merge, not throw — it did, and the failed selector swap left the brush dead on the next plate.
   const COLOR_ONLY_ID = 3, COLOR_ONLY_FACETS = 2, PAINTED_LOCAL_FACET = 1, STATE_2_HEX = '08'

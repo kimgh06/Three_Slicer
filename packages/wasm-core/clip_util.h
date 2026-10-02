@@ -12,7 +12,7 @@ static const double SCALE  = 1e6;          // mm -> clipper integer coordinates
 static const double INV    = 1.0 / SCALE;
 static const double PI     = 3.14159265358979323846;
 // Stage 33: BED_CENTER (=128.0, assuming a 256mm bed) removed — it was declared and never referenced (measured).
-//  The bed center is actually computed as gw.offX/offY = bed_width/depth * 0.5.
+//  The bed center is Params::bed_center_x/y (the printable area's corner plus half its size) -> gw.offX/offY.
 // TRAVEL_RETRACT_MIN was removed too — wired to p.retraction_minimum_travel instead.
 
 // ---- Clipper helpers -----------------------------------------------------------

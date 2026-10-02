@@ -66,7 +66,9 @@ export function refitCameraToPlates(THREE, t, { n, bw, bd, platePos, dims }) {
 // sizes each plate's OWN cell — an FFF bed override and an SLA plate's resin display alike, so every plate
 // stands at its real printable size. (The mixed-tech stage briefly drew SLA areas as inset overlays on a
 // shared cell; the per-plate cell replaced that once the cumulative grid existed to carry it.)
-export function rebuildPlates(THREE, t, { n, bw, bd, sel, platePos, dims }) {
+//  `shapes[i]` is plate i's outline when its bed is not a rectangle (plate frame `shape`, plate-local points): the
+//  border follows it, as upstream's Bed_2D draws a delta's circle, and the grid keeps the bounding rectangle.
+export function rebuildPlates(THREE, t, { n, bw, bd, sel, platePos, dims, shapes }) {
   for (const p of (t.plateBeds || [])) for (const m of [p.gridThin, p.gridBold, p.border, p.label, p.slaFill, p.slaEdge]) {
     if (!m) continue
     t.scene.remove(m); m.geometry.dispose(); m.material.map?.dispose(); m.material.dispose()
@@ -87,9 +89,19 @@ export function rebuildPlates(THREE, t, { n, bw, bd, sel, platePos, dims }) {
     const gb = new THREE.LineSegments(lineGeo(bold), new THREE.LineBasicMaterial({ color: THEME.gridMajor }))
     gt.position.set(px, 0, pz); gb.position.set(px, 0, pz); t.scene.add(gt); t.scene.add(gb)
     const sel_ = i === sel
-    const border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(pw, pd)),
-      new THREE.LineBasicMaterial({ color: sel_ ? THEME.accent : THEME.plateBorder, linewidth: sel_ ? 2 : 1 }))
-    border.rotation.x = -Math.PI / 2; border.position.set(px, 0, pz); t.scene.add(border)
+    let borderColor = THEME.plateBorder, borderWidth = 1
+    if (sel_) { borderColor = THEME.accent; borderWidth = 2 }
+    const material = new THREE.LineBasicMaterial({ color: borderColor, linewidth: borderWidth })
+    const shape = shapes?.[i]
+    let border
+    if (shape) {
+      // model (x, y) -> three (x, 0, -y), like every other bed-local point
+      border = new THREE.LineLoop(lineGeo(shape.flatMap(([x, y]) => [x, 0, -y])), material)
+    } else {
+      border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(pw, pd)), material)
+      border.rotation.x = -Math.PI / 2
+    }
+    border.position.set(px, 0, pz); t.scene.add(border)
     const label = plateNumberLabel(THREE, i, sel_, px, pz, pw, pd); t.scene.add(label)
     t.plateBeds.push({ gridThin: gt, gridBold: gb, border, label })
   }

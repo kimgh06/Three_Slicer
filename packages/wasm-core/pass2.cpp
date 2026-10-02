@@ -31,6 +31,8 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
       ? build_sparse(ld.supIface, resolvePat(p.support_interface_pattern), supIfaceAng, ifaceSp, i, zE, w, 1.0) : Paths{};
     ep.supB = (p.enable_support && !ld.supBase.empty())
       ? build_sparse(ld.supBase, resolvePat(p.support_base_pattern), supBaseAng, support_spacing, i, zE, w, p.support_density) : Paths{};
+    // An empty layer prints support only, at fSup — the speed the kernel always used there.
+    ep.feeds = role_feeds(p, i==0 && nraft==0, i + nraft, nraft, ep.fSup, ep.fSup, -1.0);
     if (ld.contour.empty() || p.spiral_mode) return ep;   // empty layer = support only, spiral = ep unused
 
     // Gap fill. The classic generator already produced it (medial axis, variable width) and took it out of ld.fill, as
@@ -112,10 +114,13 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
                     + paths_len(ep.gapLines,false) + paths_len(ep.bridgeLines,false) + classicLen;
     double baseSpeed = (i==0 && nraft==0) ? p.first_layer_speed : p.print_speed;
     double useSpeed = baseSpeed;
-    if (p.slow_down_layer_time > 0 && layerLen > 1e-6 && layerLen/baseSpeed < p.slow_down_layer_time)
+    if (!C.cooling && p.slow_down_layer_time > 0 && layerLen > 1e-6 && layerLen/baseSpeed < p.slow_down_layer_time)
       useSpeed = std::min(baseSpeed, std::max(20.0, layerLen / p.slow_down_layer_time));   // slow down small layers (floor 20mm/s)
     ep.fPrint = (int)std::llround(useSpeed*60);
     ep.fBridge = (int)std::llround(std::max(5.0, p.bridge_speed)*60);
+    double slowDownCap = -1.0;   // the layer-time cap above, for the roles' own speeds when it took effect
+    if (useSpeed < baseSpeed) slowDownCap = useSpeed;
+    ep.feeds = role_feeds(p, i==0 && nraft==0, i + nraft, nraft, ep.fPrint, ep.fBridge, slowDownCap);
 
     // Precompute the ironing (type10) lines — emission uses pre.ironLines
     if (ironOn && !ld.topSurf.empty()) {

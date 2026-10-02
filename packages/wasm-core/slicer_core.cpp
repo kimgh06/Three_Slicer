@@ -64,6 +64,7 @@
 #include "contour_phase.h"
 #include "selector_bridge.h"  // stage 20 -> MMU painting: the painted facet states decide whether a layer is multi-tool
 #include "slice_api.h"
+#include "cooling_bridge.h"
 #include "custom_gcode.h"
 #include "slice_ctx.h"
 #include "stage_cache.h"
@@ -219,7 +220,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   CustomStart customStart;
   const CustomStart* startBlock = nullptr;
   if (customGcode) {
-    std::string error = custom_gcode_start(p, single_material_facts(p, L, N, p.bed_width * 0.5, p.bed_depth * 0.5), customStart);
+    std::string error = custom_gcode_start(p, single_material_facts(p, L, N, p.bed_center_x(), p.bed_center_y()), customStart);
     if (!error.empty()) { custom_gcode_bridge::end(); em::val r=em::val::object(); r.set("error", error); return r; }
     startBlock = &customStart;
   }
@@ -230,6 +231,42 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   bool realPE = EF.realPE, ironOn = EF.ironOn, scarfOn = EF.scarfOn;
   int  seamMode = EF.seamMode;
   SeamCtx seamCtx;
+  // Upstream's cooling filter (cooling_bridge.h) runs with the printer's settings: it then owns the fan and the
+  //  layer-time slowdown, and every layer passes through it in print order (flush_layer, flushJob). Not with the PE
+  //  tags on: the PE post-process reads the ;_EXTRUDE_SET_SPEED markers the filter removes (ponytail: both together
+  //  would need the filter to keep them for the PE pass, as upstream does when its pressure equalizer is on).
+  bool cooling = false;
+  struct CoolingSession { bool on = false; ~CoolingSession(){ if (on) cooling_bridge::end(); } } coolingSession;
+  if (customGcode && !gw.emit_pe_tags) {
+    std::vector<unsigned int> tools = { (unsigned int)singleTool };
+    for (int tool : { Params::support_tool_of(p.support_filament), Params::support_tool_of(p.support_interface_filament) })
+      if (tool >= 0 && std::find(tools.begin(), tools.end(), (unsigned int)tool) == tools.end()) tools.push_back((unsigned int)tool);
+    if (cooling_bridge::begin(p.placeholder_config, tools).empty()) {
+      cooling = true; coolingSession.on = true;
+      const cooling_bridge::Markers markers = cooling_bridge::markers((unsigned int)singleTool);
+      gw.cooling_markers = true;
+      gw.fan_overhang = markers.overhang; gw.fan_overhang_external = markers.overhang_external;
+      gw.fan_support_interface = markers.support_interface; gw.fan_ironing = markers.ironing;
+    }
+  }
+  C.cooling = cooling;
+  // The printer's layer templates (custom_gcode_layer): the writers mark their slots, the serial flush fills them.
+  bool layerSlots = customGcode && custom_gcode_layer_slots();
+  gw.layer_slots = layerSlots;
+  if (layerSlots) custom_gcode_layers_begin();
+  std::string layerError;                        // a layer template that fails fails the slice once the layers are done
+  // One printed layer's text made final, in print order: its templates expanded, then the cooling filter.
+  //  `filamentBefore` is the filament (mm) the print had extruded before this layer.
+  auto finishLayer = [&](std::string text, int layer, double z, double filamentBefore) {
+    if (layerSlots) {
+      const double area = PI * p.filament_diameter * p.filament_diameter / 4.0;
+      std::vector<double> volumes((size_t)singleTool + 1, 0.0);
+      volumes[(size_t)singleTool] = filamentBefore * area;
+      text = custom_gcode_layer(std::move(text), layer, z, singleTool, volumes, layerError);
+    }
+    if (cooling) text = cooling_bridge::process_layer(std::move(text), layer, (unsigned int)singleTool);
+    return text;
+  };
 
   int fTravel = (int)std::llround(p.travel_speed*60);
   int fFirst  = (int)std::llround(p.first_layer_speed*60);
@@ -262,18 +299,31 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 #endif
   // Layer emission: batch accumulates into layersArr; streaming emits a chunk (everything in gw.s since the last flush) plus the toolpaths, then releases gw.s.
   //  The preamble goes into the first flush chunk and the footer into the last -> concatenating the chunks is byte-identical to the batch gw.s.
+  // The cooling filter's input is one printed layer's text: what gw.s gained since the last flush (coolStart).
+  size_t coolStart = 0;
+  int printedLayer = 0;
+  double filamentFlushed = 0.0;                  // gw.filament as of the last flush: what every earlier layer extruded
   auto flush_layer = [&](double z, int idx, std::vector<float>& tp, std::vector<float>& widths) {
     double tf0 = emscripten_get_now();
     struct TF { double& acc, t0; ~TF(){ acc += emscripten_get_now() - t0; } } tf{t_flush, tf0};
+    if (cooling || layerSlots) {
+      std::string layerText = gw.s.substr(coolStart);
+      gw.s.resize(coolStart);
+      gw.s += finishLayer(std::move(layerText), printedLayer, z, filamentFlushed);
+    }
+    filamentFlushed = gw.filament;
+    ++printedLayer;
     if (!streaming) {
       em::val Lo=em::val::object(); Lo.set("z",z); Lo.set("paths",to_f32(tp)); Lo.set("widths",to_f32(widths));
       layersArr.call<void>("push", Lo);
 #ifdef __EMSCRIPTEN_PTHREADS__
       if (overlapBatch) feed_batch_tail();               // feed the estimator worker incrementally at each layer boundary (aligned to '\n')
 #endif
+      coolStart = gw.s.size();
       return;
     }
     std::string chunk; chunk.swap(gw.s);                 // take the accumulated text and empty gw.s (freeing the heap)
+    coolStart = 0;
     if (gw.emit_pe_tags && p.pe_strip_tags) strip_pe_tags(chunk);   // stateless line filter (chunked == batch)
 #ifdef __EMSCRIPTEN_PTHREADS__
     if (streamTime) feeder.feed(chunk);                  // fed as a copy — chunk is also handed to the sink afterwards
@@ -286,6 +336,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   };
 
   // ---- Raft (inserted below the model, shifting the model in z) ----
+  coolStart = gw.s.size();                       // the preamble is not a layer: the filter starts after it
   int nraft = std::max(0, p.raft_layers);
   double zShift = raft_emit(gw, p, L, w, nraft, fTravel, fFirst, seamCtx, flush_layer);
   C.nraft = nraft; C.zShift = zShift; C.ironOn = ironOn;   // finalize the phase context for compute_pre
@@ -339,7 +390,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     //  -> an ordered flush. E is relative (M83) so it is layer-local, and cross-layer state is fully captured by the entry cursor -> byte-identical to st (serial)
     //  (gates: golden + a large-model cmp). filament is the ordered sum of per-layer partials (only the association order differs — the theoretical %.2f rounding
     //  boundary risk in the footer is covered by golden). The window (FW) bounds residency -> keeping the streaming OOM mitigation.
-    struct Cursor { double px, py; int curF, lastFan; SeamCtx sc; };
+    struct Cursor { double px, py; int curF, lastFan; unsigned lastAccel, lastTravelAccel; double lastJerk; SeamCtx sc; };
     struct EmitJob {
       EmitPre pre; Cursor entry; Paths island;
       std::string gcode; std::vector<float> tp, widths;
@@ -367,6 +418,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         GW g = base;
         g_seg_tool = singleTool;   // thread_local: a pool thread keeps the tool the previous slice left on it
         g.px = J.entry.px; g.py = J.entry.py; g.curF = J.entry.curF; g.lastFan = J.entry.lastFan;
+        g.last_accel = J.entry.lastAccel; g.last_travel_accel = J.entry.lastTravelAccel; g.last_jerk = J.entry.lastJerk;
         g.island = std::move(J.island);
         SeamCtx sc = J.entry.sc;
         LayerData& ldk = L[k];
@@ -384,12 +436,16 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       EmitJob& J = *jobs[k];
       if (wths.empty()) {   // fallback when no writer could be spawned (pool exhausted): the main thread generates it itself
         GW g = base; g.px=J.entry.px; g.py=J.entry.py; g.curF=J.entry.curF; g.lastFan=J.entry.lastFan;
+        g.last_accel=J.entry.lastAccel; g.last_travel_accel=J.entry.lastTravelAccel; g.last_jerk=J.entry.lastJerk;
         g.island = std::move(J.island); SeamCtx sc = J.entry.sc; LayerData& ldk = L[k];
         emit_layer_any(g, J.tp, J.widths, k, ldk, J.pre, p, ldk.z + zShift, w, N, nraft, fTravel, seamMode, scarfOn, ironOn, sc);
         J.gcode.swap(g.s); J.filament = g.filament; J.segments = g.segments; J.crossings = g.wall_crossings;
         J.jst.store(2);
       }
       { std::unique_lock<std::mutex> lk(emu); ecv.wait(lk, [&]{ return J.jst.load(std::memory_order_acquire) == 2; }); }
+      // The layer templates and the cooling filter are stateful across layers, so they run here, in print order, on the
+      //  layer alone. gw.filament has not taken this layer's yet: it is what the earlier layers extruded.
+      if (cooling || layerSlots) J.gcode = finishLayer(std::move(J.gcode), k + nraft, L[k].z + zShift, gw.filament);
       double zk = L[k].z + zShift;
       gw.filament += J.filament; gw.segments += J.segments; gw.wall_crossings += J.crossings;
       if (!streaming) {
@@ -426,7 +482,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       cv_room.notify_all();
       LayerData& ld = L[i];
       EmitJob& J = *jobs[i];
-      J.entry = { gw.px, gw.py, gw.curF, gw.lastFan, seamCtx };
+      J.entry = { gw.px, gw.py, gw.curF, gw.lastFan, gw.last_accel, gw.last_travel_accel, gw.last_jerk, seamCtx };
       J.island = g_keep_island ? ld.island : std::move(ld.island);   // G003
       emit_layer_any(gw, dtp, dwv, i, ld, pre, p, ld.z + zShift, w, N, nraft, fTravel, seamMode, scarfOn, ironOn, seamCtx);
       J.pre = std::move(pre);
@@ -468,8 +524,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       char cm[72];
       std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.layer_begin(cm);
       gw.set_fan(fan_S(i, p));
-      std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
+      gw.layer_z(zE, fTravel);
+      if (i + nraft == 1) gw.second_layer_begin();
       int fSp = (int)std::llround(((i==0&&nraft==0)?p.first_layer_speed:p.print_speed)*60);
+      gw.set_feature((int)FlowRole::OuterWall);
+      fSp = role_feeds(p, i==0 && nraft==0, i + nraft, nraft, fSp, fSp, -1.0).of(FlowRole::OuterWall);
       emit_spiral(gw, tp, ld.walls.empty()?Paths{}:ld.walls[0], zE, ld.h, fSp, fTravel);
     } else {
       emit_layer_any(gw, tp, widths, i, ld, pre, p, zE, w, N, nraft, fTravel, seamMode, scarfOn, ironOn, seamCtx);
@@ -490,6 +549,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     if (streamTime) (void)gcodeproc_bridge::estimate_end();
 #endif
     em::val r = em::val::object(); r.set("error", std::string("canceled")); return r;
+  }
+  if (!layerError.empty()) {   // a layer template failed (custom_gcode_layer): the slice fails with its typed error
+#ifdef __EMSCRIPTEN_PTHREADS__
+    if (streamTime || overlapBatch) (void)feeder.finish();
+#else
+    if (streamTime) (void)gcodeproc_bridge::estimate_end();
+#endif
+    custom_gcode_bridge::end();
+    em::val r = em::val::object(); r.set("error", layerError); return r;
   }
 
   // ---- Finish ----
@@ -512,6 +580,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     gw.raw_lines(p.machine_end_gcode);
   }
   }                                            // end of the raw path's finish
+  if (!p.disable_m73) gw.raw(";_GP_LAST_LINE_M73_PLACEHOLDER");   // upstream's last progress line (GCode.cpp:3957)
+  gw.raw_lines(machine_postamble(gw.flavor));  // GCodeWriter::postamble: M2 on Machinekit
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm", gw.filament); gw.raw(h); }
   {
     std::vector<double> filamentByTool;                // empty: the footer reports the whole print as filament 1
@@ -527,6 +597,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   if (streaming) {
     // Stage 30: after emitting the closing chunk (; end … filament comments), end the streamed time estimate. The G-code and layers have
     //  already been emitted through the callback and gw.s is empty (released per layer). Economy mode skips the time estimate entirely.
+    cooling = false;   // the closing chunk is the end block, not a layer: the batch text never cools it either
+    layerSlots = false;
     { std::vector<float> empty; flush_layer(gw.z, N + nraft, empty, empty); }
     if (streamTime) {
 #ifdef __EMSCRIPTEN_PTHREADS__
@@ -543,7 +615,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 #endif
     if (realPE)
       gw.s = pe_bridge::equalize(gw.s, p.filament_diameter, p.max_volumetric_extrusion_rate_slope,
-                                 p.extrusion_rate_slope_segment_length, /*relative_e*/true, p.pe_external_perimeter_only);
+                                 p.extrusion_rate_slope_segment_length, p.use_relative_e_distances, p.pe_external_perimeter_only);
     if (gw.emit_pe_tags && p.pe_strip_tags) strip_pe_tags(gw.s);
     if (p.time_engine == "transcribed") {
       te = gcode_time::estimate(gw.s, glim); engine_used = "transcribed";

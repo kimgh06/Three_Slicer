@@ -29,14 +29,23 @@ double raft_emit(GW& gw, const Params& p, std::vector<LayerData>& L, double w, i
       gw.set_e_per_mm(rh, p); gw.z = rz;
       std::vector<float> tp, widths; g_seg_w = &widths; g_seg_w_cur = (float)w;   // stage 21: record raft widths
       char cm[64]; std::snprintf(cm,sizeof cm,"; raft %d Z%.3f",k,rz); gw.raw(cm);
-      std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",rz,fTravel); gw.raw(cm);
+      gw.layer_z(rz, fTravel);
+      if (k == 1) gw.second_layer_begin();   // the raft's second layer is the print's second layer
+      // The raft is support material upstream (support_speed; the first layer's infill speed on the first layer). Every
+      //  raft layer prints at fFirst without per-role speeds, as it always did.
+      const RoleFeeds feeds = role_feeds(p, k == 0, k, nraft, fFirst, fFirst, -1.0);
       if (k==0) {
-        for (int s=0;s<p.skirt_loops;++s){ Paths r=offset_paths(raftArea,(p.skirt_distance+w*0.5+s*w)); emit_loops(gw,tp,r,rz,4.0f,fFirst,fTravel,-1,seamCtx); }
+        gw.set_feature((int)FlowRole::Skirt);
+        for (int s=0;s<p.skirt_loops;++s){ Paths r=offset_paths(raftArea,(p.skirt_distance+w*0.5+s*w)); emit_loops(gw,tp,r,rz,4.0f,feeds.of(FlowRole::Skirt),fTravel,-1,seamCtx); }
         raft_support_flow(gw, p);
-        emit_lines(gw, tp, infill_clipped(raftArea, 0.0, w), rz, 6.0f, fFirst, fTravel);        // first raft layer: solid
+        gw.set_feature((int)FlowRole::Support);
+        emit_lines(gw, tp, infill_clipped(raftArea, 0.0, w), rz, 6.0f, feeds.of(FlowRole::Support), fTravel);        // first raft layer: solid
       } else {
         raft_support_flow(gw, p);
-        emit_lines(gw, tp, infill_clipped(raftArea, (k%2)?90.0:0.0, w/0.5), rz, 6.0f, fFirst, fTravel); // afterwards: sparse
+        gw.set_feature((int)FlowRole::Support);
+        double angle = 0.0;
+        if (k % 2) angle = 90.0;
+        emit_lines(gw, tp, infill_clipped(raftArea, angle, w/0.5), rz, 6.0f, feeds.of(FlowRole::Support), fTravel); // afterwards: sparse
       }
       flush_layer(rz, k, tp, widths);
       rz += p.layer_height;

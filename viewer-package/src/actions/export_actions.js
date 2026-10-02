@@ -93,6 +93,7 @@ export function makeExportActions(deps) {
       const bytes = await write3MFProject(objects, settingsRef.current, {
         bedWidth: bedRef.current?.bedW ?? DEFAULT_BED.width,
         bedDepth: bedRef.current?.bedD ?? DEFAULT_BED.depth,
+        bedOrigin: bedRef.current?.origin,
         plateCount: plateCountRef.current ?? 1,
         plateSettings: plateSettingsRef?.current ?? null,   // our own member — upstream has no place for it
       })

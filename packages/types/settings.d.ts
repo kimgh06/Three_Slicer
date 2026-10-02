@@ -17,7 +17,14 @@ export function settingScalar(settings: SlicerSettings | null | undefined, key: 
  * ponytail: 53 returned keys, so Record instead of listing each — kernel params are passed straight to slice(),
  * not an API consumers read field by field. Expand it when field access is actually needed.
  */
-export function deriveKernelParams(settings: SlicerSettings | null | undefined, opts?: { plate?: number }): Record<string, unknown>
+export function deriveKernelParams(settings: SlicerSettings | null | undefined, opts?: { plate?: number; objectNames?: string[] }): Record<string, unknown>
+/**
+ * The printable area's lower-left corner and its centre in printer coordinates, from deriveKernelParams' output.
+ * The kernel slices in a plate frame centred on the bed and adds the centre on output, so a stored printer
+ * coordinate (wipe_tower_x/y, a 3mf position, G-code) converts to that frame by subtracting `bedCenter`.
+ */
+export function bedOrigin(params: Record<string, unknown> | null | undefined): { x: number; y: number }
+export function bedCenter(params: Record<string, unknown> | null | undefined): { x: number; y: number }
 
 /**
  * Clear-then-merge preset application: deletes `keys` (the catalog's own key set) from `settings`, then

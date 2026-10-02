@@ -1,7 +1,7 @@
 import { log } from '../core/log.js'
 import { parseGcode } from '../core/gcode_parse.js'
 import { objectRows } from '../core/object_rows.js'
-import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer-viewer/settings'
+import { normalizeProjectSettings, deriveKernelParams, bedOrigin, bedCenter } from 'three-slicer-viewer/settings'
 import { loadModel, SUPPORTED_EXT, GCODE_EXTS, fileExt } from '../scene/model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO, MAX_PLATES } from '../core/plate_layout.js'
 import { PRESET_ACCEPT } from './preset_actions.js'
@@ -52,9 +52,13 @@ function groupCentredPlacements(plates, byObjectId) {
 }
 
 /** Exported for the import test — the placement rule is the part with a wrong answer worth pinning. */
-export function platePlacements(plates, loaded, bedWidth, bedDepth) {
+//  `origin` is the printable area's lower-left corner in printer coordinates (settings bedOrigin): upstream lays a
+//  plate's objects out in printer coordinates, so an object sits between the corner and corner + bed, and the plate
+//  frame's (0,0) is the bed centre.
+export function platePlacements(plates, loaded, bedWidth, bedDepth, origin = { x: 0, y: 0 }) {
   const byObjectId = new Map(loaded.map(e => [e.objectid, e]))
   if (!(bedWidth > 0 && bedDepth > 0)) return groupCentredPlacements(plates, byObjectId)
+  const center = bedCenter({ bed_width: bedWidth, bed_depth: bedDepth, bed_origin_x: origin.x, bed_origin_y: origin.y })
   const cols = plateCols(plates.length)
   const strideX = bedWidth * (1 + UPSTREAM_PLATE_GAP_RATIO)
   const strideY = bedDepth * (1 + UPSTREAM_PLATE_GAP_RATIO)
@@ -71,8 +75,8 @@ export function platePlacements(plates, loaded, bedWidth, bedDepth) {
       // The decode is only right if every object lands on the plate it says it is on. A project written under a
       //  different grid rule would put them somewhere else entirely, and scattering objects off the bed is worse
       //  than losing the absolute placement — so one bad object drops the whole file to the fallback.
-      if (localX < 0 || localX > bedWidth || localY < 0 || localY > bedDepth) decoded = false
-      out.push([e.id, plate.index, localX - bedWidth / 2, localY - bedDepth / 2])
+      if (localX < origin.x || localX > origin.x + bedWidth || localY < origin.y || localY > origin.y + bedDepth) decoded = false
+      out.push([e.id, plate.index, localX - center.x, localY - center.y])
     }
   }
   return decoded ? out : groupCentredPlacements(plates, byObjectId)
@@ -168,7 +172,7 @@ export function makeModelLoad(deps) {
       if (meta.name) { const o = objectsRef.current.find(x => x.id === entry.id); if (o) { o.name = meta.name; o.mesh.userData.name = meta.name } }
     }
     // Plates last: placing an object needs the FINAL plate count, because the plate origins are laid out against it.
-    const assignments = platePlacements(project.plates, loaded, bed?.bed_width, bed?.bed_depth)
+    const assignments = platePlacements(project.plates, loaded, bed?.bed_width, bed?.bed_depth, bedOrigin(bed))
     let beyondLastPlate = 0, finalPlateCount = plateCountRef?.current ?? 1
     if (assignments.length && applyProjectPlates) {
       //  The saved plate count counts too (our member): the <plate> records name only plates holding objects, so an

@@ -1341,6 +1341,42 @@ ok(t10.stats.time_estimate === t10b.stats.time_estimate, `time estimate is deter
 //  infill_lines (clip_util.h): each pattern line was drawn through the origin-projected foot and extended by the
 //  region's own SIZE, so a region further from the origin than that was simply never reached. That centring is what
 //  made the slice frame follow the model, which in turn is what made the prime tower and the paint drift.
+console.log('\n[bed origin]')
+//  The G-code is in PRINTER coordinates, which start wherever printable_area does: a delta bed is centred on (0,0)
+//  and some cartesian beds are offset. The kernel adds the bed centre (bed_origin + bed/2) to every plate-local
+//  coordinate; it used to add bed/2 alone, which put a centred model on a delta bed's edge (Anycubic Predator,
+//  bed -185..185: model at 185,186).
+{
+  const originBox = makeBoxSTL(20, 20, 2)
+  const centredBox = (() => {   // makeBoxSTL builds x,y in [0,20]; the viewer hands the kernel plate-centred coordinates
+    const out = Buffer.from(originBox)
+    const n = out.readUInt32LE(80)
+    for (let t = 0, off = 84; t < n; t++, off += 2) {
+      off += 12
+      for (let k = 0; k < 3; k++, off += 12) {
+        out.writeFloatLE(out.readFloatLE(off) - 10, off)
+        out.writeFloatLE(out.readFloatLE(off + 4) - 10, off + 4)
+      }
+    }
+    return out
+  })()
+  const extrusionCentre = (extra) => {
+    const r = Module.slice(new Uint8Array(centredBox), JSON.stringify({ ...params, bed_width: 200, bed_depth: 200, skirt_loops: 0, ...extra }), () => {})
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (const m of r.gcode.matchAll(/^G1 X([-\d.]+) Y([-\d.]+) E/gm)) {
+      minX = Math.min(minX, +m[1]); maxX = Math.max(maxX, +m[1]); minY = Math.min(minY, +m[2]); maxY = Math.max(maxY, +m[2])
+    }
+    return [(minX + maxX) / 2, (minY + maxY) / 2]
+  }
+  const near = ([x, y], [ex, ey]) => Math.abs(x - ex) < 0.01 && Math.abs(y - ey) < 0.01
+  const corner = extrusionCentre({})
+  ok(near(corner, [100, 100]), `bed from (0,0): the model prints at the bed centre (${corner})`)
+  const delta = extrusionCentre({ bed_origin_x: -100, bed_origin_y: -100 })
+  ok(near(delta, [0, 0]), `bed centred on (0,0): the model prints at (0,0) (${delta})`)
+  const offset = extrusionCentre({ bed_origin_x: 5, bed_origin_y: -10 })
+  ok(near(offset, [105, 90]), `bed from (5,-10): the model prints at (105,90) (${offset})`)
+}
+
 console.log('\n[position invariance]')
 const posBox = makeBoxSTL(20, 20, 20)   // tall enough that most layers are sparse, which is what went missing
 const translateSTL = (stl, dx, dy) => {

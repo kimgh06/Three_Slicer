@@ -106,8 +106,9 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
   // `plate` rides along so per-plate settings (the wipe_tower_x/y arrays) can be indexed by the plate this
   //  merge actually cut, not by whatever is selected when the slice runs.
   // `members` is the merge's object order with each object's face count — the numbering the selector uses, which
-  //  the per-object paint store (paint_store.js) splits exports by and rebuilds imports from.
-  const members = sorted.map(o => ({ id: o.id, faceCount: o.localPos.length / 9 }))
+  //  the per-object paint store (paint_store.js) splits exports by and rebuilds imports from. The name is what a
+  //  printer's custom G-code prints as input_filename_base / first_object_name (settings_core.js placeholderConfig).
+  const members = sorted.map(o => ({ id: o.id, name: o.name ?? '', faceCount: o.localPos.length / 9 }))
   return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
            plate, topology: topology.join('|'), members, minX, minY, maxX, maxY, paint }
 }

@@ -160,6 +160,12 @@ eq('coordinates that do not decode fall back to group re-centring',
 eq('two objects keep their relative arrangement in the fallback',
    platePlacements([at(0, []), at(1, ['e', 'f'])], [obj('e', 5, 0, 0), obj('f', 6, 40, 0)], 200, 200),
    [[5, 1, -20, 0], [6, 1, 20, 0]])
+// A delta bed's printable area is centred on the printer's (0,0) (Anycubic Predator: -185..185), so upstream lays
+//  its objects out around 0 on plate 0. The bed corner (settings bedOrigin) decodes them: an object at the printer's
+//  (0,0) is at the bed centre, and one at (-50,30) is 50 left of it.
+eq('a bed centred on the printer origin decodes around 0',
+   platePlacements([at(0, ['h', 'i'])], [obj('h', 8, 0, 0), obj('i', 9, -50, 30)], 200, 200, { x: -100, y: -100 }),
+   [[8, 0, 0, 0], [9, 0, -50, 30]])
 eq('no bed means no decode is possible, so the fallback is used',
    platePlacements([at(0, ['g'])], [obj('g', 7, 50, 60)], 0, 0),
    [[7, 0, 0, 0]])
@@ -203,6 +209,12 @@ const DECIDED = new Set(['coBool','coBools','coFloat','coFloats','coInt','coInts
   'coFloatOrPercent','coFloatsOrPercents','coPoint','coPoints','coPointsGroups','coString','coStrings','coEnum','coEnums'])
 const unknownTypes = [...new Set(Object.values(schema).map(o => o.type))].filter(t => !DECIDED.has(t))
 check('every config-schema option type has a decided coercion', unknownTypes.length === 0, `undecided: ${unknownTypes.join(', ')}`)
+// Guard: a C++ float literal in a default list ("0.f, 280.f") is one number. The extractor once split it into the
+//  number and an "f", so flush_volumes_matrix defaulted to [0,"f",280,...] and every template-path tool change
+//  purged nothing.
+const suffixSplit = Object.entries(schema).filter(([, o]) => Array.isArray(o.default) && o.default.includes('f')).map(([key]) => key)
+check('no default list holds a split float suffix', suffixSplit.length === 0, `split: ${suffixSplit.join(', ')}`)
+eq('flush_volumes_matrix defaults to numbers', schema.flush_volumes_matrix.default.slice(0, 2), [0, 280])
 
 // ---- optional parts ------------------------------------------------------------------------------------------
 check('no layer-height profile in the base fixture', project.hasLayerHeightProfile === false)

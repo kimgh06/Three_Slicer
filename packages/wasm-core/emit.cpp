@@ -47,6 +47,14 @@ static int pe_role_of(float type){
     default:return 0;   // erNone
   }
 }
+// The dry pass's stand-in for one path's travel to (x0, y0) and its extrusion: the writer's acceleration and jerk move
+//  as the real emit's would (GW::apply_travel_motion / apply_print_motion), so a parallel writer starts from the
+//  state the serial emit reaches. Called before the dry pass moves the position.
+static void dry_path_motion(GW& gw, double x0, double y0) {
+  const double distance = std::hypot(x0 - gw.px, y0 - gw.py);
+  if (distance >= 1e-6) gw.apply_travel_motion(distance);
+  gw.apply_print_motion();
+}
 // Closed loops (walls/skirt/raft). seamMode: -1 = no rotation, 0 = back, 1 = nearest, 2 = aligned, 3 = random.
 // With updateSeam=true the start point is recorded into SeamCtx (for the next layer of aligned).
 void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float type, int fPrint, int fTravel,
@@ -55,7 +63,9 @@ void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float typ
     for (Path wp : loops) {
       if (wp.size() < 2) continue;
       rotate_seam(wp, seamMode, sc, gw.px, gw.py);
+      dry_path_motion(gw, wp[0].x()*INV, wp[0].y()*INV);
       gw.px = wp[0].x()*INV; gw.py = wp[0].y()*INV; gw.curF = fPrint;
+      if (gw.small_perimeter_length > 0) gw.curF = gw.loop_feed(paths_len(Paths{wp}, true), fPrint);
       if (updateSeam) { sc.lastX=gw.px; sc.lastY=gw.py; sc.has=true; }
     }
     return;
@@ -71,7 +81,11 @@ void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float typ
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
     gw.travel(pts[0].x, pts[0].y, fTravel);
     for (size_t i=1;i<pts.size();++i) push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, z, type);
-    gw.extrude_run(pts, fPrint, type);
+    int fLoop = fPrint;
+    if (gw.small_perimeter_length > 0) fLoop = gw.loop_feed(paths_len(Paths{wp}, true), fPrint);
+    gw.path_begin(fLoop);
+    gw.extrude_run(pts, fLoop, type);
+    gw.path_end();
     if (updateSeam) { sc.lastX=pts[0].x; sc.lastY=pts[0].y; sc.has=true; }
   }
   if (anyRun) gw.pe_end_run();
@@ -79,7 +93,10 @@ void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float typ
 // Open lines (infill/support). Arc fitting applies.
 void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, float type, int fPrint, int fTravel){
   if (gw.dry) {
-    for (const Path& ln : lines) if (ln.size() >= 2) { gw.px = ln.back().x()*INV; gw.py = ln.back().y()*INV; gw.curF = fPrint; }
+    for (const Path& ln : lines) if (ln.size() >= 2) {
+      dry_path_motion(gw, ln[0].x()*INV, ln[0].y()*INV);
+      gw.px = ln.back().x()*INV; gw.py = ln.back().y()*INV; gw.curF = fPrint;
+    }
     return;
   }
   bool anyRun=false;
@@ -91,7 +108,9 @@ void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, fl
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
     gw.travel(pts[0].x, pts[0].y, fTravel);
     for (size_t i=1;i<pts.size();++i) push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, z, type);
+    gw.path_begin(fPrint);
     gw.extrude_run(pts, fPrint, type);
+    gw.path_end();
   }
   if (anyRun) gw.pe_end_run();
 }
@@ -103,6 +122,7 @@ void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<TreePath>& 
   if (gw.dry) {   // G003 E1: position and curF only (E/flow state is reset at every layer start, so it does not chain)
     for (const auto& lw : lines) {
       if (lw.pl.size() < 2) continue;
+      dry_path_motion(gw, lw.pl[0].x()*INV, lw.pl[0].y()*INV);
       gw.px = lw.pl.back().x()*INV; gw.py = lw.pl.back().y()*INV;
       // The flow the real emit sets for this line, so the volumetric cap leaves curF where the real emit would.
       if (lw.mm3 > 1e-9) gw.set_e_per_mm_vol(lw.mm3, p);
@@ -128,23 +148,33 @@ void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<TreePath>& 
     push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
     gw.travel(pts[0].x, pts[0].y, fTravel);
     for (size_t i=1;i<pts.size();++i) push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, z, type);
+    gw.path_begin(fPrint);
     gw.extrude_run(pts, fPrint, type);
+    gw.path_end();
   }
   if (curRole >= 0) gw.pe_end_run();
   g_seg_w_cur = (float)p.line_width; gw.set_e_per_mm(h, p);   // restore the default width/E
 }
 // Stage 7: emit the real ported Arachne variable-width walls. E is computed from the per-segment width (set_e_per_mm_width) and widths is recorded.
 void emit_arachne_walls(GW& gw, std::vector<float>& tp, const std::vector<arachne_bridge::WLine>& walls,
-                               double z, double h, const Params& p, int fPrint, int fTravel){
+                               double z, double h, const Params& p, const RoleFeeds& feeds, int fTravel){
   bool anyRun=false;
   for (const auto& wl : walls) {
     if (wl.pts.size() < 2) continue;
     FlowRole flowRole = FlowRole::InnerWall;
     if (wl.inset_idx == 0) flowRole = FlowRole::OuterWall;
     gw.role_flow = role_flow_ratio(p, flowRole, gw.on_first_layer);
+    gw.set_feature((int)flowRole);
+    int fPrint = feeds.of(flowRole);
+    if (wl.closed) {
+      double loopLength = std::hypot(wl.pts.front().x - wl.pts.back().x, wl.pts.front().y - wl.pts.back().y);
+      for (size_t k = 1; k < wl.pts.size(); ++k) loopLength += std::hypot(wl.pts[k].x - wl.pts[k-1].x, wl.pts[k].y - wl.pts[k-1].y);
+      fPrint = gw.loop_feed(loopLength, fPrint);
+    }
     if (!anyRun) { gw.role_tag(1); gw.pe_begin_run(2 /*erExternalPerimeter*/, fPrint); anyRun=true; }
     push_seg(tp, gw.px, gw.py, wl.pts[0].x, wl.pts[0].y, z, 0.0f);
     gw.travel(wl.pts[0].x, wl.pts[0].y, fTravel);
+    gw.path_begin(fPrint);
     size_t n = wl.pts.size();
     for (size_t i=1;i<n;++i) {
       double sw = 0.5*(wl.pts[i-1].w + wl.pts[i].w);
@@ -158,6 +188,7 @@ void emit_arachne_walls(GW& gw, std::vector<float>& tp, const std::vector<arachn
       push_seg(tp, wl.pts[n-1].x, wl.pts[n-1].y, wl.pts[0].x, wl.pts[0].y, z, 1.0f);
       gw.extrude(wl.pts[0].x, wl.pts[0].y, fPrint);
     }
+    gw.path_end();
   }
   if (anyRun) gw.pe_end_run();
   g_seg_w_cur = (float)p.line_width;
@@ -170,6 +201,7 @@ void emit_spiral(GW& gw, std::vector<float>& tp, const Paths& outerWall, double 
   push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z0, 0.0f);
   gw.travel(pts[0].x, pts[0].y, fTravel);
   gw.role_tag(1);
+  gw.path_begin(fPrint);
   double total=0; for (size_t i=1;i<pts.size();++i) total+=std::hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
   double acc=0;
   for (size_t i=1;i<pts.size();++i){
@@ -178,6 +210,7 @@ void emit_spiral(GW& gw, std::vector<float>& tp, const Paths& outerWall, double 
     gw.extrude_z(pts[i].x, pts[i].y, zz, fPrint);
     push_seg(tp, pts[i-1].x,pts[i-1].y, pts[i].x,pts[i].y, zz, 1.0f);
   }
+  gw.path_end();
 }
 // Scarf joint seam (outer wall loop): ramp z (z-h -> z) and flow (0 -> 1) up at the start, then ramp down over the same length at the end with an overlap (flow 1 -> 0).
 //  ⚠ An approximation — a gentle sloped joint instead of a z-seam blob. Applied to the outer wall only when seam_slope_type=external/all.
@@ -189,10 +222,12 @@ void emit_scarf_loop(GW& gw, std::vector<float>& tp, Path wp, double z, double h
   for (auto& q:wp) pts.push_back({q.x()*INV, q.y()*INV});
   pts.push_back(pts.front());
   double L=0; for (size_t i=1;i<pts.size();++i) L+=std::hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  fPrint = gw.loop_feed(L, fPrint);
   double slen = std::min(gw.scarf_len, 0.45*L); if (slen < 1e-3) slen = 0.45*L;
   push_seg(tp, gw.px, gw.py, pts[0].x, pts[0].y, z, 0.0f);
   gw.travel(pts[0].x, pts[0].y, fTravel);
   gw.raw("; scarf");
+  gw.path_begin(fPrint);
   gw.role_tag(1);
   double startZ = z - h;
   double sub = std::max(0.2, slen/8.0);   // ramp subdivision step (so long straight walls also rise continuously in z)
@@ -231,6 +266,7 @@ void emit_scarf_loop(GW& gw, std::vector<float>& tp, Path wp, double z, double h
     s2+=seg; if (s2>=slen) break;
   }
   sc.lastX=pts[0].x; sc.lastY=pts[0].y; sc.has=true;
+  gw.path_end();
 }
 
 // ---- G-code footer blocks (upstream GCode.cpp) --------------------------------------------------------------
@@ -341,6 +377,139 @@ double role_flow_ratio(const Params& p, FlowRole role, bool firstLayer) {
   // Additionally on the first layer, except brims and skirts
   if (firstLayer && role != FlowRole::Brim && role != FlowRole::Skirt) ratio *= p.first_layer_flow_ratio;
   return ratio;
+}
+
+namespace {
+bool any_role_speed(const Params& p) {
+  return p.inner_wall_speed >= 0 || p.sparse_infill_speed >= 0 || p.internal_solid_infill_speed >= 0 || p.top_surface_speed >= 0 ||
+         p.support_speed >= 0 || p.support_interface_speed >= 0 || p.initial_layer_infill_speed >= 0 || p.skirt_speed >= 0;
+}
+// A per-role speed the host did not send prints at print_speed (outer_wall_speed), what every role printed at before.
+double sent_or(double value, double fallback) {
+  if (value >= 0) return value;
+  return fallback;
+}
+}  // namespace
+
+RoleFeeds role_feeds(const Params& p, bool firstLayer, int printedLayer, int nraft, int legacy, int legacyBridge, double capSpeed) {
+  RoleFeeds feeds;
+  if (!any_role_speed(p)) {
+    for (int k = 0; k < FLOW_ROLE_COUNT; ++k) feeds.f[k] = legacy;
+    feeds.f[(int)FlowRole::Bridge] = legacyBridge;
+    return feeds;
+  }
+  const double outer = p.print_speed;   // outer_wall_speed
+  const double firstLayerSpeed = p.first_layer_speed;   // initial_layer_speed
+  const double firstLayerInfill = sent_or(p.initial_layer_infill_speed, firstLayerSpeed);
+  for (int k = 0; k < FLOW_ROLE_COUNT; ++k) {
+    const FlowRole role = (FlowRole)k;
+    double speed = outer;
+    switch (role) {
+      case FlowRole::OuterWall:        speed = outer; break;
+      case FlowRole::InnerWall:        speed = sent_or(p.inner_wall_speed, outer); break;
+      case FlowRole::SparseInfill:     speed = sent_or(p.sparse_infill_speed, outer); break;
+      case FlowRole::InternalSolid:    speed = sent_or(p.internal_solid_infill_speed, outer); break;
+      case FlowRole::TopSurface:       speed = sent_or(p.top_surface_speed, outer); break;
+      case FlowRole::BottomSurface:    speed = sent_or(p.internal_solid_infill_speed, outer); break;
+      case FlowRole::Bridge:           speed = p.bridge_speed; break;
+      case FlowRole::GapFill:          speed = Params::forTool(p.gap_infill_speed, 0, outer); break;
+      case FlowRole::Support:          speed = sent_or(p.support_speed, outer); break;
+      case FlowRole::SupportInterface: speed = sent_or(p.support_interface_speed, outer); break;
+      // Upstream prints the skirt and the brim with support_speed (GCode::process_layer passes it to extrude_loop).
+      case FlowRole::Skirt:            speed = sent_or(p.support_speed, outer); break;
+      case FlowRole::Brim:             speed = sent_or(p.support_speed, outer); break;
+      case FlowRole::Ironing:          speed = p.ironing_speed; break;
+      case FlowRole::Other:            speed = outer; break;
+    }
+    // 0 = as fast as the filament's volumetric limit allows: the writer's cap (GW::capped_feed) does the rest.
+    if (speed == 0) speed = p.machine_max_speed_xy;
+    const bool perimeterLike = role == FlowRole::OuterWall || role == FlowRole::InnerWall || role == FlowRole::Brim;
+    double rampFrom = firstLayerInfill;
+    if (perimeterLike) rampFrom = firstLayerSpeed;
+    if (firstLayer) {
+      // The first layer's bottom solid is upstream's erBottomSurface, which already has initial_layer_infill_speed.
+      if (role == FlowRole::BottomSurface) speed = firstLayerInfill;
+      else speed = rampFrom;
+    } else if (p.slow_down_layers > 1) {
+      const int layer = printedLayer - nraft;   // upstream counts from the first object layer when there is a raft
+      bool ramping = layer > 0 && layer < p.slow_down_layers;
+      if (nraft > 0) ramping = printedLayer > nraft && layer < p.slow_down_layers;
+      if (ramping && rampFrom < speed)
+        speed = std::min(speed, rampFrom + (speed - rampFrom) * (double)layer / p.slow_down_layers);
+    }
+    if (role == FlowRole::Skirt && p.skirt_speed > 0) speed = p.skirt_speed;
+    if (capSpeed > 0 && role != FlowRole::Bridge) speed = std::min(speed, capSpeed);
+    feeds.f[k] = (int)std::llround(speed * 60);
+  }
+  return feeds;
+}
+
+void gw_setup_motion(GW& gw, const Params& p, bool is_bbl) {
+  gw.motion_accel = p.default_acceleration > 0;
+  gw.motion_jerk = p.default_jerk > 0;
+  gw.motion_bbl = is_bbl;
+  gw.outer_wall_role = (int)FlowRole::OuterWall;
+  const Flavor flavor = flavor_or_marlin(gw.flavor);
+  // GCodeWriter::apply_print_config: the clamps exist for the flavors that have machine limits.
+  const bool machineLimits = flavor == Flavor::MarlinLegacy || flavor == Flavor::MarlinFirmware || flavor == Flavor::Klipper ||
+                             flavor == Flavor::RepRapFirmware;
+  if (machineLimits) {
+    double extruding = std::round(p.machine_max_acceleration_extruding);
+    if (flavor == Flavor::Klipper) {   // SET_VELOCITY_LIMIT ACCEL applies to every move: the X/Y limits cap it too
+      if (std::round(p.machine_max_accel_xy) > 0) extruding = std::min(extruding, std::round(p.machine_max_accel_xy));
+      if (std::round(p.machine_max_acceleration_y) > 0) extruding = std::min(extruding, std::round(p.machine_max_acceleration_y));
+    }
+    gw.max_accel = (unsigned)std::max(0.0, extruding);
+    if (machine_separate_travel_acceleration(flavor)) gw.max_travel_accel = (unsigned)std::max(0.0, std::round(p.machine_max_acceleration_travel));
+    gw.max_jerk_x = std::round(p.machine_jerk_xy);
+    gw.max_jerk_y = std::round(p.machine_max_jerk_y);
+  }
+  gw.jerk_z = p.machine_jerk_z;
+  gw.jerk_e = p.machine_jerk_e;
+  gw.accel_to_decel = p.accel_to_decel_enable;
+  gw.accel_to_decel_factor = p.accel_to_decel_factor;
+  auto rounded = [](double accel) { return (unsigned)std::floor(std::max(0.0, accel) + 0.5); };
+  for (int first = 0; first < 2; ++first) {
+    for (int k = 0; k < FLOW_ROLE_COUNT; ++k) {
+      const FlowRole role = (FlowRole)k;
+      double accel = p.default_acceleration;
+      if (first && p.initial_layer_acceleration > 0) accel = p.initial_layer_acceleration;
+      else if (p.bridge_acceleration > 0 && role == FlowRole::Bridge) accel = p.bridge_acceleration;
+      else if (p.sparse_infill_acceleration > 0 && role == FlowRole::SparseInfill) accel = p.sparse_infill_acceleration;
+      else if (p.internal_solid_infill_acceleration > 0 && role == FlowRole::InternalSolid) accel = p.internal_solid_infill_acceleration;
+      else if (p.outer_wall_acceleration > 0 && role == FlowRole::OuterWall) accel = p.outer_wall_acceleration;
+      else if (p.inner_wall_acceleration > 0 && role == FlowRole::InnerWall) accel = p.inner_wall_acceleration;
+      else if (p.top_surface_acceleration > 0 && role == FlowRole::TopSurface) accel = p.top_surface_acceleration;
+      gw.role_accel[first][k] = rounded(accel);
+      // is_infill (ExtrusionEntity.hpp): every infill role, top and bottom surfaces and bridges included.
+      const bool infill = role == FlowRole::SparseInfill || role == FlowRole::InternalSolid || role == FlowRole::TopSurface ||
+                          role == FlowRole::BottomSurface || role == FlowRole::Bridge;
+      double jerk = p.default_jerk;
+      if (first && p.initial_layer_jerk > 0) jerk = p.initial_layer_jerk;
+      else if (p.outer_wall_jerk > 0 && role == FlowRole::OuterWall) jerk = p.outer_wall_jerk;
+      else if (p.inner_wall_jerk > 0 && role == FlowRole::InnerWall) jerk = p.inner_wall_jerk;
+      else if (p.top_surface_jerk > 0 && role == FlowRole::TopSurface) jerk = p.top_surface_jerk;
+      else if (p.infill_jerk > 0 && infill) jerk = p.infill_jerk;
+      gw.role_jerk[first][k] = jerk;
+    }
+  }
+  // Travels: the first layer's own when set, else travel_acceleration / travel_jerk (0 = leave as is).
+  gw.travel_accel[1] = rounded(p.initial_layer_travel_acceleration);
+  gw.travel_jerk[1] = p.initial_layer_travel_jerk;
+  gw.travel_accel[0] = rounded(p.travel_acceleration);
+  gw.travel_jerk[0] = p.travel_jerk;
+  gw.inner_wall_role = (int)FlowRole::InnerWall;
+  gw.bridge_role = (int)FlowRole::Bridge;
+  gw.support_interface_role = (int)FlowRole::SupportInterface;
+  gw.ironing_role = (int)FlowRole::Ironing;
+  if (p.small_perimeter_speed >= 0 && p.small_perimeter_threshold > 0) {
+    double speed = p.small_perimeter_speed;
+    if (speed == 0) speed = p.print_speed * 0.5;   // 0 = half the outer wall's speed (GCode.cpp:6671)
+    gw.small_perimeter_length = p.small_perimeter_threshold * 2 * PI;
+    gw.small_perimeter_feed = (int)std::llround(speed * 60);
+  }
+  gw.short_travel_accel = rounded(p.outer_wall_acceleration);
+  gw.short_travel_jerk = p.outer_wall_jerk;
 }
 
 double thick_bridge_mm3_per_mm(const Params& p) {

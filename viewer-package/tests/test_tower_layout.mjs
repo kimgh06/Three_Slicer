@@ -203,4 +203,20 @@ assert.equal(towerBoxes({ plateCount: 2, size: SIZE, ...BED, settings: {}, model
   assert.equal(towerSelectionRule(new Set(), null, isTower), false)
 }
 
+{
+  // wipe_tower_x/y are printer coordinates. On a bed that does not start at (0,0) (a delta bed centred on it), the
+  //  clamp keeps the tower between the bed's own edges and the stand-in is drawn relative to the bed's centre.
+  const deltaFrame = { bedW: 200, bedD: 200, size: 20, origin: { x: -100, y: -100 } }
+  assert.deepEqual(clampTowerPosition(-150, 150, deltaFrame), [-100, 80], 'clamped to the corner-relative edges')
+  assert.deepEqual(clampTowerPosition(-10, 5, deltaFrame), [-10, 5], 'inside is untouched')
+  const boxes = towerBoxes({
+    plateCount: 1, size: 20, bedWidth: 200, bedDepth: 200,
+    bedOf: () => ({ w: 200, d: 200, center: { x: 0, y: 0 } }),
+    settings: { wipe_tower_x: [-10], wipe_tower_y: [-10] },
+    modelBounds: () => ({ minX: 0, maxX: 10, minY: 0, maxY: 10, height: 5 }),
+    plateOrigin: () => ({ x: 0, z: 0 }),
+  })
+  assert.deepEqual([boxes[0].x, boxes[0].y], [0, 0], 'a tower corner at the printer (-10,-10) centres a 20mm box on the bed centre')
+}
+
 console.log('tower_layout: ok')

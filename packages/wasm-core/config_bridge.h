@@ -30,7 +30,7 @@ struct WipeTowerBlock {
     double             filament_mm = 0.0;
     bool               ok = false;
 };
-WipeTowerBlock wipe_tower_block(double bed_w, double bed_d, double first_layer_h, double layer_h,
+WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_w, double bed_d, double first_layer_h, double layer_h,
                                 double z, bool is_first_layer, int old_tool, int new_tool,
                                 double tower_x, double tower_y, double tower_width,
                                 double filament_diameter,
