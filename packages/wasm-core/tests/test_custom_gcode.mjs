@@ -7,6 +7,7 @@
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
 import { CUSTOM_GCODE_KEYS } from '../../../viewer-package/src/settings/settings_core.js'
+import { schema } from '../../engine/src/data.js'
 
 let failures = 0
 const ok = (condition, message) => {
@@ -105,13 +106,21 @@ console.log('[streamed] the worker slices through the layer sink; the chunks joi
 console.log('[CUSTOM_GCODE_KEYS] every key the host gates on is one the kernel expands')
 // settings_core.js decides when to send the settings by these keys and custom_gcode.cpp names the templates it
 //  expands; the two sides are in different languages, so this is what keeps them the same list.
+// change_filament_gcode runs at a tool change, so it is checked on the two-box multi-material slice.
+const mmBoxes = trisToSTL([...boxTris(-13, -5, 0, 10, 10, 4), ...boxTris(3, -5, 0, 10, 10, 4)])
 for (const key of CUSTOM_GCODE_KEYS) {
   const template = `; marker ${key} [total_layer_count]`
+  const toolChange = key === 'change_filament_gcode'
   const onlyThis = { ...settings, machine_start_gcode: '', machine_end_gcode: '', filament_end_gcode: [''] }
-  if (key === 'filament_end_gcode') onlyThis[key] = [template]
+  if (toolChange) Object.assign(onlyThis, { filament_type: ['PLA', 'PETG'], nozzle_temperature: ['210', '230'], filament_end_gcode: ['', ''] })
+  // A per-filament template (coStrings: filament_start/end_gcode) is one entry per filament.
+  if (schema[key]?.type === 'coStrings') onlyThis[key] = [template]
   else onlyThis[key] = template
-  const run = slice({ ...params, machine_start_gcode: onlyThis.machine_start_gcode, machine_end_gcode: onlyThis.machine_end_gcode,
-                      placeholder_config: JSON.stringify(onlyThis) })
+  const keyParams = { ...params, machine_start_gcode: onlyThis.machine_start_gcode, machine_end_gcode: onlyThis.machine_end_gcode,
+                      placeholder_config: JSON.stringify(onlyThis) }
+  let stl = cube
+  if (toolChange) { Object.assign(keyParams, { extruder_count: 2, mm_group_split: 12 }); stl = mmBoxes }
+  const run = slice(keyParams, stl)
   ok(new RegExp(`; marker ${key} \\d+`).test(run.gcode ?? ''), `${key} is expanded by the kernel`)
 }
 
@@ -141,10 +150,10 @@ const mmSettings = { ...settings, filament_type: ['PLA', 'PETG'], nozzle_tempera
 const mm = slice(withConfig(mmSettings, { extruder_count: 2, mm_group_split: A.length }), twoBoxes)
 ok(!mm.error, `multi-material slices (${mm.error ?? 'no error'})`)
 const changes = Number(/; changes (\d+) used (\w+)/.exec(mm.gcode ?? '')?.[1])
-const toolChanges = (mm.gcode.match(/^T\d+$/gm) ?? []).length
-ok(changes === toolChanges && changes > 0, `total_toolchanges = the T commands written (${changes} vs ${toolChanges})`)
+const toolChanges = (mm.gcode.match(/^T\d+$/gm) ?? []).length - 1   // the first selection is a T command too
+ok(changes === toolChanges && changes > 0, `total_toolchanges = the T commands written after the first (${changes} vs ${toolChanges})`)
 ok(/; changes \d+ used true/.test(mm.gcode), 'is_extruder_used marks the second filament (a bool prints as true)')
-ok(mm.gcode.indexOf('; machine_start_gcode') < mm.gcode.indexOf('T0 ; start extruder'), 'the start block precedes the first tool select')
+ok(mm.gcode.indexOf('; machine_start_gcode') < mm.gcode.search(/^T0$/m), 'the start block precedes the first tool select')
 ok(mm.gcode.includes('; end A') && mm.gcode.includes('; end B'), 'every filament_end_gcode is written')
 
 console.log('[first filaments] per physical extruder, as cal_non_support_filaments + physical_extruder_map set them')
