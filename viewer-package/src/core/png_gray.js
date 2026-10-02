@@ -1,5 +1,5 @@
-// Gray8 PNG encoder for SL1 masks. The canvas encoder this replaces emits RGBA, which upstream's
-//  SL1 reader REJECTS (PNGReadWrite.cpp:100 requires PNG_COLOR_TYPE_GRAY at bit depth 8) — so this
+// PNG encoder: gray8 for SL1 masks, RGBA for G-code thumbnails (encodeRgba8). For the masks, the canvas encoder this
+//  replaced emitted RGBA, which upstream's SL1 reader REJECTS (PNGReadWrite.cpp:100 requires PNG_COLOR_TYPE_GRAY at bit depth 8) — so this
 //  is a format-parity fix first and an encoder second. Filter 0 on every scanline: a mask is long
 //  runs of 0x00/0xff and measured 11KB either way, so smarter filters buy nothing here.
 // Compression: CompressionStream('deflate') — the SAME native API in browsers and node (and 'deflate'
@@ -57,6 +57,31 @@ const nativeDeflate = async (bytes) => {
   return out
 }
 
+// One PNG of 8-bit samples: IHDR, the scanlines (filter 0 each) deflated into one IDAT, IEND.
+async function encode8(pixels, width, height, colorType, channels, opts) {
+  const ihdr = new Uint8Array(13)
+  const dv = new DataView(ihdr.buffer)
+  dv.setUint32(0, width)
+  dv.setUint32(4, height)
+  ihdr[8] = 8           // bit depth
+  ihdr[9] = colorType   // 0 grayscale, 6 RGBA
+  const stride = width * channels
+  // scanlines with the filter-0 byte prefixed per row
+  const raw = new Uint8Array(height * (1 + stride))
+  for (let y = 0; y < height; y++) raw.set(pixels.subarray(y * stride, (y + 1) * stride), y * (1 + stride) + 1)
+  let idat
+  if (typeof CompressionStream !== 'undefined') idat = await nativeDeflate(raw)
+  else if (opts.deflate) idat = opts.deflate(raw)
+  else throw new Error('png: no CompressionStream and no deflate fallback injected')
+  const parts = [SIG, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', new Uint8Array(0))]
+  let total = 0
+  for (const p of parts) total += p.length
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const p of parts) { out.set(p, at); at += p.length }
+  return out
+}
+
 /**
  * Gray8 pixels -> PNG bytes (color type 0, bit depth 8 — the one layout upstream's SL1 reader accepts).
  * @param {Uint8Array} gray  w*h luminance bytes, row-major
@@ -68,23 +93,16 @@ const nativeDeflate = async (bytes) => {
  */
 export async function encodeGray8(gray, width, height, opts = {}) {
   if (gray.length !== width * height) throw new Error(`gray8: ${gray.length} bytes for ${width}x${height}`)
-  const ihdr = new Uint8Array(13)
-  const dv = new DataView(ihdr.buffer)
-  dv.setUint32(0, width)
-  dv.setUint32(4, height)
-  ihdr[8] = 8    // bit depth
-  ihdr[9] = 0    // color type: grayscale
-  // scanlines with the filter-0 byte prefixed per row
-  const raw = new Uint8Array(height * (1 + width))
-  for (let y = 0; y < height; y++) raw.set(gray.subarray(y * width, (y + 1) * width), y * (1 + width) + 1)
-  const idat = typeof CompressionStream !== 'undefined' ? await nativeDeflate(raw)
-    : opts.deflate ? opts.deflate(raw)
-      : (() => { throw new Error('gray8: no CompressionStream and no deflate fallback injected') })()
-  const parts = [SIG, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', new Uint8Array(0))]
-  let total = 0
-  for (const p of parts) total += p.length
-  const out = new Uint8Array(total)
-  let at = 0
-  for (const p of parts) { out.set(p, at); at += p.length }
-  return out
+  return encode8(gray, width, height, 0, 1, opts)
+}
+
+/**
+ * RGBA pixels -> PNG bytes (color type 6, bit depth 8): the G-code thumbnails (thumbnails.js), upstream's PNG
+ * thumbnail layout. Same options as encodeGray8.
+ * @param {Uint8Array} rgba  w*h*4 bytes, row-major, top row first
+ * @returns {Promise<Uint8Array>}
+ */
+export async function encodeRgba8(rgba, width, height, opts = {}) {
+  if (rgba.length !== width * height * 4) throw new Error(`rgba8: ${rgba.length} bytes for ${width}x${height}`)
+  return encode8(rgba, width, height, 6, 4, opts)
 }
