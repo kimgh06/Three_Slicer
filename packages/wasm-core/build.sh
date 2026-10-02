@@ -115,7 +115,7 @@ TS_UNIQUE_SRC="
   $TL/Geometry/ConvexHull.cpp $TL/Geometry/Circle.cpp
   $TL/Geometry/VoronoiOffset.cpp $TL/ExPolygonsIndex.cpp
   $TL/Fill/Lightning/DistanceField.cpp $TL/Fill/Lightning/Generator.cpp $TL/Fill/Lightning/Layer.cpp $TL/Fill/Lightning/TreeNode.cpp
-  $TL/PlaceholderParser.cpp $TL/utils_utf8.cpp $TL/custom_gcode_bridge_impl.cpp
+  $TL/PlaceholderParser.cpp $TL/utils_utf8.cpp $TL/custom_gcode_bridge_impl.cpp $TL/settings_json_impl.cpp $TL/GCode/CoolingBuffer.cpp $TL/cooling_bridge_impl.cpp
 "
 TS_INC="-Iarachne_port/cgal_stubs -I$TS -I$TL -I$TL/Support -Ithird_party/deps_src -Ithird_party/deps_src/libnest2d/include -Ithird_party/deps_src/libigl -Ithird_party/deps_src/clipper2/Clipper2Lib/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
 # ---- Parallel compile helper: compile one .o per source, as many at a time as there are cores (previously: a single em++ call = sequential compilation) ----
