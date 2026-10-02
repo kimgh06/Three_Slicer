@@ -49,12 +49,38 @@ struct Expanded {
 Expanded expand(const std::string& key, const std::string& templ, int current_extruder,
                 int layer_num = -1, double layer_z = 0.0, double max_layer_z = 0.0, int filament_extruder_id = -1);
 
+// A template with named variables on top of the session's: GCode::placeholder_parser_process's config_override,
+//  for the templates whose variables are not the end G-code's (the layer change, the filament start).
+struct Variable { std::string name; double value; bool integer; };
+Expanded expand_with(const std::string& key, const std::string& templ, int current_extruder, const std::vector<Variable>& variables);
+// PlaceholderParserIntegration::update_from_gcodewriter's totals before a template runs: the extruded volume (mm3)
+//  per filament so far, from which extruded_weight(_total) follow by filament_density.
+void set_extruded_volumes(const std::vector<double>& mm3_by_filament);
+// file_start_gcode as GCode::_do_export writes it (GCode.cpp:2877): at the very top, with print_time_sec and
+//  used_filament_length set to upstream's reserved tags (@PRINT_TIME_SEC@, @USED_FILAMENT_LENGTH@), which the host
+//  replaces once the estimate exists (finalizeGcode).
+Expanded expand_file_start();
+// The printed mass so far (grams), extruded_weight_total.
+double extruded_weight_total();
+// GCode::mass_load_limited_machine_acceleration (GCode.cpp:5038) for a printed mass in grams.
+void y_acceleration_limit(double mass_g, double& limit, double& accumulated);
+// Whether a template key holds text (for a per-filament key: any filament's).
+bool has_template(const std::string& key);
+// The filament's physical extruder (physical_extruder_map), and the logical one (filament_map, 0-based).
+int physical_extruder(int filament);
+int logical_extruder(int filament);
+// Whether the printer is a multi-nozzle one (an extruder_max_nozzle_count entry above 1).
+bool multi_nozzle_printer();
+
 // A template setting's values: one entry for a string option, one per filament for a strings option
 // (filament_end_gcode). Empty if the key is unknown.
 std::vector<std::string> strings(const std::string& key);
 
 // Whether the loaded settings describe a Bambu Lab printer (see begin() in the impl for how this is decided).
 bool is_bbl_printer();
+// The rule itself, for a caller that has the printer model but no session (the multi-material path writes its modes
+//  before the start block's session exists).
+bool is_bbl_model(const std::string& printer_model);
 
 // The temperature lines upstream writes around the start G-code: before it, the first-layer bed temperature
 // (M190) and the nozzle temperatures (M104) unless the expanded start G-code sets them itself
@@ -63,8 +89,39 @@ bool is_bbl_printer();
 struct TemperatureLines {
   std::string before;
   std::string after;
+  // The bed temperature upstream's writer believes is set once the block has run: the one it wrote, or the one the
+  //  template set itself (_print_first_layer_bed_temperature always updates the state). 0 on Klipper, where that
+  //  function is not called — so the second layer's M140 is always written there.
+  int bed_set = 0;
+  // The chamber block upstream writes between the role tag and the start G-code (GCode.cpp:3522), or "".
+  std::string chamber;
 };
 TemperatureLines start_temperatures(const std::string& expanded_start);
+
+// The filament the expanded start G-code leaves loaded (its last T line, GCodeProcessor::get_gcode_last_filament), or
+//  -1: the "previous" filament of the first tool change on a printer other than Bambu Lab's. On a Bambu Lab printer
+//  the writer starts with the first object filament loaded (init_extruder) and that change writes nothing.
+void note_start_gcode(const std::string& expanded_start, int initial_filament);
+
+// One tool change, as GCode::set_extruder (GCode.cpp:8714) writes it without a wipe tower and append_tcr
+//  (GCode.cpp:956-1440) with one. The kernel records where the change happens and the session supplies the rest
+//  from the settings, in print order (the tool change count and the filament each extruder last held are state).
+struct Toolchange {
+  int to = 0;                 // the filament switched to (0-based); the session knows the one loaded
+  int layer = 0;              // m_layer_index
+  double layer_z = 0.0;       // the print_z of the change
+  double max_layer_z = 0.0;
+  double x = 0.0, y = 0.0, z = 0.0;   // the nozzle where the change starts, printer frame
+  bool tower = false;         // the change purges into the prime tower (append_tcr's variables)
+  double purge_mm3 = 0.0;     // with the tower: the volume it purges
+  double tower_x = 0.0, tower_y = 0.0;   // with the tower: where its block starts
+};
+struct ToolchangeText {
+  std::string end, change, start;   // filament_end_gcode, change_filament_gcode with the T command, filament_start_gcode
+  double pressure_advance = -1.0;   // the new filament's pressure advance when it enables it, else -1
+  std::string error;
+};
+ToolchangeText expand_toolchange(const Toolchange& change);
 
 void end();
 
