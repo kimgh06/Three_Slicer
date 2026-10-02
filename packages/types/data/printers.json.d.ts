@@ -24,6 +24,9 @@ export interface PrinterData {
   text?: unknown[]
   /** Vendor -> printer profile name -> entry */
   byVendor: Record<string, Record<string, PrinterEntry>>
+  /** The abstract machine presets (`instantiation: false`) by name: not offered for picking, but resolvable as
+   *  the parent a user preset file `inherits` */
+  parents?: Record<string, PrinterEntry>
 }
 
 declare const printers: PrinterData

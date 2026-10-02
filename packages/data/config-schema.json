@@ -2798,8 +2798,7 @@
   "default_type": "Floats",
   "default_raw": "60.0f",
   "default": [
-   60.0,
-   "f"
+   60.0
   ]
  },
  "default_filament_colour": {
@@ -4050,8 +4049,7 @@
   "default_type": "FloatsNullable",
   "default_raw": "0.f",
   "default": [
-   0.0,
-   "f"
+   0.0
   ]
  },
  "outer_wall_jerk": {
@@ -5993,8 +5991,7 @@
   "default_type": "Floats",
   "default_raw": "0.01f",
   "default": [
-   0.01,
-   "f"
+   0.01
   ]
  },
  "machine_min_extruding_rate": {
@@ -8043,8 +8040,7 @@
   "default_type": "Floats",
   "default_raw": "5.0f",
   "default": [
-   5.0,
-   "f"
+   5.0
   ]
  },
  "minimum_sparse_infill_area": {
@@ -9593,21 +9589,13 @@
   "default_raw": "140.f, 140.f, 140.f, 140.f, 140.f, 140.f, 140.f, 140.f",
   "default": [
    140.0,
-   "f",
    140.0,
-   "f",
    140.0,
-   "f",
    140.0,
-   "f",
    140.0,
-   "f",
    140.0,
-   "f",
    140.0,
-   "f",
-   140.0,
-   "f"
+   140.0
   ]
  },
  "flush_volumes_matrix": {
@@ -9620,37 +9608,21 @@
   "default_raw": "0.f, 280.f, 280.f, 280.f, 280.f, 0.f, 280.f, 280.f, 280.f, 280.f, 0.f, 280.f, 280.f, 280.f, 280.f, 0.f",
   "default": [
    0.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    0.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    0.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
    280.0,
-   "f",
-   0.0,
-   "f"
+   0.0
   ]
  },
  "flush_multiplier": {
