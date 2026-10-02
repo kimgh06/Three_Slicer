@@ -9,6 +9,13 @@ export interface GcodeLayer {
   widths: Float32Array
 }
 
+/**
+ * Fills the placeholders a slice leaves for its finished estimate, as upstream's GCodeProcessor post-process does:
+ * the M73 progress lines (`;_GP_FIRST_LINE_M73_PLACEHOLDER` / `;_GP_LAST_LINE_M73_PLACEHOLDER`, one M73 per layer
+ * start) and file_start_gcode's `@PRINT_TIME_SEC@` / `@USED_FILAMENT_LENGTH@`. A G-code without them is returned as is.
+ */
+export function finalizeGcode(gcode: string, stats: { time_estimate?: number; filament_mm?: number; layer_times?: number[] } | null | undefined): string
+
 export interface ParseGcodeResult {
   layers: GcodeLayer[]
   stats: {

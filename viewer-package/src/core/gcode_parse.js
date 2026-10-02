@@ -13,6 +13,8 @@
 import { DEFAULT_FILAMENT_DIAMETER, DEFAULT_LAYER_HEIGHT } from './viewer_defaults.js'
 import { ROLE, encodeRole } from './toolpath_encoding.js'
 import { TOOL_COLOR } from './toolpath_palette.js'
+// The placeholders the kernel leaves for the finished estimate (M73 progress, file_start_gcode's totals).
+export { finalizeGcode } from './finalize_gcode.js'
 
 const EPS = 1e-6
 // Upstream's highest real tool id (GCodeProcessor::process_T). Bambu start/end G-code carries T255, T1000, T1001,
