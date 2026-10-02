@@ -10,6 +10,8 @@
 // (plate_actions.js deletePlate), so truncation IS the erase and no middle-of-the-list remap exists.
 // If middle deletion is ever added, ownership must move with the plate content, not stay at the raw index.
 
+import { bedOrigin, bedCenter, bedShapeLocal } from '../settings/bed_frame.js'
+
 /**
  * Keys a plate override may never carry. EMPTY since the heterogeneous-bed stage: `printable_area`/
  * `printable_height` were blocked while the plate grid was uniform (an override would have sliced with a frame
@@ -36,6 +38,8 @@ export function plateTechnology(settings, plateSettings, plate) {
  *   tech        'FFF' | 'SLA', from that map
  *   params      the derived parameters of that technology
  *   bedW/bedD/bedH   the frame the kernel enforces: the resin display (height 0 — it states no ceiling) or the bed
+ *   origin/center    that frame's lower-left corner and centre in printer coordinates (settings bedOrigin/bedCenter)
+ *   shape       the bed outline in plate-local points when it is not a rectangle (a delta's circle), else null
  *   nozzle      the nozzle diameter (FFF), undefined under SLA
  *
  * Pass `plateSettings` null for the GLOBAL frame — what is laid out once (the uniform grid cell, a project
@@ -48,10 +52,17 @@ export function plateContext(settings, plateSettings, plate, { fffDims, slaDims 
   const tech = effective.printer_technology === 'SLA' ? 'SLA' : 'FFF'
   if (tech === 'SLA') {
     const params = slaDims?.(effective) ?? {}
-    return { effective, tech, params, bedW: params.display_width, bedD: params.display_height, bedH: 0 }
+    const display = { bed_width: params.display_width, bed_depth: params.display_height }
+    return { effective, tech, params, bedW: params.display_width, bedD: params.display_height, bedH: 0,
+             origin: bedOrigin(display), center: bedCenter(display) }
   }
   const params = fffDims?.(effective) ?? {}
-  return { effective, tech, params, bedW: params.bed_width, bedD: params.bed_depth, bedH: params.bed_height ?? 0, nozzle: params.nozzle_diameter }
+  const center = bedCenter(params)
+  const shape = bedShapeLocal(effective.printable_area, center)
+  // shapeKey: the outline as a string, for effects that must rerun when only the outline changes (the frame itself is
+  //  rebuilt every render, so the array cannot be a dependency).
+  return { effective, tech, params, bedW: params.bed_width, bedD: params.bed_depth, bedH: params.bed_height ?? 0, nozzle: params.nozzle_diameter,
+           origin: bedOrigin(params), center, shape, shapeKey: String(shape?.flat() ?? '') }
 }
 
 /**
@@ -62,7 +73,7 @@ export function plateContext(settings, plateSettings, plate, { fffDims, slaDims 
 export function plateBedBounds(settings, plateSettings, plate, globalBounds, slaDims, fffDims) {
   const frame = plateContext(settings, plateSettings, plate, { fffDims, slaDims })
   if (!(frame.bedW > 0 && frame.bedD > 0)) return globalBounds
-  return { bedW: frame.bedW, bedD: frame.bedD, bedH: frame.bedH ?? globalBounds?.bedH ?? 0 }
+  return { bedW: frame.bedW, bedD: frame.bedD, bedH: frame.bedH ?? globalBounds?.bedH ?? 0, shape: frame.shape ?? null }
 }
 
 /**
@@ -75,7 +86,8 @@ export function plateDimsList(settings, plateSettings, plateCount, globalDims, f
   const out = []
   for (let plate = 0; plate < plateCount; plate++) {
     const bounds = plateBedBounds(settings, plateSettings, plate, null, slaDims, fffDims)
-    out.push(bounds ? { w: bounds.bedW, d: bounds.bedD } : globalDims)
+    if (!bounds) { out.push(globalDims); continue }
+    out.push({ w: bounds.bedW, d: bounds.bedD, shape: bounds.shape ?? null })
   }
   return out
 }

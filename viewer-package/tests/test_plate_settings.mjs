@@ -187,6 +187,17 @@ check('an SLA plate reports its display with no ceiling and no nozzle', (() => {
   const c = plateContext({}, mixedPs, 1, both)
   return c.tech === 'SLA' && c.bedW === 120.96 && c.bedD === 68.04 && c.bedH === 0 && c.nozzle === undefined
 })())
+// The bed's corner reaches the kernel only when it is not (0,0) (the omission rule), and the plate frame carries the
+//  printer-coordinate origin and centre every stored printer coordinate converts through (settings bed_frame.js).
+check('a bed from (0,0) sends no origin', !('bed_origin_x' in deriveKernelParams({ printable_area: [[0, 0], [200, 0], [200, 200], [0, 200]] })))
+check('a delta bed sends its corner', (() => {
+  const p = deriveKernelParams({ printable_area: [[-185, -185], [185, -185], [185, 185], [-185, 185]] })
+  return p.bed_origin_x === -185 && p.bed_origin_y === -185 && p.bed_width === 370
+})())
+check('the plate frame carries the bed centre in printer coordinates', (() => {
+  const c = plateContext({ printable_area: [[5, -10], [305, -10], [305, 290], [5, 290]] }, null, 0, { fffDims: deriveKernelParams })
+  return c.origin.x === 5 && c.origin.y === -10 && c.center.x === 155 && c.center.y === 140
+})())
 check('the global frame is plateSettings null', plateContext({ printer_technology: 'SLA', display_width: 120, display_height: 68 }, null, 0, both).bedW === 120)
 check('plateBedBounds is the context frame', (() => {
   const b = plateBedBounds({ printer_technology: 'SLA' }, { 1: { printer_technology: 'FFF' } }, 1, { bedW: 120, bedD: 68, bedH: 0 }, dims, fffDimsStub)
