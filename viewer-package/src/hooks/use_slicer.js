@@ -2,7 +2,8 @@ import { log } from '../core/log.js'
 import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
+import { deriveKernelParams, deriveSlaParams, settingRaw, bedCenter, bedOrigin } from 'three-slicer-viewer/settings'
+import { finalizeGcode } from '../core/finalize_gcode.js'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
@@ -187,12 +188,14 @@ export function useSlicer(deps) {
   }
   // Stage 30: assemble the streamed result — when streamed, g-code/layers already arrived as 'layer', so they are built from the accumulator.
   //  batch/MM keep gcode+layers in result as before. Economy mode yields an empty layers array (no toolpath) and g-code only.
+  //  Either way the G-code then gets what upstream writes once the estimate exists (finalizeGcode: M73, file totals).
   function assembleResult(result, a = streamAccumRef.current) {
     if (result && result.stats && result.stats.streamed) {
       a = a || { layers: [], gcode: [] }
       // Spread first: fields beside the stream (the SLA solid meshes) must survive assembly.
-      return { ...result, stats: result.stats, layers: a.layers, gcode: a.gcode.join('') }
+      return { ...result, stats: result.stats, layers: a.layers, gcode: finalizeGcode(a.gcode.join(''), result.stats) }
     }
+    if (result && typeof result.gcode === 'string' && result.stats) return { ...result, gcode: finalizeGcode(result.gcode, result.stats) }
     return result
   }
   function handleResult(result) {
@@ -428,7 +431,7 @@ export function useSlicer(deps) {
     //  arrays index by it. With no override `effective` IS `settings` (same reference), so the pre-feature
     //  behaviour is preserved byte for byte.
     const effective = effectiveSettings(settings, plateSettings, merged.plate)
-    const params = deriveKernelParams(effective, { plate: merged.plate })
+    const params = deriveKernelParams(effective, { plate: merged.plate, objectNames: merged.members?.map(member => member.name) })
     // Ring or the real WipeTower: `wipe_tower_real` is a viewer knob in the settings map (not a schema key, like
     //  sla_antialias), so it follows the plate override like every other tower setting. It used to be component
     //  state — one mode for every plate, lost on reload.
@@ -496,12 +499,13 @@ export function useSlicer(deps) {
       //  difference stays: the slice keeps AUTO_EDGE_MARGIN_MM inside the bed edge, the stand-in clamps flush.
       const towerSide = towerFootprint(params, params.wipe_tower_real ?? true)
       const bedWidth = params.bed_width ?? DEFAULT_BED.width, bedDepth = params.bed_depth ?? DEFAULT_BED.depth
-      // Slice frame -> bed frame is one addition (the kernel's own gw.offX), and both boxes are now in it.
-      const modelLeft = merged.minX + bedWidth / 2, modelMiddleY = (merged.minY + merged.maxY) / 2 + bedDepth / 2
-      const lowestCorner = AUTO_EDGE_MARGIN_MM
-      const highestCornerX = bedWidth - towerSide - AUTO_EDGE_MARGIN_MM, highestCornerY = bedDepth - towerSide - AUTO_EDGE_MARGIN_MM
-      params.prime_tower_x = Math.min(Math.max(modelLeft - AUTO_GAP - towerSide, lowestCorner), highestCornerX)
-      params.prime_tower_y = Math.min(Math.max(modelMiddleY - towerSide / 2, lowestCorner), highestCornerY)
+      // Slice frame -> printer frame is one addition, the bed centre (the kernel's own gw.offX), and both boxes are in it.
+      const center = bedCenter(params), origin = bedOrigin(params)
+      const modelLeft = merged.minX + center.x, modelMiddleY = (merged.minY + merged.maxY) / 2 + center.y
+      const lowestCornerX = origin.x + AUTO_EDGE_MARGIN_MM, lowestCornerY = origin.y + AUTO_EDGE_MARGIN_MM
+      const highestCornerX = origin.x + bedWidth - towerSide - AUTO_EDGE_MARGIN_MM, highestCornerY = origin.y + bedDepth - towerSide - AUTO_EDGE_MARGIN_MM
+      params.prime_tower_x = Math.min(Math.max(modelLeft - AUTO_GAP - towerSide, lowestCornerX), highestCornerX)
+      params.prime_tower_y = Math.min(Math.max(modelMiddleY - towerSide / 2, lowestCornerY), highestCornerY)
     }
     // Two ways a painted model slices exactly like an unpainted one, both of them by design and neither of them
     //  visible in the result — the export just comes out single-material. Said here, at the one place that knows

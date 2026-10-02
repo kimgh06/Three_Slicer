@@ -304,8 +304,8 @@ export default function Viewport({
       const o = apiRef.current?.platePos?.(idx) ?? { x: 0, z: 0 }
       const frame = frameOf(idx)
       // Kept on the plate's bed: a drop past the edge lands at the edge instead of slicing a tower off the bed.
-      const [bedX, bedY] = clampTowerPosition(x - o.x + frame.bedW / 2, y + o.z + frame.bedD / 2,
-        { bedW: frame.bedW, bedD: frame.bedD, size: towerFootprint(frame.params, !!frame.effective.wipe_tower_real) })
+      const [bedX, bedY] = clampTowerPosition(x - o.x + frame.center.x, y + o.z + frame.center.y,
+        { bedW: frame.bedW, bedD: frame.bedD, origin: frame.origin, size: towerFootprint(frame.params, !!frame.effective.wipe_tower_real) })
       setSettings(s => writeTowerPosition(s, idx, plateCountRef.current,
         Math.round(bedX * 10) / 10, Math.round(bedY * 10) / 10))
     },
@@ -316,7 +316,7 @@ export default function Viewport({
   const frameOf = (plate) => plateContext(settingsRef.current, plateSettingsRef.current, plate, DIMS)
   // The global frame in ref form for the 3mf writer's plate stride (uniform by construction — mixed beds are refused).
   const bedRef = useRef({ bedW: DEFAULT_BED.width, bedD: DEFAULT_BED.depth, bedH: 0 })
-  bedRef.current = { bedW: globalFrame.bedW, bedD: globalFrame.bedD, bedH: globalFrame.bedH }
+  bedRef.current = { bedW: globalFrame.bedW, bedD: globalFrame.bedD, bedH: globalFrame.bedH, origin: globalFrame.origin }
   // checkBed rides along because the bed can change WITHOUT anything moving — a printer pick, or the FFF->SLA
   //  switch (the resin display is a fraction of a filament bed); a stale null here hid the over-bed state until
   //  the slice reported it, which surfaced as an Export button disabled for no visible reason.
@@ -324,17 +324,17 @@ export default function Viewport({
     const moved = apiRef.current?.setPlates(plateCount, globalFrame.bedW, globalFrame.bedD, selectedPlate, plateDimsList(settings, plateSettings, plateCount, { w: globalFrame.bedW, d: globalFrame.bedD }, deriveKernelParams, deriveSlaParams))
     if (moved && selectorGeomRef.current) registerSelectorRef.current?.()   // objects followed their plates — same re-registration a drag commit runs
     if (moved) refreshObjects(); else checkBed()   // refreshObjects re-annotates plate membership and runs checkBed itself
-  }, [globalFrame.bedW, globalFrame.bedD, plateCount, selectedPlate, plateSettings])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [globalFrame.bedW, globalFrame.bedD, globalFrame.shapeKey, plateCount, selectedPlate, plateSettings])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Does this fit on the bed?" for the plate on screen — reads refs only (the scene installs handlers once).
   function checkBed() {
     const api = apiRef.current; if (!api) { setBedOver(null); return }
     const plate = selectedPlateRef.current
-    const { bedW, bedD, bedH } = frameOf(plate)   // the plate's own frame — display or bed
+    const { bedW, bedD, bedH, shape } = frameOf(plate)   // the plate's own frame — display or bed
     const origin = api.platePos?.(plate) ?? { x: 0, z: 0 }
-    setBedOver(bedOverflow(api.modelBounds?.(plate), origin, bedW, bedD, bedH))
+    setBedOver(bedOverflow(api.modelBounds?.(plate), origin, bedW, bedD, bedH, { shape, footprint: shape && api.modelFootprint?.(plate) }))
   }
-  useEffect(checkBed, [objects.length, selectedPlate, plateSettings, globalFrame.bedW, globalFrame.bedD, globalFrame.bedH])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(checkBed, [objects.length, selectedPlate, plateSettings, globalFrame.bedW, globalFrame.bedD, globalFrame.bedH, globalFrame.shapeKey])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // The tower stand-in follows the same rules the slicer applies, PER PLATE: a plate gets a tower when it changes
   //  tools itself, its effective settings leave the tower on, and it is not resin; its footprint is its own derived
@@ -361,7 +361,7 @@ export default function Viewport({
     const towerOn = (effective) => !('enable_prime_tower' in effective) || !!effective.enable_prime_tower
     api.setPrimeTower?.(towerBoxes({
       plateCount, settings,
-      bedOf: (plate) => ({ w: frames[plate].bedW, d: frames[plate].bedD }),
+      bedOf: (plate) => ({ w: frames[plate].bedW, d: frames[plate].bedD, center: frames[plate].center }),
       towerOf: (plate) => ({
         on: frames[plate].tech !== 'SLA' && towerOn(frames[plate].effective) && changesTools(plate),
         size: towerFootprint(frames[plate].params, !!frames[plate].effective.wipe_tower_real),
@@ -846,7 +846,7 @@ export default function Viewport({
                 <Panel panels={panels} name="towerCard">
                 <TowerCard settings={settings} setSettings={setSettings} extruderColors={extruderColors} {...scopeProps}
                   towerStats={towerStats}
-                  towerFrame={{ bedW: ctx.bedW, bedD: ctx.bedD, size: towerFootprint(ctx.params, !!ctx.effective.wipe_tower_real) }} />
+                  towerFrame={{ bedW: ctx.bedW, bedD: ctx.bedD, origin: ctx.origin, size: towerFootprint(ctx.params, !!ctx.effective.wipe_tower_real) }} />
                 </Panel>
 )}
               {triWarn && <div className="slice-warn side-warn">⚠ {triWarn}</div>}
