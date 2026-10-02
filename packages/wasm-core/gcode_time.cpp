@@ -340,6 +340,9 @@ struct Estimator::Impl {
         if (starts(b, len, "M82", 3)) { e_relative = false; return; }
         if (starts(b, len, "G91", 3)) { xyz_absolute = false; return; }
         if (starts(b, len, "G90", 3)) { xyz_absolute = true; return; }
+        // G92 sets the position without moving: in absolute E mode the next E word counts from it (the kernel writes
+        //  G92 E0 after every retraction and at every layer there).
+        if (starts(b, len, "G92", 3)) { AxisVals a; parse_axes(b, e, a); if (a.has[PE]) pos[AE] = a.v[PE]; return; }
         // motion: G0 / G1 / G2 / G3
         bool g2 = gword(b, len, '2'), g3 = gword(b, len, '3');
         if (!(gword(b, len, '0') || gword(b, len, '1') || g2 || g3)) return;
