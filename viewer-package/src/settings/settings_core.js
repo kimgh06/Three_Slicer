@@ -66,8 +66,12 @@ const PASSTHROUGH_NUM = [
   'scarf_joint_flow_ratio', 'outer_wall_flow_ratio', 'inner_wall_flow_ratio', 'sparse_infill_flow_ratio',
   'internal_solid_infill_flow_ratio', 'gap_fill_flow_ratio', 'support_flow_ratio', 'support_interface_flow_ratio',
   'first_layer_flow_ratio',
+  // Added to every Z the G-code writes (upstream's GCodeWriter).
+  'z_offset',
 ]
 const PASSTHROUGH_BOOL = ['independent_support_layer_height',
+  // The machine's E mode and firmware retraction (upstream GCodeWriter), each a printer profile option.
+  'use_relative_e_distances', 'use_firmware_retraction',
   'detect_thin_wall', 'precise_outer_wall', 'only_one_wall_first_layer', 'alternate_extra_wall',
   // thick_bridges picks upstream's round bridge thread; set_other_flow_ratios turns the per-role ratios on.
   'thick_bridges', 'set_other_flow_ratios']
@@ -82,6 +86,28 @@ const PASSTHROUGH_STR = ['wall_sequence', 'wall_direction']
 //  kernel reads its first entry, the wall filament's on the single-material path. filament_max_volumetric_speed caps
 //  every extrusion's speed as upstream does (GCode.cpp:7492).
 const PASSTHROUGH_NUM_VECTOR = ['filament_map', 'filament_density', 'filament_cost', 'gap_infill_speed', 'filament_max_volumetric_speed']
+// Per-role speed, acceleration and jerk, upstream's GCode::_extrude and travel_to (GCode.cpp:7292-7342, :7393-7473,
+//  :8289-8333). Sent under the upstream names, only when the map holds the key (or the map carries a custom G-code,
+//  see followsTemplate). A percent option is resolved against the option upstream takes it as a ratio over
+//  (PrintConfig ratio_over), the second entry. The kernel keeps print_speed for every role it gets no speed for, and
+//  writes no acceleration or jerk at all without default_acceleration / default_jerk.
+const MOTION_KEYS = [
+  ['inner_wall_speed'], ['sparse_infill_speed'], ['internal_solid_infill_speed'], ['top_surface_speed'],
+  ['support_speed'], ['support_interface_speed'], ['initial_layer_infill_speed'], ['skirt_speed'], ['slow_down_layers'],
+  ['small_perimeter_speed', 'outer_wall_speed'], ['small_perimeter_threshold'],
+  ['initial_layer_travel_speed', 'travel_speed'],
+  ['default_acceleration'], ['outer_wall_acceleration'], ['inner_wall_acceleration'], ['top_surface_acceleration'],
+  ['sparse_infill_acceleration', 'default_acceleration'], ['internal_solid_infill_acceleration', 'default_acceleration'],
+  ['bridge_acceleration', 'outer_wall_acceleration'], ['initial_layer_acceleration'], ['travel_acceleration'],
+  ['initial_layer_travel_acceleration', 'travel_acceleration'],
+  ['default_jerk'], ['outer_wall_jerk'], ['inner_wall_jerk'], ['top_surface_jerk'], ['infill_jerk'], ['initial_layer_jerk'],
+  ['travel_jerk'], ['initial_layer_travel_jerk', 'travel_jerk'],
+  // The writer's clamps (GCodeWriter::apply_print_config) and Klipper's ACCEL_TO_DECEL.
+  ['machine_max_acceleration_extruding'], ['machine_max_acceleration_travel'], ['machine_max_acceleration_y'], ['machine_max_jerk_y'],
+  ['accel_to_decel_factor'],
+]
+const MOTION_BOOLS = ['accel_to_decel_enable']
+
 // Material identity. The kernel needs the type for the two decisions upstream makes by material name (PETG's
 //  extra unretract, TPU on the first layer) and the settings id for the footer.
 const PASSTHROUGH_STR_VECTOR = ['filament_type', 'filament_settings_id']
@@ -215,21 +241,52 @@ export function serializeProjectSettings(settings) {
 //  project_settings.config stores (serializeProjectSettings), as one JSON string: the kernel's flat key search
 //  never looks inside a string value, so no key in it can be taken for a kernel parameter the map omits.
 //  The kernel names the same templates in custom_gcode.cpp; test_custom_gcode.mjs checks each key here is expanded there.
-export const CUSTOM_GCODE_KEYS = ['machine_start_gcode', 'machine_end_gcode', 'filament_end_gcode']
+export const CUSTOM_GCODE_KEYS = ['machine_start_gcode', 'machine_end_gcode', 'filament_end_gcode', 'filament_start_gcode',
+  'before_layer_change_gcode', 'layer_change_gcode', 'time_lapse_gcode', 'file_start_gcode', 'change_filament_gcode']
 
-function placeholderConfig(settings, plate) {
+// Whether the map carries a printer's custom G-code — the switch between the kernel's own raw path and upstream's
+//  full semantics, in which every option exists with its schema default (custom_gcode_bridge reads them that way).
+function hasCustomGcode(settings) {
   const hasText = key => [settings?.[key]].flat().some(value => String(value ?? '').trim() !== '')
-  if (!CUSTOM_GCODE_KEYS.some(hasText)) return {}
+  return CUSTOM_GCODE_KEYS.some(hasText)
+}
+
+function placeholderConfig(settings, plate, objectNames) {
+  if (!hasCustomGcode(settings)) return {}
   // upstream's Print::get_plate_number_formatted: the 1-based plate, zero-padded to two digits
   const plateNumber = String(plate + 1).padStart(2, '0')
-  return { placeholder_config: JSON.stringify({ ...serializeProjectSettings(settings), $plate_number: plateNumber }) }
+  // $object_names: the printable objects in merge order, from which the kernel derives upstream's object
+  //  placeholders (input_filename_base, first_object_name, num_objects — PrintBase::update_object_placeholders).
+  const objects = {}
+  if (objectNames?.length) objects.$object_names = objectNames.map(name => String(name ?? ''))
+  // The plate type the kernel's own temperatures follow (deriveKernelParams), so the template's bed temperature and
+  //  the second layer's agree about what the bed was heated to.
+  const bedType = { curr_bed_type: settings?.curr_bed_type ?? DEFAULT_BED_TYPE }
+  return { placeholder_config: JSON.stringify({ ...serializeProjectSettings({ ...settings, ...bedType }), $plate_number: plateNumber, ...objects }) }
+}
+
+// The bed temperature option of each plate type, upstream's get_bed_temp_key (PrintConfig.hpp:573). The first-layer
+//  option is the same key with `_initial_layer` (get_bed_temp_1st_layer_key).
+// The plate type a printer gets when it names none: upstream's Plater writes Preset::get_default_bed_type to
+//  curr_bed_type on every printer change, and that falls back to btPEI (Preset.cpp:993). The schema's own default
+//  ("Cool Plate") is never what a sliced printer runs with. hot_plate_temp is also the option this kernel always read.
+export const DEFAULT_BED_TYPE = 'High Temp Plate'
+const BED_TEMP_KEYS = {
+  'Supertack Plate': 'supertack_plate_temp', 'Cool Plate': 'cool_plate_temp', 'Textured Cool Plate': 'textured_cool_plate_temp',
+  'Engineering Plate': 'eng_plate_temp', 'High Temp Plate': 'hot_plate_temp', 'Textured PEI Plate': 'textured_plate_temp',
 }
 
 // Right-panel settings values -> kernel parameters (derived from schema keys)
 //  opts.plate: which plate's entry to take from per-plate array options (wipe_tower_x/y — upstream coFloats,
 //  one entry per plate). Defaults to 0, so every existing caller reads exactly what it always did.
+//  opts.objectNames: the merged objects' names, for the custom G-code's object placeholders (see placeholderConfig).
 export function deriveKernelParams(settings, opts) {
   const plate = opts?.plate ?? 0
+  // With a printer's custom G-code the kernel expands it against every option at its default (custom_gcode_bridge),
+  //  so the machine options it reads itself take their defaults too — otherwise the two halves of one G-code would
+  //  disagree. Without one, the omission rule: only keys the map holds are sent.
+  const followsTemplate = hasCustomGcode(settings)
+  const presentOrTemplate = (key) => followsTemplate || (settings != null && key in settings && settings[key] != null && settings[key] !== '')
   const S = k => settingScalar(settings, k)
   const str = k => String(S(k) ?? FFF_FALLBACKS[k])
   const num = (k, d = FFF_FALLBACKS[k]) => { const v = Number(S(k)); return Number.isFinite(v) ? v : d }
@@ -269,12 +326,17 @@ export function deriveKernelParams(settings, opts) {
   //  style never reached the kernel and every tree style sliced organic.
   const tree_style = { tree_slim: 'slim', tree_strong: 'strong', tree_hybrid: 'hybrid' }[styleRaw]
 
-  // Bed: bounding box of the first rectangle in printable_area
+  // Bed: bounding box of the first rectangle in printable_area. Its lower-left corner is sent only when it is not
+  //  (0,0) — a delta bed centred on the origin, or an offset cartesian one — so every bed that starts at the corner
+  //  keeps exactly the parameters it had (see bedCenter below for what the kernel does with it).
   const pa = settingRaw(settings, 'printable_area')
   let bed_width = BED_FALLBACK.width, bed_depth = BED_FALLBACK.depth
+  const bedOriginParams = {}   // read back through bedOrigin/bedCenter (bed_frame.js)
   if (Array.isArray(pa) && pa.length) {
     const xs = pa.map(p => p[0]), ys = pa.map(p => p[1])
     bed_width = Math.max(...xs) - Math.min(...xs); bed_depth = Math.max(...ys) - Math.min(...ys)
+    if (Math.min(...xs) !== 0) bedOriginParams.bed_origin_x = Math.min(...xs)
+    if (Math.min(...ys) !== 0) bedOriginParams.bed_origin_y = Math.min(...ys)
   }
 
   // Stage 21: per-feature widths — passed to the kernel verbatim (including strings like "120%"). Unedited keys are omitted -> the kernel derives auto(=line_width).
@@ -374,13 +436,58 @@ export function deriveKernelParams(settings, opts) {
     }
   }
 
+  const motion = {}
+  for (const [key, ratioOver] of MOTION_KEYS) {
+    if (!presentOrTemplate(key)) continue
+    const raw = settingScalar(settings, key)
+    let value = Number(raw)
+    // A percent of another option (ratio_over) resolves against it; a plain coPercent (accel_to_decel_factor "50%")
+    //  is the number itself.
+    if (typeof raw === 'string' && raw.trim().endsWith('%')) {
+      value = parseFloat(raw)
+      if (ratioOver) value = value / 100 * num(ratioOver, 0)
+    }
+    if (Number.isFinite(value)) motion[key] = value
+  }
+  for (const key of MOTION_BOOLS) if (presentOrTemplate(key)) motion[key] = bool(key, false)
+
+  // emit_machine_limits_to_gcode: the machine's limits written into the G-code (upstream print_machine_envelope),
+  //  as the 16 numbers machine_writer.h reads in this order. Sent only when the profile turns it on.
+  const envelope = {}
+  if (presentOrTemplate('emit_machine_limits_to_gcode') && bool('emit_machine_limits_to_gcode', false)) {
+    envelope.machine_envelope = ['machine_max_acceleration_x', 'machine_max_acceleration_y', 'machine_max_acceleration_z',
+      'machine_max_acceleration_e', 'machine_max_speed_x', 'machine_max_speed_y', 'machine_max_speed_z', 'machine_max_speed_e',
+      'machine_max_acceleration_extruding', 'machine_max_acceleration_retracting', 'machine_max_acceleration_travel',
+      'machine_max_jerk_x', 'machine_max_jerk_y', 'machine_max_jerk_z', 'machine_max_jerk_e', 'machine_max_junction_deviation',
+    ].map(key => num(key, 0))
+  }
+
   // Sent only for the three non-organic styles (see tree_style above), so an empty map still derives the same keys.
   const treeStyle = {}
   if (tree_style) treeStyle.tree_style = tree_style
 
+  // Temperatures. The bed's option follows the plate type upstream does (get_bed_temp_key). The first layer's own
+  //  temperatures (nozzle_temperature_initial_layer, <plate>_temp_initial_layer) start the print and the kernel
+  //  switches at the second layer, as upstream's process_layer does (GCode.cpp:5631). With a printer's custom
+  //  G-code the start block's temperatures come from custom_gcode_bridge, which reads every option with its default,
+  //  so the kernel takes the first-layer ones the same way or the two would disagree about what the print started
+  //  at. Without one, only keys the map holds are sent. A map without curr_bed_type is on DEFAULT_BED_TYPE.
+  const bedTempKey = BED_TEMP_KEYS[settings?.curr_bed_type ?? DEFAULT_BED_TYPE] ?? 'hot_plate_temp'
+  const printerCommands = { bed_temp: num(bedTempKey, FFF_FALLBACKS.hot_plate_temp) }
+  if (presentOrTemplate('nozzle_temperature_initial_layer')) printerCommands.first_layer_nozzle_temp = num('nozzle_temperature_initial_layer')
+  if (presentOrTemplate(`${bedTempKey}_initial_layer`)) printerCommands.first_layer_bed_temp = num(`${bedTempKey}_initial_layer`, FFF_FALLBACKS.hot_plate_temp)
+  // Whether one nozzle carries every filament (upstream single_extruder_multi_material): the second-layer switch
+  //  then names no tool and sets only the loaded one.
+  if (presentOrTemplate('single_extruder_multi_material')) printerCommands.single_extruder_multi_material = bool('single_extruder_multi_material', true)
+  // The firmware flavor formats the machine commands (machine_writer.h); upstream's default is "marlin".
+  if (presentOrTemplate('gcode_flavor')) printerCommands.gcode_flavor = str('gcode_flavor')
+  // disable_m73 false: the G-code carries upstream's M73 progress placeholders (finalizeGcode fills them).
+  if (presentOrTemplate('disable_m73')) printerCommands.disable_m73 = bool('disable_m73', false)
+
   const perExtruder = {}
   for (const [param, key, scalar] of [
     ['extruder_nozzle_temp', 'nozzle_temperature', num('nozzle_temperature')],
+    ['extruder_first_layer_temp', 'nozzle_temperature_initial_layer', num('nozzle_temperature_initial_layer')],
     ['extruder_filament_diameter', 'filament_diameter', num('filament_diameter')],
     ['extruder_flow_ratio', 'filament_flow_ratio', num('filament_flow_ratio')],
     ['extruder_retract_length', 'filament_retraction_length', override('filament_retraction_length', 'retraction_length')],
@@ -401,6 +508,8 @@ export function deriveKernelParams(settings, opts) {
     ...machine,
     ...passthrough,     // present only for keys the settings map actually holds (see PASSTHROUGH_* above)
     ...treeStyle,
+    ...envelope,
+    ...motion,
     layer_height: num('layer_height'),
     first_layer_height: num('initial_layer_print_height'),
     line_width,
@@ -434,14 +543,15 @@ export function deriveKernelParams(settings, opts) {
     filament_diameter: num('filament_diameter'),
     flow_ratio: num('filament_flow_ratio'),
     nozzle_temp: num('nozzle_temperature'),
-    bed_temp: num('hot_plate_temp'),                        // no bed_temperature key -> hot_plate_temp
+    ...printerCommands,                                       // temperatures (bed by plate type, the first layer's own) and the flavor
     bed_width, bed_depth,
+    ...bedOriginParams,
     bed_height: num('printable_height'),                    // 0 = profile states no ceiling -> kernel skips the check
     // Explicitly-set only: the schema default here is upstream's generic "G28 / G1 Z5" preamble, and falling back
     //  to it would rewrite the emitted G-code for every caller. The kernel keeps its own preamble when these are empty.
     machine_start_gcode: String(settings?.machine_start_gcode ?? ''),
     machine_end_gcode: String(settings?.machine_end_gcode ?? ''),
-    ...placeholderConfig(settings, plate),
+    ...placeholderConfig(settings, plate, opts?.objectNames),
     enable_support: bool('enable_support'),
     support_threshold_angle: num('support_threshold_angle'),
     support_top_z_distance: num('support_top_z_distance'),
