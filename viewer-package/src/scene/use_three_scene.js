@@ -12,6 +12,7 @@ import { createPaintInput } from './paint_input.js'
 import { createSectionPlane } from './section_plane.js'
 import { DEFAULT_BED, DEFAULT_FILAMENT_COLORS } from '../core/viewer_defaults.js'
 import { THEME } from '../core/theme.js'
+import { renderPlateThumbnail, plateFootprint } from './plate_snapshot.js'
 import { bakeModel, flatNormals, positionBounds } from '../core/bake_local.js'
 
 // Model loading (every format in SUPPORTED_EXT) moved to model_loaders.js (stage 26); the model->three local transform is core/bake_local.js.
@@ -784,6 +785,10 @@ export function useThreeScene(deps) {
         if (!Number.isFinite(box.min.x)) return null
         return { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z, height: box.max.y - box.min.y }
       },
+      // The export's view of a plate's objects (plate_snapshot.js): the printer thumbnail and the top-down footprint.
+      renderThumbnail: (plateIdx, width, height) => renderPlateThumbnail(THREE, three.current,
+        { objects: objectsRef.current, objectsGroup, plateOf: plateOfXZ, plateIdx, width, height }),
+      modelFootprint: (plateIdx = null) => plateFootprint(THREE, objectsRef.current, plateOfXZ, plateIdx),
       // Draw (or move) the tower stand-ins — one per plate that gets a tower. Takes an array of
       //  {plate, x, y, size, height} (a single box still works), size/height in mm, x/y in the same bed-centred
       //  world coordinates the objects use. Passing null/[] removes them all — a single-filament print has no tower.
@@ -827,7 +832,7 @@ export function useThreeScene(deps) {
         plateHeteroRef.current = dims && !uniformPlateDims(dims) ? { dims, layout: plateLayoutHetero(dims) } : null
         const moved = followPlateLayout(THREE, { objects: objectsRef?.current ?? [], count: n, prev, platePos,
           plateOffsets: plateOffsetsRef?.current, plateTp: plateTpRef?.current })
-        rebuildPlates(THREE, t, { n, bw, bd, sel, platePos, dims: plateHeteroRef.current?.dims })   // the refs above already hold n/bw/bd, so platePos is the same grid
+        rebuildPlates(THREE, t, { n, bw, bd, sel, platePos, dims: plateHeteroRef.current?.dims, shapes: dims?.map(cell => cell.shape ?? null) })   // the refs above already hold n/bw/bd, so platePos is the same grid
         refitCameraToPlates(THREE, t, { n, bw, bd, platePos, dims: plateHeteroRef.current?.dims })   // a grown footprint reframes the view (plate_scene.js)
         return moved   // caller re-registers the paint selector when geometry moved (same as a drag commit)
       },
