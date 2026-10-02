@@ -7,6 +7,7 @@
 #include "geom_helpers.h"
 #include "selector_bridge.h"
 #include "slice_planes.h"
+#include "cooling_bridge.h"
 #include "custom_gcode.h"
 #include "slice_ctx.h"          // support_run: the same support pass the single-material path uses
 
@@ -15,6 +16,7 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include <sstream>
 
 // Slice the triangle subset [lo,hi) at a z plane -> contour
 static Paths slice_group(const std::vector<Tri>& tris, int lo, int hi, double z){
@@ -247,8 +249,31 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   loadTool(0);
   gw.print_flow = p.print_flow_ratio;               // upstream's print-wide multiplier (the st path sets it in the preamble)
   gw.retract_min_travel=p.retraction_minimum_travel;
-  gw.offX=p.bed_width*0.5; gw.offY=p.bed_depth*0.5;
+  gw.offX=p.bed_center_x(); gw.offY=p.bed_center_y();
   gw.emit_role_tags = p.gcode_role_tags;
+  gw_setup_machine(gw, p);
+  // Upstream's cooling filter, as on the single-material path (slicer_core.cpp). This path is batch-only, so the
+  //  layers go through it after emission (coolLayers below); the fan markers follow the loaded tool (loadTool).
+  bool cooling = false;
+  struct CoolingSession { bool on = false; ~CoolingSession(){ if (on) cooling_bridge::end(); } } coolingSession;
+  if (customGcode && !gw.emit_pe_tags) {
+    std::vector<unsigned int> tools;
+    for (int tool = 0; tool < std::max(1, p.extruder_count); ++tool) tools.push_back((unsigned int)tool);
+    for (int tool : p.mm_group_tools)
+      if (tool >= 0 && std::find(tools.begin(), tools.end(), (unsigned int)tool) == tools.end()) tools.push_back((unsigned int)tool);
+    if (cooling_bridge::begin(p.placeholder_config, tools).empty()) { cooling = true; coolingSession.on = true; gw.cooling_markers = true; }
+  }
+  auto coolingMarkersFor=[&](int tool){
+    if (!cooling) return;
+    const cooling_bridge::Markers markers = cooling_bridge::markers((unsigned int)tool);
+    gw.fan_overhang = markers.overhang; gw.fan_overhang_external = markers.overhang_external;
+    gw.fan_support_interface = markers.support_interface; gw.fan_ironing = markers.ironing;
+  };
+  coolingMarkersFor(0);
+  // The layer templates' slots (custom_gcode_layer): this path learns whether the printer has any only once the
+  //  template session starts after emission, so the writer marks them whenever a custom G-code is present and
+  //  finishLayers fills them, or takes them out.
+  gw.layer_slots = customGcode;
   SeamCtx seamCtx;
   gw.raw("; OrcaSlicer RE mini-kernel (Track C stage 6) — MULTIMATERIAL (basic, NOT a real wipe tower)");
   { char h[200];
@@ -283,19 +308,30 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
         char b[48]; std::snprintf(b,sizeof b," T%d[%d,%d)",toolOf(g),bounds[g],bounds[g+1]); gl+=b; }
       gw.raw(gl.c_str());
     }
+    if (!p.disable_m73) gw.raw(";_GP_FIRST_LINE_M73_PLACEHOLDER");     // upstream's first progress line (finalizeGcode)
+    gw.raw_lines(machine_envelope_text(p.machine_envelope, gw.flavor));   // upstream's print_machine_envelope, first
     if (!customGcode) {   // with a custom start block the temperatures follow upstream's rule (custom_gcode_bridge)
-      std::snprintf(h,sizeof h,"M140 S%.0f",p.bed_temp); gw.raw(h);
-      std::snprintf(h,sizeof h,"M104 S%.0f",toolTemp(0)); gw.raw(h);
-      std::snprintf(h,sizeof h,"M190 S%.0f",p.bed_temp); gw.raw(h);
-      std::snprintf(h,sizeof h,"M109 S%.0f",toolTemp(0)); gw.raw(h);
+      // The first layer's own temperatures when the host sent them; the switch is at the second layer.
+      std::snprintf(h,sizeof h,"M140 S%.0f",first_layer_bed(p)); gw.raw(h);
+      std::snprintf(h,sizeof h,"M104 S%.0f",first_layer_nozzle(p, 0)); gw.raw(h);
+      std::snprintf(h,sizeof h,"M190 S%.0f",first_layer_bed(p)); gw.raw(h);
+      std::snprintf(h,sizeof h,"M109 S%.0f",first_layer_nozzle(p, 0)); gw.raw(h);
     } }
   // TPU on the first layer changes how a machine should start (upstream hands it to the start-G-code template as
   //  has_tpu_in_first_layer). No template engine here, so it is stated where a reader or a post-processor can act.
   for (int g=0; g<nGroups; ++g)
     if (filamentTypeOf(toolOf(g)) == "TPU") { gw.raw("; has_tpu_in_first_layer = 1"); break; }
   const size_t startAt = gw.s.size();   // where the expanded start block goes (before the writer's own modes)
-  gw.raw("G21 ; mm"); gw.raw("G90 ; absolute XYZ"); gw.raw("M83 ; relative E");
-  gw.raw("T0 ; start extruder"); gw.raw("G92 E0");
+  gw_write_modes(gw, p, custom_gcode_is_bbl(p));
+  // With custom G-code every tool change, the first selection included, is upstream's sequence
+  //  (custom_gcode_toolchanges), written once the template session runs; the writer leaves a slot per change.
+  std::vector<ToolchangeAt> toolchanges;
+  auto toolchangeSlot=[&](const ToolchangeAt& change){
+    char slot[48]; std::snprintf(slot,sizeof slot,"%s%zu",TOOLCHANGE_SLOT,toolchanges.size()); gw.raw(slot);
+    toolchanges.push_back(change);
+  };
+  if (customGcode) { ToolchangeAt first; first.initial = true; first.change.to = 0; toolchangeSlot(first); }
+  else { gw.raw("T0 ; start extruder"); gw.raw("G92 E0"); }
 
   int fTravel=(int)std::llround(p.travel_speed*60);
 
@@ -338,7 +374,18 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   //  the per-tool figures above (charged to the tool doing the purging), not an extra term of the total.
   double filamentPurge=0.0;
   std::vector<double> filamentPurgeByTool;
-  double lastTemp=toolTemp(0);   // the preamble already heated to T0's material
+  double lastTemp=first_layer_nozzle(p, 0);   // the preamble already heated to T0's material (its first-layer temperature)
+  // A tool's temperature on layer i: its first-layer one on the first layer, its own after (GCode.cpp:5631).
+  auto toolTempAt=[&](int t, int layer){ if (layer == 0) return first_layer_nozzle(p, t); return toolTemp(t); };
+  int curLayer=0;
+  // Where the second layer starts in gw.s: its temperature switch goes there once the start block (spliced in after
+  //  emission, below) has said what bed temperature it left set.
+  size_t secondLayerAt=std::string::npos;
+  std::vector<size_t> layerStarts;   // where each layer's text starts in gw.s, and the tool loaded there
+  std::vector<int> layerTools;
+  std::vector<std::vector<double>> layerFilament;   // each tool's filament (mm) before the layer, and the layer's z
+  std::vector<double> layerZ;
+  int secondLayerTool=0;   // the tool loaded when the second layer starts: the one a single nozzle switches
   double zShift=0.0;
   for (int i=0;i<N;++i){
     double z=p.first_layer_height + (i>0? i*p.layer_height : 0.0);   // approximate z
@@ -346,9 +393,20 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     gw.role_flow = 1.0; gw.on_first_layer = (i == 0);   // no raft on this path
     gw.set_e_per_mm(h,p); gw.z=zE; gw.pe_reset();
     std::vector<float> tp, widths; g_seg_w = &widths; g_seg_w_cur = (float)p.line_width;   // stage 21: record MM widths
+    chargeCurrentTool();                             // the per-tool totals as of this layer's start (the layer templates')
+    layerStarts.push_back(gw.s.size()); layerTools.push_back(curTool);   // the layers finishLayers makes final
+    layerFilament.push_back(filamentByTool); layerZ.push_back(zE);
     char cm[64]; std::snprintf(cm,sizeof cm,"; LAYER %d Z%.3f",i,zE); gw.layer_begin(cm);
-    std::snprintf(cm,sizeof cm,"G1 Z%.3f F%d",zE,fTravel); gw.raw(cm);
+    gw.layer_z(zE, fTravel);
+    curLayer = i;
+    if (i == 1) {
+      secondLayerAt = gw.s.size();
+      secondLayerTool = curTool;
+      lastTemp = toolTemp(curTool);                  // the switch below sets the loaded tool to its own temperature
+    }
     int fPr=(int)std::llround(((i==0)?p.first_layer_speed:p.print_speed)*60);
+    // Each feature's own feed (emit.cpp role_feeds); every one at fPr without per-role speeds, as before.
+    const RoleFeeds feeds = role_feeds(p, i == 0, i, 0, fPr, fPr, -1.0);
 
     std::vector<Paths> groups(nGroups);
     if (!preSliced.empty()) groups = preSliced[i];      // already cut above for the segmentation — do not cut twice
@@ -378,27 +436,43 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     };
     enum : int { FEAT_OUTER=0, FEAT_INNER=1, FEAT_FILL=2, FEAT_SOLID=3 };
     // Each feature takes upstream's role flow ratio (emit.cpp role_flow_ratio) on the layer's width.
-    auto featureFlow=[&](FlowRole role){ gw.set_role_flow(role_flow_ratio(p, role, gw.on_first_layer)); };
+    auto featureFlow=[&](FlowRole role){ gw.set_role_flow(role_flow_ratio(p, role, gw.on_first_layer)); gw.set_feature((int)role); };
     auto emitFeature=[&](const FeatureGeom& geom, int feature){
-      if (feature==FEAT_OUTER) { featureFlow(FlowRole::OuterWall); if (!geom.outer.empty()) emit_loops(gw,tp,geom.outer,zE,1.0f,fPr,fTravel,-1,seamCtx); return; }
-      if (feature==FEAT_INNER) { featureFlow(FlowRole::InnerWall); for (const auto& loops : geom.inner) emit_loops(gw,tp,loops,zE,1.0f,fPr,fTravel,-1,seamCtx); return; }
+      if (feature==FEAT_OUTER) { featureFlow(FlowRole::OuterWall); if (!geom.outer.empty()) emit_loops(gw,tp,geom.outer,zE,1.0f,feeds.of(FlowRole::OuterWall),fTravel,-1,seamCtx); return; }
+      if (feature==FEAT_INNER) { featureFlow(FlowRole::InnerWall); for (const auto& loops : geom.inner) emit_loops(gw,tp,loops,zE,1.0f,feeds.of(FlowRole::InnerWall),fTravel,-1,seamCtx); return; }
       // Solid before sparse, the order emit_layer.cpp uses — the skin is what the sparse fill anchors against.
-      if (feature==FEAT_SOLID) { featureFlow(FlowRole::InternalSolid); if (!geom.solidLines.empty()) emit_lines(gw,tp,geom.solidLines,zE,3.0f,fPr,fTravel); return; }
+      if (feature==FEAT_SOLID) { featureFlow(FlowRole::InternalSolid); if (!geom.solidLines.empty()) emit_lines(gw,tp,geom.solidLines,zE,3.0f,feeds.of(FlowRole::InternalSolid),fTravel); return; }
       featureFlow(FlowRole::SparseInfill);
-      if (!geom.fillLines.empty()) emit_lines(gw,tp,geom.fillLines,zE,2.0f,fPr,fTravel);
+      if (!geom.fillLines.empty()) emit_lines(gw,tp,geom.fillLines,zE,2.0f,feeds.of(FlowRole::SparseInfill),fTravel);
     };
     // ponytail: M109 (wait) right at the switch. A real slicer pre-heats the idle tool a few layers early to hide
     //  the stall; do that when the wipe tower knows the upcoming tool per layer.
-    auto toolTo=[&](int t){
+    auto toolTo=[&](int t, bool viaTower){
       if (curTool==t) return;
       chargeCurrentTool();                           // close the outgoing tool's account before the switch
-      char tc[16]; std::snprintf(tc,sizeof tc,"T%d",t); gw.raw(tc); curTool=t; loadTool(t); ++toolChanges;
+      if (customGcode) {
+        // Upstream's order: the outgoing filament retracts, the change sequence runs (its slot), the incoming one
+        //  unretracts. Temperatures and the T command are the sequence's (custom_gcode_bridge::expand_toolchange).
+        ToolchangeAt change;
+        change.change.to = t; change.change.layer = curLayer; change.change.layer_z = gw.z;
+        change.change.x = gw.px + gw.offX; change.change.y = gw.py + gw.offY; change.change.z = gw.z;
+        change.change.tower = viaTower; change.change.purge_mm3 = p.flushVolume(curTool, t, p.extruder_count);
+        change.change.tower_x = p.prime_tower_x; change.change.tower_y = p.prime_tower_y;
+        gw.retract_move();
+        toolchangeSlot(change);
+        curTool=t; loadTool(t); coolingMarkersFor(t); ++toolChanges;
+        if (gw.absolute_e) gw.e_pos = 0.0;           // the sequence resets E (GCodeWriter::toolchange's reset_e)
+        gw.unretract_move();
+        g_seg_tool = t;
+        return;
+      }
+      char tc[16]; std::snprintf(tc,sizeof tc,"T%d",t); gw.raw(tc); curTool=t; loadTool(t); coolingMarkersFor(t); ++toolChanges;
       if (filamentTypeOf(t) == "PETG") {                 // upstream's extra unretract for a material that oozes
-        char pe[48]; std::snprintf(pe,sizeof pe,"G1 E%.4f F%d ; PETG extra unretract",2.0,gw.retractF); gw.raw(pe);
+        char pe[64]; std::snprintf(pe,sizeof pe,"G1 E%.4f F%d ; PETG extra unretract",gw.e_word(2.0),gw.retractF); gw.raw(pe);
       }
       g_seg_tool = t;                                // the preview's tool channel follows the T command
-      if (toolTemp(t) != lastTemp) {                 // only when the materials actually disagree
-        char h[48]; std::snprintf(h,sizeof h,"M109 S%.0f",toolTemp(t)); gw.raw(h); lastTemp=toolTemp(t);
+      if (toolTempAt(t, curLayer) != lastTemp) {     // only when the materials actually disagree
+        char h[48]; std::snprintf(h,sizeof h,"M109 S%.0f",toolTempAt(t, curLayer)); gw.raw(h); lastTemp=toolTempAt(t, curLayer);
       }
     };
     g_seg_tool = curTool;                            // a layer starts on whatever tool the previous one left loaded
@@ -507,16 +581,18 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
       if (anySupport) {
         const int supTool = p.support_filament > 0 ? p.support_filament - 1 : curTool;
         const int ifaceTool = p.support_interface_filament > 0 ? p.support_interface_filament - 1 : supTool;
-        if (supTool != curTool) toolTo(supTool);
+        if (supTool != curTool) toolTo(supTool, false);
         gw.set_role_flow(role_flow_ratio(p, FlowRole::Support, gw.on_first_layer));
+        gw.set_feature((int)FlowRole::Support);
         if (!sl.supBase.empty()) { Paths lines = infill_clipped(sl.supBase, 45.0, support_sp);
-          if (!lines.empty()) emit_lines(gw,tp,lines,zE,5.0f,fPr,fTravel); }
-        if (!sl.supTree.empty()) emit_lines_vw(gw,tp,sl.supTree,zE,h,p,5.0f,fPr,fTravel);
+          if (!lines.empty()) emit_lines(gw,tp,lines,zE,5.0f,feeds.of(FlowRole::Support),fTravel); }
+        if (!sl.supTree.empty()) emit_lines_vw(gw,tp,sl.supTree,zE,h,p,5.0f,feeds.of(FlowRole::Support),fTravel);
         if (!sl.supIface.empty()) {
-          if (ifaceTool != curTool) toolTo(ifaceTool);
+          if (ifaceTool != curTool) toolTo(ifaceTool, false);
           gw.set_role_flow(role_flow_ratio(p, FlowRole::SupportInterface, gw.on_first_layer));
+          gw.set_feature((int)FlowRole::SupportInterface);
           Paths lines = infill_clipped(sl.supIface, 45.0, solid_spacing);
-          if (!lines.empty()) emit_lines(gw,tp,lines,zE,5.0f,fPr,fTravel);
+          if (!lines.empty()) emit_lines(gw,tp,lines,zE,5.0f,feeds.of(FlowRole::SupportInterface),fTravel);
         }
         printedThisLayer = true;      // the layer has extruded, so a later tool change purges
       }
@@ -547,7 +623,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
       //  no reason to believe there is a second nozzle, and every change purges exactly as it always did.
       const bool crossNozzle = !p.filament_map.empty() && p.physicalExtruderOf(from) != p.physicalExtruderOf(to);
       const bool purge = printedThisLayer && from!=to && !crossNozzle && p.enable_prime_tower;
-      toolTo(to);
+      toolTo(to, purge);
       // Whatever this tool diverted into the model is printed right after the change, which is where a purge
       //  belongs: the first material out of the nozzle is the mixed one.
       if (!flushInfill[to].empty()) {
@@ -558,13 +634,22 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
         const double purgeStart = gw.filament;            // whatever the tower costs, real or fallback ring
         const double flushVol = p.flushVolume(from, to, p.extruder_count);   // mm³ this pair needs, <0 = no table
         if (p.wipe_tower_real) {                          // stage 12: the real WipeTower.generate()
-          auto wt = config_bridge::wipe_tower_block(p.bed_width,p.bed_depth,p.first_layer_height,
+          auto wt = config_bridge::wipe_tower_block(p.bed_origin_x,p.bed_origin_y,p.bed_width,p.bed_depth,p.first_layer_height,
                         p.layer_height, zE, i==0, from, to, p.prime_tower_x, p.prime_tower_y,   // stage 33: the 10,10 constants -> wipe_tower_x/y
                         p.prime_tower_width, gw.tool_filament_diameter,
                         flushVol);                        // the pair's own purge volume, not a fixed guess
           if (wt.ok) {
             gw.raw("; wipe_tower_real: real ported WipeTower.generate()");
-            gw.raw(wt.gcode.c_str());
+            // The tower's block is written in relative E (config_bridge sums it that way). In absolute mode it runs
+            //  inside an M83 ... M82 bracket and the position starts over after it.
+            if (gw.absolute_e) gw.raw("M83");
+            if (customGcode) {
+              // The tower marks where upstream puts the change sequence; here it already ran at the switch above.
+              std::string block; std::istringstream lines(wt.gcode); std::string line;
+              while (std::getline(lines, line)) if (line.rfind("; [", 0) != 0) block += line + "\n";
+              gw.raw_lines(block);
+            } else gw.raw(wt.gcode.c_str());
+            if (gw.absolute_e) { gw.raw("M82"); gw.raw("G92 E0"); gw.e_pos = 0.0; }
             gw.role_tag_unknown();                        // the tower wrote its own ;TYPE: — the next run re-states ours
             gw.filament += wt.filament_mm;
             // The real WipeTower builds its own stride-8 segments, so it never passes through push_seg — the tool
@@ -630,6 +715,57 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   // One slot per extruder even when a tool never printed, so a caller can index the array by tool number
   //  (the material names it shows come from the same per-extruder lists).
   if ((int)filamentByTool.size() < p.extruder_count) filamentByTool.resize(p.extruder_count, 0.0);
+  std::vector<int> usedTools;
+  for (int tool=0; tool<(int)filamentByTool.size(); ++tool)
+    if (filamentByTool[tool] > 0) usedTools.push_back(tool);
+  if (usedTools.empty()) usedTools.push_back(0);
+  // The second layer's temperature switch, inserted at the position recorded during emission. Before the start
+  //  block's splice, which sits earlier in gw.s and would shift that position.
+  size_t layersEnd = gw.s.size();   // the last layer ends here: everything after is the end block
+  auto insertSecondLayer=[&](int bedSet){
+    if (secondLayerAt == std::string::npos) return;
+    std::vector<int> tools = { secondLayerTool };   // the loaded tool first: the only one a single nozzle switches
+    for (int tool : usedTools) if (tool != secondLayerTool) tools.push_back(tool);
+    const std::string text = second_layer_temperatures(p, tools, usedTools.size() > 1, bedSet);
+    gw.s.insert(secondLayerAt, text);
+    for (size_t& start : layerStarts) if (start > secondLayerAt) start += text.size();
+    layersEnd += text.size();
+  };
+  // Every layer made final in print order once its text is (after the second-layer switch): its templates expanded
+  //  with the template session the start block opened, then the cooling filter. "" or the layer template's error.
+  auto finishLayers=[&]() -> std::string {
+    if ((!cooling && !gw.layer_slots) || layerStarts.empty()) return std::string();
+    std::string error;
+    if (gw.layer_slots) custom_gcode_layers_begin();
+    std::string out = gw.s.substr(0, layerStarts[0]);
+    if (customGcode) {   // the first selection, ahead of the first layer
+      out = custom_gcode_toolchanges(std::move(out), toolchanges, gw.flavor, error);
+      if (!error.empty()) return error;
+    }
+    for (size_t k = 0; k < layerStarts.size(); ++k) {
+      size_t end = layersEnd;
+      if (k + 1 < layerStarts.size()) end = layerStarts[k + 1];
+      std::string text = gw.s.substr(layerStarts[k], end - layerStarts[k]);
+      if (gw.layer_slots) {
+        std::vector<double> volumes(layerFilament[k].size(), 0.0);
+        for (size_t tool = 0; tool < volumes.size(); ++tool) {
+          const double diameter = Params::forTool(p.extruder_filament_diameter, (int)tool, p.filament_diameter);
+          volumes[tool] = layerFilament[k][tool] * PI * diameter * diameter / 4.0;
+        }
+        text = custom_gcode_layer(std::move(text), (int)k, layerZ[k], layerTools[k], volumes, error);
+        if (!error.empty()) return error;
+      }
+      if (customGcode) {
+        text = custom_gcode_toolchanges(std::move(text), toolchanges, gw.flavor, error);
+        if (!error.empty()) return error;
+      }
+      if (cooling) text = cooling_bridge::process_layer(std::move(text), (int)k, (unsigned int)layerTools[k]);
+      out += text;
+    }
+    out += gw.s.substr(layersEnd);
+    gw.s.swap(out);
+    return std::string();
+  };
   if (customGcode) {
     for (int tool=0; tool<(int)filamentByTool.size(); ++tool)
       if (filamentByTool[tool] > 0) customFacts.used_filaments.push_back(tool);
@@ -653,19 +789,33 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
     CustomStart customStart;
     std::string error = custom_gcode_start(p, customFacts, customStart);
     if (error.empty()) {
-      std::string block;
+      insertSecondLayer(customStart.bed_set);
+      error = finishLayers();
+    }
+    if (error.empty()) {
+      std::string block = customStart.before;
       if (gw.emit_role_tags) block += ";TYPE:Custom\n";
-      block += customStart.before + "; machine_start_gcode (printer profile, expanded)\n" + customStart.text;
+      block += customStart.chamber + "; machine_start_gcode (printer profile, expanded)\n" + customStart.text;
       if (!block.empty() && block.back() != '\n') block += '\n';
       block += customStart.after;
       gw.s.insert(startAt, block);
+      {   // file_start_gcode at the very top of the file, then the thumbnails' place (preamble.cpp)
+        std::string top = customStart.file_start;
+        if (!top.empty() && top.back() != '\n') top += '\n';
+        top += ";_GP_THUMBNAILS_PLACEHOLDER\n";
+        gw.s.insert(0, top);
+      }
       gw.raw("; end");
       error = custom_gcode_end(gw, N - 1, gw.z, gw.z, curTool);
     }
     if (!error.empty()) { custom_gcode_bridge::end(); em::val r=em::val::object(); r.set("error", error); return r; }
   } else {
+  insertSecondLayer((int)std::lround(first_layer_bed(p)));
+  (void)finishLayers();   // without a custom G-code there are no slots and no filter: nothing to do
   gw.raw("; end"); gw.raw("M104 S0"); gw.raw("M140 S0"); gw.raw("M107");
   }
+  if (!p.disable_m73) gw.raw(";_GP_LAST_LINE_M73_PLACEHOLDER");   // upstream's last progress line (GCode.cpp:3957)
+  gw.raw_lines(machine_postamble(gw.flavor));   // GCodeWriter::postamble: M2 on Machinekit
   { char h[64]; std::snprintf(h,sizeof h,"; filament used: %.2f mm",gw.filament); gw.raw(h); }
   emit_gcode_footer_blocks(gw, p, filamentByTool, toolChanges);
   em::val result=em::val::object(), stats=em::val::object();
