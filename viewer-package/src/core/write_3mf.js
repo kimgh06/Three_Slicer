@@ -8,7 +8,7 @@
 //   · plates live in WORLD space under upstream's own grid (corner origin, gap = bed/5, rows along -y)
 //   · painting rides on the <triangle> tag as paint_color / paint_supports hex, not in model_settings.config
 import { zipSync, zip, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
-import { serializeProjectSettings, settingRaw } from 'three-slicer-viewer/settings'
+import { serializeProjectSettings, settingRaw, bedCenter } from 'three-slicer-viewer/settings'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO } from './plate_layout.js'
 import { DEFAULT_BED, SLA_POINT_RADIUS } from './viewer_defaults.js'
 import { STL_HEADER_BYTES, STL_DATA_OFFSET, stlByteLength } from './stl_format.js'
@@ -197,7 +197,8 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
  *     used, which is why `objects` must arrive in that same order.
  *   opts.paintKind — 'color' (material) | 'supports'; which annotation the kernel's marks are. One facet holds one
  *     state, so they can only be one or the other — the same constraint the import side reports.
- *   opts.bedWidth/bedDepth/plateCount — the plate grid to encode positions under.
+ *   opts.bedWidth/bedDepth/plateCount — the plate grid to encode positions under; opts.bedOrigin the printable
+ *     area's lower-left corner in printer coordinates (settings bedOrigin), (0,0) for most beds.
  * Returns a Promise of a Uint8Array (the zip) — the compression runs off the main thread where it can.
  */
 // What upstream's project format has no place for, in a member of our own. project_settings.config is ONE
@@ -258,8 +259,9 @@ function viewerSettingsSidecar(settings, projectSettings, plateSettings, plateCo
 export async function write3MFProject(objects, settings, opts = {}) {
   const {
     paintExport = null, paintKind = 'color', bedWidth = DEFAULT_BED.width, bedDepth = DEFAULT_BED.depth, plateCount = 1,
-    application = 'ThreeSlicer', plateSettings = null,
+    bedOrigin = { x: 0, y: 0 }, application = 'ThreeSlicer', plateSettings = null,
   } = opts
+  const center = bedCenter({ bed_width: bedWidth, bed_depth: bedDepth, bed_origin_x: bedOrigin.x, bed_origin_y: bedOrigin.y })
   if (!objects?.length) throw new Error('nothing to export')
 
   // The kernel's facets are numbered across the merged mesh; a 3mf's are per object. Rebasing needs the same
@@ -308,11 +310,12 @@ export async function write3MFProject(objects, settings, opts = {}) {
     const objectId = at + 1                     // 3mf ids are 1-based and must be unique within the model part
     const origin = upstreamPlateOrigin(object.plate ?? 0, plateCount, bedWidth, bedDepth)
     // The object's placement ON its plate is what carries over; only the plate frames differ. The viewer's origin
-    //  is the plate CENTRE, upstream's is the corner — so subtracting the viewer origin and adding the upstream one
-    //  plus half a bed re-expresses the same position. Exactly what model_load.js platePlacements decodes.
+    //  is the plate CENTRE, upstream's is the printer's coordinate origin — so subtracting the viewer origin and
+    //  adding the upstream one plus the bed centre in printer coordinates (bedCenter) re-expresses the same
+    //  position. Exactly what model_load.js platePlacements decodes.
     const shift = {
-      x: origin.x + bedWidth / 2 - (object.plateOriginX ?? 0),
-      y: origin.y + bedDepth / 2 - (object.plateOriginY ?? 0),
+      x: origin.x + center.x - (object.plateOriginX ?? 0),
+      y: origin.y + center.y - (object.plateOriginY ?? 0),
     }
 
     const annotations = PAINT_ATTRIBUTES
@@ -469,7 +472,9 @@ function sliceInfoPlate(plate, stats, settings) {
 
 /**
  * Sliced plates -> a .gcode.3mf (Uint8Array, via a Promise — the deflate runs off-thread like the project writer's).
- *   plates: [{ index, gcode, stats }] — plateResultsRef's own shape; `index` is the 0-based plate.
+ *   plates: [{ index, gcode, stats, thumbnail? }] — plateResultsRef's own shape; `index` is the 0-based plate, and
+ *     `thumbnail` the plate's PNG, written as Metadata/plate_N.png with a thumbnail_file record (bbs_3mf.cpp), the
+ *     picture a Bambu Lab printer shows for the job.
  *   settings: the global map, written as project_settings.config exactly as a project save writes it.
  *   opts.plateCount — every plate gets a <plate> record, sliced or not, as the project writer does.
  */
@@ -498,6 +503,11 @@ export async function writeGcode3MF(plates, settings, opts = {}) {
       files[member] = bytes
       files[`${member}.md5`] = strToU8(md5Hex(bytes))
       modelConfig.push(`    <metadata key="gcode_file" value="${member}"/>\n`)
+      if (result.thumbnail?.length) {
+        const picture = `Metadata/plate_${plate + 1}.png`
+        files[picture] = result.thumbnail
+        modelConfig.push(`    <metadata key="thumbnail_file" value="${picture}"/>\n`)
+      }
       sliceInfo.push(sliceInfoPlate(plate, result.stats, settings))
     }
     modelConfig.push('  </plate>\n')
