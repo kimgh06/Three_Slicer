@@ -394,10 +394,15 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   start block the kernel follows upstream's temperature rule (M190/M104 before it only when the template does not set
   them, none for Klipper, M109 after it for Bambu Lab — decided by `printer_model` starting with "Bambu Lab", which
   matches the BBL vendor exactly over the bundled profiles: 56 of 56, 0 of 873) and writes its own `G21/G90/M83` after
-  it. Left unset, so a template reading them fails typed instead of expanding to a guess: the adaptive bed mesh
-  variables and `filament_pre_cooling_temperature(_nc)` (no such options in the port's config), and `print_time_sec` /
-  `used_filament_length`, whose upstream value is a reserved tag GCodeProcessor's post-process replaces — the kernel
-  streams the text out and runs no post-process. `random()` uses a fixed seed (upstream seeds from the clock), so the
+  it. `print_time_sec` / `used_filament_length` expand to upstream's reserved tags (`@PRINT_TIME_SEC@`, …) and the M73
+  progress lines to `;_GP_…` placeholders, which the host fills from the estimate (`core/finalize_gcode.js`), as
+  GCodeProcessor's post-process does upstream; the printer's thumbnails go where the kernel leaves
+  `;_GP_THUMBNAILS_PLACEHOLDER` (`core/thumbnails.js`, PNG and QOI). The layer templates (`before_layer_change_gcode`,
+  `layer_change_gcode`, `time_lapse_gcode`) and every tool change (`custom_gcode_toolchanges`: `filament_end_gcode`,
+  `change_filament_gcode` with `GCode::set_extruder`'s variables, the T command the template does not write itself,
+  `filament_start_gcode`) are left as slot lines by the parallel writers and expanded in print order, before upstream's
+  ported cooling filter (`GCode/CoolingBuffer.cpp`) runs over each layer. A template variable this port does not set
+  still fails typed instead of expanding to a guess. `random()` uses a fixed seed (upstream seeds from the clock), so the
   same input gives the same bytes. A template error is `CUSTOM_GCODE_ERROR: <key>: <parser message>`; reporting it at
   all needs the kernel's `-fwasm-exceptions` (`build.sh`: without it a throw aborted the module), and
   `core/slice_errors.js` keeps the slice ladder from retrying any typed refusal. The presets carry what the templates
