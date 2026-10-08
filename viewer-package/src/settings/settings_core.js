@@ -251,6 +251,30 @@ function hasCustomGcode(settings) {
   return CUSTOM_GCODE_KEYS.some(hasText)
 }
 
+// What a printer profile asks of a tool change that the template path does not do yet. The slice is not refused —
+//  that would stop every multi-material print — but each key whose value would change the output is named
+//  (PROFILE_PARTIAL_SUPPORT), so the setting is not ignored silently. A key the map omits reads as upstream's schema
+//  default, as the template path does (custom_gcode_bridge).
+// ponytail: tool changes only, the gaps listed in custom_gcode.h. Overhang speeds (no ExtrusionQualityEstimator) are
+//  on in every profile, so a notice for them would show on every slice; add them when the notice has a better home.
+export const PARTIAL_SUPPORT_CODE = 'PROFILE_PARTIAL_SUPPORT'
+const TOOL_CHANGE_GAPS = [
+  { key: 'retract_length_toolchange', isSet: values => values.some(value => parseFloat(value) > 0),
+    effect: 'the retraction before a tool change uses retraction_length' },
+  { key: 'ooze_prevention', isSet: values => values.some(value => value === true || value === 1 || value === '1' || value === 'true'),
+    effect: 'idle tools are not parked at a standby temperature' },
+]
+export function partialSupport(settings, { toolCount = 1 } = {}) {
+  if (!hasCustomGcode(settings) || toolCount < 2) return []
+  const gaps = []
+  for (const gap of TOOL_CHANGE_GAPS) {
+    let value = settings?.[gap.key]
+    if (value == null || value === '') value = schemaDefault(gap.key)
+    if (gap.isSet([value].flat())) gaps.push({ code: PARTIAL_SUPPORT_CODE, key: gap.key, effect: gap.effect })
+  }
+  return gaps
+}
+
 function placeholderConfig(settings, plate, objectNames) {
   if (!hasCustomGcode(settings)) return {}
   // upstream's Print::get_plate_number_formatted: the 1-based plate, zero-padded to two digits

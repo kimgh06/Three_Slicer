@@ -23,6 +23,12 @@ export function deriveKernelParams(settings: SlicerSettings | null | undefined, 
  * coordinate (wipe_tower_x/y, a 3mf position, G-code) converts to that frame by subtracting `bedCenter`.
  */
 export function bedOrigin(params: Record<string, unknown> | null | undefined): { x: number; y: number }
+/** Code of a printer profile setting the template path reads but does not do yet. */
+export const PARTIAL_SUPPORT_CODE: 'PROFILE_PARTIAL_SUPPORT'
+/** The tool change settings a profile sets that the template path does not apply (empty off the template path or
+ *  with one tool), each with what happens instead. */
+export function partialSupport(settings: SlicerSettings | null | undefined, opts?: { toolCount?: number }):
+  { code: 'PROFILE_PARTIAL_SUPPORT'; key: string; effect: string }[]
 export function bedCenter(params: Record<string, unknown> | null | undefined): { x: number; y: number }
 
 /**
