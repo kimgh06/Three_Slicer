@@ -2,7 +2,7 @@ import { log } from '../core/log.js'
 import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams, deriveSlaParams, settingRaw, bedCenter, bedOrigin } from 'three-slicer-viewer/settings'
+import { deriveKernelParams, deriveSlaParams, settingRaw, bedCenter, bedOrigin, partialSupport } from 'three-slicer-viewer/settings'
 import { finalizeGcode } from '../core/finalize_gcode.js'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
@@ -507,6 +507,11 @@ export function useSlicer(deps) {
       params.prime_tower_x = Math.min(Math.max(modelLeft - AUTO_GAP - towerSide, lowestCornerX), highestCornerX)
       params.prime_tower_y = Math.min(Math.max(modelMiddleY - towerSide / 2, lowestCornerY), highestCornerY)
     }
+    // Profile settings the template path reads but does not do yet (settings_core.js partialSupport). Before the paint
+    //  notices, which say more about why a print came out single-material and so take the line.
+    const gaps = partialSupport(effective, { toolCount: params.extruder_count ?? 1 })
+    if (gaps.length)
+      setSliceNotice?.(`Not applied from the printer profile: ${gaps.map(gap => `${gap.key} (${gap.effect})`).join('; ')}.`)
     // Two ways a painted model slices exactly like an unpainted one, both of them by design and neither of them
     //  visible in the result — the export just comes out single-material. Said here, at the one place that knows
     //  both the paint and the settings, because the alternative is the user concluding the brush is broken.
