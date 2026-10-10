@@ -52,7 +52,8 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   auto filamentTypeOf=[&](int tool){
     return tool>=0 && tool<(int)p.filament_type.size() ? p.filament_type[tool] : std::string();
   };
-  int N=0; for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) ++N;
+  const LayerPlan layerPlan = plan_layers(p.first_layer_height, p.layer_height, height);
+  int N=(int)layerPlan.top.size();
 
   // =========================================================================================================
   // Painted multi-material regions.
@@ -83,8 +84,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
   std::vector<std::vector<Paths>> preSliced;
   // Every layer's contour, cut once up front — the segmentation (a whole-object pass) and the tower pre-pass below
   //  both need it, and the emission loop reuses it, so nothing is sliced twice.
-  std::vector<double> layerZs(N);
-  for (int i=0;i<N;++i) layerZs[i] = p.first_layer_height + (i>0? i*p.layer_height : 0.0);
+  const std::vector<double>& layerZs = layerPlan.plane;   // the cutting planes (plan_layers); print z stays below
   preSliced.assign(N, std::vector<Paths>(nGroups));
   for (int i=0;i<N;++i) for (int g=0; g<nGroups; ++g)
     preSliced[i][g] = slice_group(tris, bounds[g], bounds[g+1], layerZs[i]);

@@ -123,7 +123,9 @@ export function makeWedgeSTL(count) {
 //  slicing plane (0.05 away — inside the projector's half-layer tolerance) and the contour there is the whole cap,
 //  so the leg's square sits strictly inside the cap's square: two painted extruders claiming the same area.
 //  The plane is 10.15 and not 10.0 because a plane where the geometry changes solids slices to nothing at all.
-export const OVERLAP_LEG_FACET = 2, OVERLAP_CAP_FACET = 12, OVERLAP_Z = 10.2
+// A layer is cut at its middle (slice_planes.h plan_layers), so the first layer the leg (top at 10.15) no longer
+//  reaches is the one whose top is 10.4, cut at 10.3. The z=10.2 layer is cut at 10.1, inside the leg.
+export const OVERLAP_LEG_FACET = 2, OVERLAP_CAP_FACET = 12, OVERLAP_Z = 10.4
 export function makeOverlapSTL() {
   return trisToSTL([...boxTris(7, 7, 0, 6, 6, 10.15), ...boxTris(0, 0, 10.15, 20, 20, 3.85)])
 }
@@ -700,7 +702,7 @@ const paintOverlap = (legState, capState, legFirst) => {
 const rOverlapHighLeg = paintOverlap(3, 2, true)      // the leg (the smaller, enclosed area) carries Extruder3
 const Lhl = rOverlapHighLeg.layers.find(L => Math.abs(L.z - OVERLAP_Z) < 1e-6)
 const boxT2 = toolBoxOf(Lhl, 2), boxT1 = toolBoxOf(Lhl, 1)
-// The leg (Extruder3 -> T2) stops at z=10.15, so on the z=10.2 layer — which is pure cap — it owns nothing.
+// The leg (Extruder3 -> T2) stops at z=10.15, so on the z=10.4 layer — which is pure cap — it owns nothing.
 ok(boxT2.n === 0, `the enclosed leg claims nothing on a layer it no longer reaches (T2 segments ${boxT2.n})`)
 ok(boxT1.n > 0 && boxT1.x0 < 1 && boxT1.x1 > 19,
    `the surface that IS on that outline owns it: T1 spans the 20x20 cap (x[${boxT1.x0.toFixed(2)},${boxT1.x1.toFixed(2)}])`)
@@ -1341,6 +1343,17 @@ ok(t10.stats.time_estimate === t10b.stats.time_estimate, `time estimate is deter
 //  infill_lines (clip_util.h): each pattern line was drawn through the origin-projected foot and extended by the
 //  region's own SIZE, so a region further from the origin than that was simply never reached. That centring is what
 //  made the slice frame follow the model, which in turn is what made the prime tower and the paint drift.
+console.log('\n[layer count] a layer exists while its middle is below the object top (upstream generate_object_layers)')
+// The kernel cut each layer at its top and kept only tops below the object height, so a 20 mm cube lost its last layer
+//  and printed 19.8 mm (OrcaSlicer 2.4.2 on the same cube: 100 layers, max_z_height 20.00).
+for (const [height, layers] of [[20, 100], [20.05, 100], [20.09, 100], [20.11, 101], [0.15, 1]]) {
+  const box = trisToSTL(boxTris(-5, -5, 0, 10, 10, height))
+  const r = Module.slice(new Uint8Array(box), JSON.stringify(params), () => {})
+  const tops = r.layers.map(L => L.z)
+  ok(!r.error && tops.length === layers && Math.abs(tops.at(-1) - 0.2 * layers) < 1e-6,
+     `a ${height} mm box prints ${layers} layers, the last at ${(0.2 * layers).toFixed(1)} (${tops.length}, ${tops.at(-1)?.toFixed(3)})`)
+}
+
 console.log('\n[bed origin]')
 //  The G-code is in PRINTER coordinates, which start wherever printable_area does: a delta bed is centred on (0,0)
 //  and some cartesian beds are offset. The kernel adds the bed centre (bed_origin + bed/2) to every plate-local

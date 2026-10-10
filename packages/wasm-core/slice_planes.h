@@ -16,6 +16,22 @@ static constexpr long long CHAIN_KEY_Y_MASK = 0xffffffffLL;
 
 // ---- Triangle-plane intersection -> segments ------------------------------------
 struct Seg { double x0, y0, x1, y1; };
+// The object's layers, upstream's generate_object_layers for a fixed layer height (Slicing.cpp:807): a layer exists
+//  while its middle is below the object's top, and it is cut at that middle (Layer::slice_z). The kernel used to cut
+//  at each layer's top and keep only tops below the object's height, so the top face's plane cut nothing and the
+//  last layer was lost: a 20 mm cube printed 99 layers, 19.8 mm (measured against OrcaSlicer 2.4.2: 100 layers).
+//  `top` keeps the old accumulation (z += layer_height), so the print z of every layer is the one it always had.
+struct LayerPlan { std::vector<double> top, plane; };
+inline LayerPlan plan_layers(double first_layer_height, double layer_height, double height) {
+  LayerPlan plan;
+  double h = first_layer_height;
+  for (double z = first_layer_height; z - 0.5 * h < height - 1e-4; z += layer_height, h = layer_height) {
+    plan.top.push_back(z);
+    plan.plane.push_back(z - 0.5 * h);
+  }
+  return plan;
+}
+
 inline bool tri_plane(const Tri& t, double z, Seg& out) {
   double crossingX[3], crossingY[3]; int crossingCount = 0;
   for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex) {

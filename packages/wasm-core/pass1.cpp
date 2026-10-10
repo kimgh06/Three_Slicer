@@ -121,8 +121,8 @@ bool pass1_run(SliceCtx& C) {
   auto& CX = C.CX; auto& report = C.report;
   const int N = C.N, total = C.total;
   const double height = C.height, w = C.w;
-  { std::vector<double> zsv; zsv.reserve(N);
-    for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) zsv.push_back(z);
+  { const LayerPlan layers = plan_layers(p.first_layer_height, p.layer_height, height);
+    const std::vector<double>& zsv = layers.plane;   // the cutting planes; a layer's print z is layers.top
     // [facet-major segment collection — matching upstream] Like the upstream slice_facet_at_zs (TriangleMeshSlicer.cpp:476),
     //  each triangle binary-searches and visits "only the layers it spans" (work = the number of real intersections). The old layer x full-scan was 657 x 775k
     //  ≈ 500M visits. The inclusion condition is unchanged (zmin<=z<zmax -> lower_bound + *it<zmax) and the tri_plane
@@ -178,7 +178,7 @@ bool pass1_run(SliceCtx& C) {
       collect(0, tris.size(), layerSegs);
     }
     auto computeLayer = [&](int i) {
-      const double z = zsv[i];
+      const double z = layers.top[i];
       LayerData ld; ld.z=z; ld.idx=i; ld.h=(i==0)?p.first_layer_height:p.layer_height;
       std::vector<Seg> segs; segs.swap(layerSegs[i]);
       if (captureLoops) {

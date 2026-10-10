@@ -67,6 +67,7 @@
 #include "cooling_bridge.h"
 #include "custom_gcode.h"
 #include "slice_ctx.h"
+#include "slice_planes.h"
 #include "stage_cache.h"
 #include "stl_parse.h"
 #include "stream_sink.h"
@@ -167,7 +168,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   g_seg_tool = singleTool;                             // the preview's tool channel: the filament the model prints with
 
   // Count the z levels (the progress total)
-  int N = 0; for (double z=p.first_layer_height; z<height-1e-4; z+=p.layer_height) ++N;
+  const int N = (int)plan_layers(p.first_layer_height, p.layer_height, height).top.size();
   int total = 2*N + 2;   // +2 = the surface and support completion ticks. Previously nothing was reported between PASS1 (50%) and the end of support -> it looked "stuck at 50%".
 
   // Phase timing (exposed only through stats — no effect on g-code, golden-safe)
