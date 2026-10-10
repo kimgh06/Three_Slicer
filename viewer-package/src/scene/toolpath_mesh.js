@@ -3,7 +3,7 @@
 // Written from viewer/TOOLPATH_SPEC.md §4. THREE is PASSED IN, never imported — that is what guarantees the
 // consumer's own three.js instance is used, and it is why this module has no dependency of its own and can
 // be consumed from a page that already has three loaded.
-import { SEG_VS, SEG_FS } from '../core/toolpath_shaders.js'
+import { SEG_VS, SEG_FS, packJoin } from '../core/toolpath_shaders.js'
 import { THEME } from '../core/theme.js'
 import { LOD_LEVELS, baseLayerTop, decimateLayers, typicalLayerHeight, projectedPixels, chooseLevel } from '../core/toolpath_lod.js'
 import { moveCursor, topMoveLayer } from '../core/toolpath_segments.js'
@@ -34,7 +34,7 @@ export const VERTEX_DATA = (() => {
  *
  * Per-instance attributes are read out of the per-vertex buffers in pairs: vertices 2s and 2s+1 are the two
  * endpoints of segment s. Height, width, orientation and colour are constant along a segment, so they come
- * from the first of the pair.
+ * from the first of the pair; the joined heading is per endpoint, so it is packed from both.
  */
 export function makeToolpath(THREE, data) {
   const { nSeg, nV, position, hwa, travelPos, travelPrefix, layerCount, meta } = data
@@ -44,6 +44,7 @@ export function makeToolpath(THREE, data) {
   const iHW = new Float32Array(nSeg * 2)
   const iColor = new Float32Array(nSeg)
   const iLayer = new Float32Array(nSeg)
+  const iJoin = new Float32Array(nSeg)
 
   for (let s = 0; s < nSeg; s++) {
     const a = (s * 2) * 4, b = (s * 2 + 1) * 4
@@ -52,6 +53,7 @@ export function makeToolpath(THREE, data) {
     iHW[s * 2] = hwa[a]; iHW[s * 2 + 1] = hwa[a + 1]
     iColor[s] = hwa[a + 3]                       // the feature-view colour, until setColors replaces it
     iLayer[s] = meta.vLayer[s * 2]
+    iJoin[s] = packJoin(hwa[a + 2], hwa[b + 2])
   }
 
   const geometry = new THREE.InstancedBufferGeometry()
@@ -63,6 +65,7 @@ export function makeToolpath(THREE, data) {
   const colorAttr = new THREE.InstancedBufferAttribute(iColor, 1)
   geometry.setAttribute('iColor', colorAttr)
   geometry.setAttribute('iLayer', new THREE.InstancedBufferAttribute(iLayer, 1))
+  geometry.setAttribute('iJoin', new THREE.InstancedBufferAttribute(iJoin, 1))
   geometry.instanceCount = nSeg
   // The instances move themselves in the vertex shader, so the template's own tiny bounds are meaningless
   //  to the frustum culler — it would cull the whole plate the moment the template's origin left the view.
@@ -90,14 +93,14 @@ export function makeToolpath(THREE, data) {
     const { source, layers } = decimateLayers(s => iLayer[s], nSeg, k, baseTop)
     const n = source.length
     const lStart = new Float32Array(n * 3), lEnd = new Float32Array(n * 3), lHW = new Float32Array(n * 2)
-    const lColor = new Float32Array(n), lLayer = new Float32Array(n)
+    const lColor = new Float32Array(n), lLayer = new Float32Array(n), lJoin = new Float32Array(n)
     for (let j = 0; j < n; j++) {
       const s = source[j], height = iHW[s * 2]
       const drop = (layers[j] - 1) * height / 2    // the bead covers its group, so its centre moves down
       lStart[j * 3] = iStart[s * 3]; lStart[j * 3 + 1] = iStart[s * 3 + 1]; lStart[j * 3 + 2] = iStart[s * 3 + 2] - drop
       lEnd[j * 3] = iEnd[s * 3]; lEnd[j * 3 + 1] = iEnd[s * 3 + 1]; lEnd[j * 3 + 2] = iEnd[s * 3 + 2] - drop
       lHW[j * 2] = height * layers[j]; lHW[j * 2 + 1] = iHW[s * 2 + 1]
-      lColor[j] = iColor[s]; lLayer[j] = iLayer[s]
+      lColor[j] = iColor[s]; lLayer[j] = iLayer[s]; lJoin[j] = iJoin[s]
     }
     const levelGeometry = new THREE.InstancedBufferGeometry()
     levelGeometry.setAttribute('tpl', geometry.attributes.tpl)
@@ -108,6 +111,7 @@ export function makeToolpath(THREE, data) {
     const levelColorAttr = new THREE.InstancedBufferAttribute(lColor, 1)
     levelGeometry.setAttribute('iColor', levelColorAttr)
     levelGeometry.setAttribute('iLayer', new THREE.InstancedBufferAttribute(lLayer, 1))
+    levelGeometry.setAttribute('iJoin', new THREE.InstancedBufferAttribute(lJoin, 1))
     levelGeometry.instanceCount = n
     const levelMesh = new THREE.Mesh(levelGeometry, material)
     levelMesh.frustumCulled = false
