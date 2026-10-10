@@ -53,7 +53,7 @@ being rewritten (`core/toolpath_views.js`, `use_move_scrub.js`). Everything else
 | `nTrav` | number | travel segments |
 | `nV` | number | vertices in the extrusion stream |
 | `position` | Float32Array | per-vertex geometry input |
-| `hwa` | Float32Array | per-vertex height / width / orientation |
+| `hwa` | Float32Array | per-vertex height / width / joined heading / packed colour |
 | `segIndex` | Uint32Array | per-vertex segment identity |
 | `layerSegPrefix` | Uint32Array, length `layerCount + 1` | non-decreasing; `[0] === 0`, `[layerCount] === nSeg` |
 | `travelPos`, `travelPrefix`, `nTrav` | — | the same, for travels |
@@ -94,6 +94,10 @@ Requirements:
   0.2 mm layer: the bead spans half a layer height either side.
 - Orientation follows the segment direction in the XY plane.
 - Width and height come from `meta`, per vertex, so two segments in one draw call can differ.
+- Consecutive beads meet. An endpoint shared with the next extrusion of the same layer (or, closing a loop, with
+  the first of its run) carries that neighbour's heading in `hwa[+2]`, and the side corners there sit on the
+  bisector of the two headings. Square ends left a wedge on the outside of every turn and a corner of every short
+  segment sticking out of a curved wall. Turns sharper than 140 degrees keep the square end.
 
 `makeToolpath(THREE, data) -> ToolpathHandle` builds the scene objects. The `THREE` namespace is **passed
 in, never imported** — that is what guarantees the consumer's own three.js instance is used, and it is why

@@ -34,6 +34,39 @@ function layerHeights(layers) {
 const pathsOf = (layer) => (layer?.paths?.length ? layer.paths : null)
 const segCountOf = (layer) => { const p = pathsOf(layer); return p ? Math.floor(p.length / STRIDE) : 0 }
 
+const headingOf = (position, s) => {
+  const a = s * 8, b = a + 4
+  return Math.atan2(position[b + 1] - position[a + 1], position[b] - position[a])
+}
+const lengthOf = (position, s) => {
+  const a = s * 8, b = a + 4
+  return Math.hypot(position[b] - position[a], position[b + 1] - position[a + 1])
+}
+const samePoint = (position, a, b) =>
+  position[a] === position[b] && position[a + 1] === position[b + 1] && position[a + 2] === position[b + 2]
+
+/** Each endpoint's `hwa[+2]` becomes the heading of the extrusion it joins there: the previous one at a start,
+ *  the next one at an end, wrapping round a closed loop. An endpoint with nothing joined keeps its own segment's
+ *  heading. The shader puts the bead's side corners on the bisector of the two headings, so consecutive beads
+ *  meet instead of leaving a wedge on the outside of every turn and a corner sticking out of every short
+ *  segment. Joined means consecutive in the stream, in one layer, sharing the exact endpoint (both values come
+ *  from the same stream float, so equality is exact), and neither zero-length (it has no heading). */
+function linkJoins(position, hwa, vLayer, nSeg) {
+  const join = (s, t) => {
+    hwa[s * 8 + 4 + 2] = headingOf(position, t)
+    hwa[t * 8 + 2] = headingOf(position, s)
+  }
+  const joinable = (s, t) =>
+    vLayer[s * 2] === vLayer[t * 2] && samePoint(position, s * 8 + 4, t * 8)
+    && lengthOf(position, s) > 0 && lengthOf(position, t) > 0
+  let runFirst = 0
+  for (let s = 0; s < nSeg; s++) {
+    if (s + 1 < nSeg && joinable(s, s + 1)) { join(s, s + 1); continue }
+    if (runFirst < s && joinable(s, runFirst)) join(s, runFirst)
+    runFirst = s + 1
+  }
+}
+
 /**
  * layers[{z, paths(stride 8), widths[]}] -> SegmentData.
  *
@@ -67,7 +100,7 @@ export function buildSegmentData(layers, defaultLineWidth) {
 
   const nV = nSeg * 2                      // one vertex per segment endpoint; the shader expands the bead
   const position = new Float32Array(nV * 4)   // [x, y, z - h/2, 0] — vec4 keeps the attribute 16-byte aligned
-  const hwa = new Float32Array(nV * 4)        // [height, width, xy angle, packed feature colour]
+  const hwa = new Float32Array(nV * 4)        // [height, width, joined heading (linkJoins), packed feature colour]
   const segIndex = new Uint32Array(nV * 2)    // [segment index, layer index]
   const vType = new Uint8Array(nV)
   const vTool = new Uint8Array(nV)
@@ -145,6 +178,8 @@ export function buildSegmentData(layers, defaultLineWidth) {
       si++
     }
   }
+
+  linkJoins(position, hwa, vLayer, nSeg)
 
   const bbox = nV > 0 && Number.isFinite(minX)
     ? { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] }
