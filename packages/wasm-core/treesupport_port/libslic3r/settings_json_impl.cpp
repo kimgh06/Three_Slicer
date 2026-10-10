@@ -113,6 +113,15 @@ std::string load_settings_json(const std::string& settings_json, DynamicPrintCon
     for (const auto& [key, definition] : print_config_def.options)
       if (definition.default_value && !config.has(key))
         config.set_key_value(key, definition.default_value->clone());
+    // A vector enum cloned from a default carries no name table (ConfigOptionDef::create_default_option is what sets
+    //  it), so deserializing "50%" into overhang_fan_threshold found no name, cleared the list and the template path
+    //  ran on the 95% default (measured: [overhang_fan_threshold] expanded to nothing for 0%, 25% and 50%).
+    for (const auto& [key, definition] : print_config_def.options) {
+      if (definition.type != coEnums || definition.enum_keys_map == nullptr) continue;
+      ConfigOption* option = config.optptr(key);
+      if (auto* enums = dynamic_cast<ConfigOptionEnumsGeneric*>(option)) enums->keys_map = definition.enum_keys_map;
+      if (auto* nullableEnums = dynamic_cast<ConfigOptionEnumsGenericNullable*>(option)) nullableEnums->keys_map = definition.enum_keys_map;
+    }
     config.load_string_map(key_values, ForwardCompatibilitySubstitutionRule::EnableSilent);
   } catch (const std::exception& error) {
     return std::string("settings could not be loaded: ") + error.what();
