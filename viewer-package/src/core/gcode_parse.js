@@ -11,7 +11,7 @@
 //  firmware retract, no vase-mode layer splitting for comment-less files; extend when such a file actually shows up.
 
 import { DEFAULT_FILAMENT_DIAMETER, DEFAULT_LAYER_HEIGHT } from './viewer_defaults.js'
-import { ROLE, encodeRole } from './toolpath_encoding.js'
+import { ROLE, STRIDE, encodeRole } from './toolpath_encoding.js'
 import { TOOL_COLOR } from './toolpath_palette.js'
 // The placeholders the kernel leaves for the finished estimate (M73 progress, file_start_gcode's totals).
 export { finalizeGcode } from './finalize_gcode.js'
@@ -108,6 +108,23 @@ const PE_ROLE = {
 // parseGcode(text, {filamentDiameter=1.75, defaultLayerHeight=0.2}) ->
 //   { layers: [{z, paths: Float32Array, widths: Float32Array}],
 //     stats: {layers, path_segments, travel_segments, filament_mm, tools, filament_mm_by_tool, colors?} }
+// The layers a slice is previewed with, read back from the very G-code it exports, so the preview is the file: the
+//  printer's start and end G-code extrusions included (an A1 mini draws its calibration lines in front of the bed),
+//  arcs as the parser divides them. The kernel's own toolpath stream left those out, and a sliced plate and the
+//  same file opened again looked different (measured on a benchy: 240 vs 241 layers, 5255.5 vs 5279.3 mm).
+//  The G-code is in printer coordinates; a slice's layers are plate-local, so the bed centre comes back off.
+//  Returns parseGcode's shape: the layers and the figures counted from the same text (layers, segments, filament).
+export function previewFromGcode(gcode, { center = { x: 0, y: 0 }, filamentDiameter, layerHeight } = {}) {
+  const parsed = parseGcode(gcode, { filamentDiameter, defaultLayerHeight: layerHeight })
+  for (const layer of parsed.layers) {
+    const paths = layer.paths
+    for (let k = 0; k + STRIDE <= paths.length; k += STRIDE) {
+      paths[k] -= center.x; paths[k + 1] -= center.y; paths[k + 4] -= center.x; paths[k + 5] -= center.y
+    }
+  }
+  return parsed
+}
+
 export function parseGcode(text, opts = {}) {
   const filArea = Math.PI / 4 * (opts.filamentDiameter > 0 ? opts.filamentDiameter : DEFAULT_FILAMENT_DIAMETER) ** 2
   const defH = opts.defaultLayerHeight > 0 ? opts.defaultLayerHeight : DEFAULT_LAYER_HEIGHT

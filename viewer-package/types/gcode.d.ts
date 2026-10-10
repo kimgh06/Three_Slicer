@@ -60,3 +60,9 @@ export interface ParseGcodeOptions {
  * Recovery is lossy where G-code carries no data: unknown roles become wall(1), widths are derived from E.
  */
 export function parseGcode(text: string, opts?: ParseGcodeOptions): ParseGcodeResult
+
+/**
+ * A slice as it is shown: its exported G-code parsed back (start and end G-code extrusions included),
+ * moved from printer coordinates into the slice's plate-local frame by taking the bed centre off.
+ */
+export function previewFromGcode(gcode: string, opts?: { center?: { x: number; y: number }; filamentDiameter?: number; layerHeight?: number }): ParseGcodeResult
