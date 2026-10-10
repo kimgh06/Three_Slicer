@@ -90,6 +90,20 @@ console.log('\n[lod: the mesh switches only for a whole print, and recolours eve
   handle.setLayerRange(0, layerCount - 1); handle.updateLod(camera, 1000)
   check('the whole range again -> coarse', handle.lodLevel() === far)
 
+  // The move scrub: the top layer drawn up to a move, the rest of it hidden; null gives the whole range back.
+  //  The renderer that replaced the ported one had left setMoveRange and `data` out, and the bar read 0 / 0.
+  check('the handle carries its data', handle.data === data)
+  const top = layerCount - 1
+  const cursor = handle.setMoveRange(1); handle.updateLod(camera, 1000)
+  check('a move cut draws full detail', handle.lodLevel() === 1)
+  check('a move cut draws the layers below and one move of the top', handle.mesh.geometry.instanceCount === data.layerSegPrefix[top] + 1,
+    `${handle.mesh.geometry.instanceCount} vs ${data.layerSegPrefix[top] + 1}`)
+  check('and says where the nozzle is', cursor?.layer === top && cursor.point?.[0] === 10 && cursor.point?.[1] === 0, JSON.stringify(cursor))
+  handle.setMoveRange(null); handle.updateLod(camera, 1000)
+  check('null draws the whole range again', handle.lodLevel() === far)
+  lookFrom(20); handle.updateLod(camera, 1000)
+  check('and every segment once close', handle.mesh.geometry.instanceCount === data.nSeg)
+
   const color = new Float32Array(data.nV * 4)
   for (let s = 0; s < data.nSeg; s++) color[s * 8] = 1000 + s
   handle.setColors(color)
