@@ -99,10 +99,13 @@ function droppedFeatures(project, loaded) {
   return dropped
 }
 
+// The keys that say which printer a project was made for: a project holding none of them leaves the chosen printer.
+const PROJECT_PRINTER_KEYS = ['printer_model', 'printer_settings_id', 'printable_area']
+
 export function makeModelLoad(deps) {
   const {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, settings, setSettings, setPlateSettings, importSl1, loadPresetFile,
     selectedPlateRef, disposePlateToolpath, plateCountRef, setPlateCount, bedRef,
     setError, clearError, setTriWarn, clearTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, clearSliceNotice, setDowngradeOffer, setGcodeResult, setCanvasMode, setObjects, setDragOver,
@@ -136,11 +139,18 @@ export function makeModelLoad(deps) {
   function applyProject(project, loaded) {
     const notices = []
     const imported = project.settings ? normalizeProjectSettings(project.settings) : null
+    // A project that names no printer keeps the one already chosen, as upstream keeps its presets for a 3mf without
+    //  a printer config. Replacing the map with such a project (one saved from a session with no printer picked
+    //  holds only the keys that session edited) set the printer back to the 200 mm default with no start G-code, and
+    //  the printer started its job without homing (measured: a Bambu Lab A1 mini picked, then a 3mf holding
+    //  enable_support and support_style opened, exported a job with no G28).
+    let projectMap = imported?.settings
+    if (imported?.applied && !PROJECT_PRINTER_KEYS.some(key => key in imported.settings)) projectMap = { ...settings, ...imported.settings }
     // The bed the project was authored on. Needed twice below and BOTH times before React has applied the new
     //  settings, so it is derived here from the incoming map rather than read back off the component.
-    const bed = imported?.applied ? deriveKernelParams(imported.settings) : null
+    const bed = imported?.applied ? deriveKernelParams(projectMap) : null
     if (imported?.applied) {
-      // Replace rather than merge: this map is "what the project is", and merging would leave keys from whatever
+      // Replace rather than merge when the project names its printer: this map is then "what the project is", and merging would leave keys from whatever
       //  was loaded before silently overriding the author's preset in ways nothing on screen would explain.
       //  The per-plate overrides go with it, for the same reason: an upstream 3mf carries no per-plate printer state, so a
       //  previous session's "plate 2 is SLA / 330mm" surviving onto the imported project would resize its grid
@@ -148,8 +158,8 @@ export function makeModelLoad(deps) {
       //  What does travel with it is this package's own member (write_3mf.js): the global viewer knobs the schema
       //  cannot type (wipe_tower_real...) layered over the map here, and the per-plate overrides once the plates
       //  exist (below).
-      let settingsWithKnobs = imported.settings
-      if (project.viewerSettings) settingsWithKnobs = { ...imported.settings, ...project.viewerSettings }
+      let settingsWithKnobs = projectMap
+      if (project.viewerSettings) settingsWithKnobs = { ...projectMap, ...project.viewerSettings }
       setSettings?.(settingsWithKnobs)
       notices.push(`${imported.applied} settings`)
       // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
