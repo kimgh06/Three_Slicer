@@ -123,6 +123,7 @@ export const KERNEL_SETTING_KEYS = [
   "raft_expansion",
   "raft_layers",
   "reduce_crossing_wall",
+  "reduce_infill_retraction",
   "resolution",
   "retraction_length",
   "retraction_minimum_travel",
