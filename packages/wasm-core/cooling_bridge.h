@@ -19,7 +19,12 @@ std::string process_layer(std::string&& gcode, int layer_id, unsigned int curren
 // The role fan regions the kernel marks for one filament (GCode::_extrude :7729-7795): the overhang fan when
 //  enable_overhang_bridge_fan is on (on the outer wall too when overhang_fan_threshold is 0%), the support interface fan
 //  and the ironing fan when their speed is set (not -1).
-struct Markers { bool overhang = false, overhang_external = false, support_interface = false, ironing = false; };
+struct Markers {
+  bool overhang = false, overhang_external = false, support_interface = false, ironing = false;
+  // overhang_fan_threshold as the overlap a wall segment may have with the layer below and still get the overhang fan
+  //  (GCode.cpp check_overhang_fan): 0.9 for 10%, 0.75, 0.5, 0.25, 0.05 for 95%; -1 for 0% (external walls only).
+  double overhang_overlap = -1.0;
+};
 Markers markers(unsigned int extruder);
 void end();
 

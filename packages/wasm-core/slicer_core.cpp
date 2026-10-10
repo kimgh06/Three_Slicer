@@ -248,9 +248,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       gw.cooling_markers = true;
       gw.fan_overhang = markers.overhang; gw.fan_overhang_external = markers.overhang_external;
       gw.fan_support_interface = markers.support_interface; gw.fan_ironing = markers.ironing;
+      if (markers.overhang) C.overhangOverlap = markers.overhang_overlap;
     }
   }
   C.cooling = cooling;
+  C.reduceInfillRetraction = p.reduce_infill_retraction && p.infill_density > 0;
   // The printer's layer templates (custom_gcode_layer): the writers mark their slots, the serial flush fills them.
   bool layerSlots = customGcode && custom_gcode_layer_slots();
   gw.layer_slots = layerSlots;

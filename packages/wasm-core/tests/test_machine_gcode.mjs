@@ -332,6 +332,55 @@ ok(String(brokenChange.error).startsWith('CUSTOM_GCODE_ERROR: change_filament_gc
 const slicerMtChanges = await createSlicerMt()
 ok(slicerMtChanges.slice(twoBoxes, JSON.stringify(toolchangeParams({})), () => {}).gcode === changed.gcode, 'st == mt with tool changes')
 
+console.log('[overhang fan: a wall that leaves the layer below]')
+// Upstream's per-segment rule (GCode::_extrude with ExtrusionQualityEstimator): with overhang_fan_threshold 50% a wall
+//  point outside the layer below gets the overhang fan (100% here), a wall over solid ground keeps the layer fan.
+function frustum(bottom, top, height) {
+  const b = bottom / 2, t = top / 2
+  const lo = [[-b,-b,0],[b,-b,0],[b,b,0],[-b,b,0]], hi = [[-t,-t,height],[t,-t,height],[t,t,height],[-t,t,height]]
+  const tris = [[lo[0],lo[2],lo[1]],[lo[0],lo[3],lo[2]],[hi[0],hi[1],hi[2]],[hi[0],hi[2],hi[3]]]
+  for (let k = 0; k < 4; k++) { const n = (k+1)%4; tris.push([lo[k],lo[n],hi[n]],[lo[k],hi[n],hi[k]]) }
+  return trisToSTL(tris)
+}
+const overhangConfig = (threshold) => ({ ...base, gcode_role_tags: true, machine_start_gcode: '; start', enable_arc_fitting: true,
+  placeholder_config: JSON.stringify({ machine_start_gcode: '; start', printable_area: ['0x0', '200x0', '200x200', '0x200'],
+    enable_overhang_bridge_fan: ['1'], overhang_fan_threshold: [threshold], overhang_fan_speed: ['100'],
+    fan_min_speed: ['40'], fan_max_speed: ['60'], close_fan_the_first_x_layers: ['1'] }) })
+const fullFanOnWalls = (gcode) => {
+  let role = '', fan = 0, count = 0
+  for (const line of gcode.split('\n')) {
+    const tag = /^;TYPE:(.+)$/.exec(line); if (tag) role = tag[1]
+    const set = /^M106 S(\d+)/.exec(line); if (set) fan = +set[1]
+    if (fan === 255 && role === 'Outer wall' && /^G[123] .*E[\d.]/.test(line)) count++
+  }
+  return count
+}
+const widening = slice(overhangConfig('50%'), frustum(10, 18, 2))     // 0.4 mm out per 0.2 mm layer
+ok(!widening.error && fullFanOnWalls(widening.gcode) > 0, `a wall that widens past the layer below runs the overhang fan (${fullFanOnWalls(widening.gcode)} moves)`)
+const straight = slice(overhangConfig('50%'), frustum(14, 14, 2))
+ok(!straight.error && fullFanOnWalls(straight.gcode) === 0, 'a straight wall keeps the layer fan')
+// 0.15 mm out per layer: the wall's centre (w/2 = 0.21 mm in) stays over the layer below, so the overlap is above 50%
+//  but below 75% (overlap = 1 - (0.15 - 0.21 + 0.21) / 0.42 = 0.64).
+const gentle = slice(overhangConfig('50%'), frustum(10, 13, 2))
+ok(fullFanOnWalls(gentle.gcode) === 0, 'a wall that overhangs less than the threshold keeps the layer fan')
+ok(fullFanOnWalls(slice(overhangConfig('25%'), frustum(10, 13, 2)).gcode) > 0, 'the same wall gets the fan at the 25% threshold')
+const slicerMtOverhang = await createSlicerMt()
+ok(slicerMtOverhang.slice(frustum(10, 18, 2), JSON.stringify(overhangConfig('50%')), () => {}).gcode === widening.gcode, 'st == mt with the overhang fan')
+
+console.log('[reduce_infill_retraction: no retraction for a travel inside the infill]')
+const sparseCube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 4))
+const infillTravels = (reduce) => slice({ ...base, infill_density: 0.15, machine_start_gcode: '; start', reduce_infill_retraction: reduce,
+  placeholder_config: JSON.stringify({ machine_start_gcode: '; start', printable_area: ['0x0', '200x0', '200x200', '0x200'] }) }, sparseCube)
+const retractions = (gcode) => (gcode.match(/^G1 E-/gm) ?? []).length
+const reduced = infillTravels(true), every = infillTravels(false)
+ok(!reduced.error && retractions(reduced.gcode) < retractions(every.gcode),
+   `travels between infill lines are not retracted (${retractions(every.gcode)} -> ${retractions(reduced.gcode)} retractions)`)
+ok(Math.abs(reduced.stats.filament_mm - every.stats.filament_mm) < 1e-6, 'and the extrusion is unchanged')
+const slicerMtTravel = await createSlicerMt()
+ok(slicerMtTravel.slice(sparseCube, JSON.stringify({ ...base, infill_density: 0.15, machine_start_gcode: '; start', reduce_infill_retraction: true,
+  placeholder_config: JSON.stringify({ machine_start_gcode: '; start', printable_area: ['0x0', '200x0', '200x200', '0x200'] }) }), () => {}).gcode === reduced.gcode,
+   'st == mt with reduce_infill_retraction')
+
 console.log('[temperatures: st == mt]')
 const slicerMt = await createSlicerMt()
 const mt = slicerMt.slice(cube, JSON.stringify(firstLayer), () => {})

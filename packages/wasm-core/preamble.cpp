@@ -49,6 +49,7 @@ void gw_setup_machine(GW& gw, const Params& p) {
   gw.absolute_e = !p.use_relative_e_distances;
   gw.firmware_retraction = p.use_firmware_retraction;
   gw.z_offset = p.z_offset;
+  gw.line_width = p.line_width;
   gw_setup_motion(gw, p, custom_gcode_is_bbl(p));
 }
 

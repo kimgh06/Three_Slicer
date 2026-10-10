@@ -37,6 +37,10 @@ struct SliceCtx {
   // Upstream's cooling filter runs on the layers (cooling_bridge.h): it then owns the layer-time slowdown and the
   //  fan, and the kernel's own approximations of both stand down.
   bool cooling = false;
+  // The per-layer regions the writer checks (EmitPre overhangArea / internalArea): the overhang fan's overlap
+  //  threshold (cooling_bridge Markers, -1 = off) and whether reduce_infill_retraction applies.
+  double overhangOverlap = -1.0;
+  bool reduceInfillRetraction = false;
 };
 
 // The per-layer flush callback (batch push / streamed sink) that raft emission borrows from slice().

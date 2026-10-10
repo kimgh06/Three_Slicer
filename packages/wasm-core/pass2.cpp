@@ -21,6 +21,15 @@ EmitPre compute_pre_layer(const SliceCtx& C, int i) {
     EmitPre ep;
     LayerData& ld = L[i];
     const double zE = ld.z + zShift;
+    // The overhang fan's region: the layer below offset by w*(0.5 - threshold) (GW::overhang_area). Not on the first
+    //  object layer, which upstream skips too (on_first_layer / object_layer_over_raft).
+    if (C.overhangOverlap >= 0 && i > 0 && !L[i-1].contour.empty())
+      ep.overhangArea = offset_paths(L[i-1].contour, w * (0.5 - C.overhangOverlap));
+    // reduce_infill_retraction's region: the slice without its exposed top and bottom (upstream's internal surfaces).
+    if (C.reduceInfillRetraction && !ld.contour.empty()) {
+      ep.internalArea = clip_paths(ld.contour, ld.topSurf, ctDifference);
+      ep.internalArea = clip_paths(ep.internalArea, ld.botSurf, ctDifference);
+    }
     ep.fSup = (int)std::llround(((i==0)?p.first_layer_speed:p.print_speed)*60);
     // Support lines — shared whether or not there is a model (same formulas as the empty-layer branch: angB==supBaseAng, ifSp==ifaceSp)
     const double supBaseAng  = p.support_angle + (i % 2 ? -45.0 : 45.0);

@@ -176,6 +176,7 @@ struct GW {
     }
     // The cooling filter takes a layer at a time: an open role fan region is opened again on the new layer.
     fan_marker_on[0] = fan_marker_on[1] = fan_marker_on[2] = false;
+    last_extrusion_role = -1;
   }
   int    lastFan=-1;               // current cooling fan value (M106 only on change)
   bool   arc_fitting=false;        // G2/G3 arc fitting
@@ -225,6 +226,11 @@ struct GW {
   }
   // Stage 6: wall-avoiding travel
   Paths  island;                   // region travels should stay inside (inside the walls). Empty means no check.
+  // reduce_infill_retraction (GCode::needs_retraction): a travel that stays inside the layer's internal region (the
+  //  slice minus its top and bottom surfaces) and leads to something other than a wall is not retracted, unless the
+  //  last extrusion was the outer wall. Empty = the option is off or the layer has no internal region.
+  Paths  internal_area;
+  int    last_extrusion_role=-1;   // reset on every layer (layer_z), so the parallel writers start where st starts
   bool   avoid_walls=false;
   long   wall_crossings=0;         // number of travels that actually crossed a wall (for cross-checking)
   // Upstream's ;TYPE: role tag (Params::gcode_role_tags). `type` is the kernel's toolpath type, the value push_seg
@@ -363,6 +369,14 @@ struct GW {
     line_xyf("G0 X", x+offX, y+offY, fTravel, "G0 X%.3f Y%.3f F%d");
     px=x; py=y; curF=-1;
   }
+  // True when the straight line A->B lies entirely inside internal_area (RetractWhenCrossingPerimeters::
+  //  travel_inside_internal_regions: diff_pl(travel, island).empty()).
+  bool inside_internal_area(double ax, double ay, double bx, double by) const {
+    Path segment; segment.push_back(IntPoint((cInt)std::llround(ax*SCALE),(cInt)std::llround(ay*SCALE)));
+    segment.push_back(IntPoint((cInt)std::llround(bx*SCALE),(cInt)std::llround(by*SCALE)));
+    Paths one; one.push_back(segment);
+    return paths_len(clip_open(one, internal_area), false) >= std::hypot(bx-ax, by-ay) - 1e-3;
+  }
   // True when the straight line A->B lies (almost) entirely inside the island (inside the walls)
   bool seg_inside(double ax,double ay,double bx,double by){
     if (island.empty()) return true;
@@ -422,6 +436,11 @@ struct GW {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
     apply_travel_motion(d);
     if (dry) { px=x; py=y; curF=-1; return; }   // G003: a detour ends at the same point -> position only
+    if (!internal_area.empty() && feature_role != outer_wall_role && feature_role != inner_wall_role &&
+        last_extrusion_role != outer_wall_role && inside_internal_area(px, py, x, y)) {
+      travel_hop(x, y, fTravel);
+      return;
+    }
     if (!island.empty() && !(avoid_walls ? seg_inside(px,py,x,y) : seg_inside_fast(px,py,x,y))) {
       if (avoid_walls) {
         std::vector<DPt> way = detour_path(px,py,x,y);
@@ -432,10 +451,32 @@ struct GW {
     travel_raw(x, y, fTravel);
   }
   void extrude(double x, double y, int fPrint) {
+    if (!dry && checks_overhang_segments()) {
+      // Each piece between two crossings is either over the layer below or not; its middle decides, and the fan
+      //  follows. Pieces shorter than a quarter of the line width are not split off (upstream's min_spacing).
+      const double ax = px, ay = py, length = std::hypot(x-ax, y-ay);
+      std::vector<double> cuts;
+      for (double t : overhang_crossings(ax, ay, x, y))
+        if (t * length >= 0.25*line_width && (1 - t) * length >= 0.25*line_width && (cuts.empty() || (t - cuts.back()) * length >= 0.25*line_width))
+          cuts.push_back(t);
+      cuts.push_back(1.0);
+      double from = 0.0;
+      for (double to : cuts) {
+        const double mx = ax + (x-ax)*(from+to)/2, my = ay + (y-ay)*(from+to)/2;
+        fan_marker(0, outside_overhang_area(mx, my), "_OVERHANG");
+        extrude_move(ax + (x-ax)*to, ay + (y-ay)*to, fPrint);
+        from = to;
+      }
+      return;
+    }
+    extrude_move(x, y, fPrint);
+  }
+  void extrude_move(double x, double y, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) return;
     apply_print_motion();
     fPrint = capped_feed(fPrint);
     if (dry) { px=x; py=y; curF=fPrint; return; }   // G003 dry run (assumes pe off — guarded in parallel mode)
+    last_extrusion_role = feature_role;
     int fUse = pe_feed(d, fPrint);               // PE-lite: apply the flow change rate limit (fPrint when off)
     double dE = e_per_mm * d; filament += dE; ++segments;
     const double eWord = e_word(dE);
@@ -489,6 +530,47 @@ struct GW {
   bool fan_overhang=false, fan_overhang_external=false, fan_support_interface=false, fan_ironing=false;
   int  bridge_role=6, support_interface_role=9, ironing_role=12;   // FlowRole indices (emit.h), set by gw_setup_motion
   bool fan_marker_on[3] = { false, false, false };                 // overhang, support interface, ironing
+  // The overhang fan per wall segment (GCode::_extrude with ExtrusionQualityEstimator): a segment whose overlap with
+  //  the layer below is at most the threshold gets it. overlap = 1 - (signed distance to the lower slice + w/2) / w, so
+  //  "overlap <= t" is "outside the lower slice offset by w*(0.5 - t)"; that offset region is overhang_area, set per
+  //  layer. Empty = not checked (first layer, threshold 0%, the fan off or no cooling filter).
+  // ponytail: a segment is judged by its two ends against one region, the line width of the print (not each wall's
+  //  own), and without upstream's curled-line distance or its smoothing between neighbouring points.
+  Paths overhang_area;
+  double line_width = 0.42;   // the print's line width (gw_setup_machine), the overhang pieces' scale
+  bool outside_overhang_area(double x, double y) const {
+    const IntPoint point((cInt)std::llround(x*SCALE), (cInt)std::llround(y*SCALE));
+    int inside = 0;
+    for (const Path& polygon : overhang_area) if (PointInPolygon(point, polygon) != 0) ++inside;
+    return (inside & 1) == 0;
+  }
+  bool checks_overhang_segments() const {
+    return cooling_markers && fan_overhang && !overhang_area.empty() &&
+           (feature_role == outer_wall_role || feature_role == inner_wall_role);
+  }
+  // Where the segment A->B crosses overhang_area's boundary, as fractions of its length in (0, 1), ascending. Upstream
+  //  adds these points to the path (estimate_points_properties ADD_INTERSECTIONS) so that only the part of a line
+  //  that leaves the layer below gets the fan.
+  std::vector<double> overhang_crossings(double ax, double ay, double bx, double by) const {
+    std::vector<double> cuts;
+    const double dx = bx - ax, dy = by - ay;
+    for (const Path& polygon : overhang_area) {
+      const size_t n = polygon.size();
+      for (size_t k = 0; k < n; ++k) {
+        const double cx = polygon[k].x()*INV, cy = polygon[k].y()*INV;
+        const double ex = polygon[(k+1)%n].x()*INV - cx, ey = polygon[(k+1)%n].y()*INV - cy;
+        const double denominator = dx*ey - dy*ex;
+        if (std::fabs(denominator) < 1e-12) continue;
+        const double t = ((cx-ax)*ey - (cy-ay)*ex) / denominator, u = ((cx-ax)*dy - (cy-ay)*dx) / denominator;
+        if (t > 1e-9 && t < 1-1e-9 && u >= 0 && u <= 1) cuts.push_back(t);
+      }
+    }
+    std::sort(cuts.begin(), cuts.end());
+    return cuts;
+  }
+  bool overhang_touches(double ax, double ay, double bx, double by) const {
+    return outside_overhang_area(ax, ay) || outside_overhang_area(bx, by) || !overhang_crossings(ax, ay, bx, by).empty();
+  }
   void fan_marker(int which, bool on, const char* prefix) {
     if (on == fan_marker_on[which]) return;
     fan_marker_on[which] = on;
@@ -516,6 +598,16 @@ struct GW {
     if (pts.size() > 1) apply_print_motion();
     if (dry) { if (pts.size()>1) { px=pts.back().x; py=pts.back().y; curF=capped_feed(fPrint); } return; }
     if (!arc_fitting) { for (size_t i=1;i<pts.size();++i) extrude(pts[i].x,pts[i].y,fPrint); return; }
+    // A wall path with an overhang goes out as G1 moves, as upstream's per-point branch does: an arc cannot carry a fan
+    //  switch in its middle.
+    if (checks_overhang_segments()) {
+      bool touches = false;
+      for (size_t k = 1; k < pts.size() && !touches; ++k) touches = overhang_touches(pts[k-1].x, pts[k-1].y, pts[k].x, pts[k].y);
+      if (touches) { for (size_t k = 1; k < pts.size(); ++k) extrude(pts[k].x, pts[k].y, fPrint); return; }
+    }
+    extrude_fitted(pts, fPrint, type);
+  }
+  void extrude_fitted(const std::vector<DPt>& pts, int fPrint, float type) {
     // An arc stands for the points it was fitted to, so they never reach extrude() and its note_xy. Noting every
     //  input point here keeps the extent honest: the arc stays within the fitting tolerance of them.
     for (const DPt& q : pts) note_xy(q.x, q.y);
@@ -547,6 +639,7 @@ struct GW {
     if (fPrint!=curF){ std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",command,end.x+offX,end.y+offY,I,J,eWord,fPrint); curF=fPrint; }
     else            { std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   command,end.x+offX,end.y+offY,I,J,eWord); }
     raw(buf); px=end.x; py=end.y;
+    last_extrusion_role = feature_role;
   }
 };
 

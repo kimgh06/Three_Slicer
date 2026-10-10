@@ -263,11 +263,22 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
       if (tool >= 0 && std::find(tools.begin(), tools.end(), (unsigned int)tool) == tools.end()) tools.push_back((unsigned int)tool);
     if (cooling_bridge::begin(p.placeholder_config, tools).empty()) { cooling = true; coolingSession.on = true; gw.cooling_markers = true; }
   }
+  // The overhang fan's region for the loaded filament's threshold (GW::overhang_area, the single-material path's
+  //  compute_pre_layer): the layer below offset by w*(0.5 - threshold), refreshed on each layer and tool change.
+  double overhangOverlap = -1.0;
+  Paths lowerSlice;
+  auto refreshOverhangArea=[&](){
+    gw.overhang_area.clear();
+    if (overhangOverlap >= 0 && !lowerSlice.empty()) gw.overhang_area = offset_paths(lowerSlice, w * (0.5 - overhangOverlap));
+  };
   auto coolingMarkersFor=[&](int tool){
     if (!cooling) return;
     const cooling_bridge::Markers markers = cooling_bridge::markers((unsigned int)tool);
     gw.fan_overhang = markers.overhang; gw.fan_overhang_external = markers.overhang_external;
     gw.fan_support_interface = markers.support_interface; gw.fan_ironing = markers.ironing;
+    overhangOverlap = -1.0;
+    if (markers.overhang) overhangOverlap = markers.overhang_overlap;
+    refreshOverhangArea();
   };
   coolingMarkersFor(0);
   // The layer templates' slots (custom_gcode_layer): this path learns whether the printer has any only once the
@@ -410,8 +421,14 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onP
 
     std::vector<Paths> groups(nGroups);
     if (!preSliced.empty()) groups = preSliced[i];      // already cut above for the segmentation — do not cut twice
-    else for (int g=0; g<nGroups; ++g) groups[g]=slice_group(tris,bounds[g],bounds[g+1],z);
+    else for (int g=0; g<nGroups; ++g) groups[g]=slice_group(tris,bounds[g],bounds[g+1],layerZs[i]);
     gw.island = Paths{};
+    lowerSlice.clear();
+    if (i > 0) lowerSlice = layerContour[i-1];
+    refreshOverhangArea();
+    gw.internal_area.clear();
+    if (p.reduce_infill_retraction && p.infill_density > 0 && !layerContour[i].empty())
+      gw.internal_area = clip_paths(clip_paths(layerContour[i], topSurf[i], ctDifference), botSurf[i], ctDifference);
     // One region's geometry, kept split by FEATURE so a per-feature filament id has something to address. The wall
     //  loops stay a list of one Paths per loop level rather than being merged: emit_loops is called once per level
     //  and its seam handling is per call, so merging them would move seams even when no feature id is set.

@@ -503,6 +503,8 @@ export function deriveKernelParams(settings, opts) {
   // Whether one nozzle carries every filament (upstream single_extruder_multi_material): the second-layer switch
   //  then names no tool and sets only the loaded one.
   if (presentOrTemplate('single_extruder_multi_material')) printerCommands.single_extruder_multi_material = bool('single_extruder_multi_material', true)
+  // No retraction for a travel inside the infill (upstream GCode::needs_retraction); upstream's default is on.
+  if (presentOrTemplate('reduce_infill_retraction')) printerCommands.reduce_infill_retraction = bool('reduce_infill_retraction', true)
   // The firmware flavor formats the machine commands (machine_writer.h); upstream's default is "marlin".
   if (presentOrTemplate('gcode_flavor')) printerCommands.gcode_flavor = str('gcode_flavor')
   // disable_m73 false: the G-code carries upstream's M73 progress placeholders (finalizeGcode fills them).

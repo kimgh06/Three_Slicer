@@ -121,6 +121,7 @@ Params parse_params(const std::string& j) {
   p.single_extruder_multi_material = jbool(j,"single_extruder_multi_material",p.single_extruder_multi_material);
   p.gcode_flavor            = jstr(j,"gcode_flavor",p.gcode_flavor);
   p.use_relative_e_distances = jbool(j,"use_relative_e_distances",p.use_relative_e_distances);
+  p.reduce_infill_retraction = jbool(j,"reduce_infill_retraction",p.reduce_infill_retraction);
   p.disable_m73              = jbool(j,"disable_m73",p.disable_m73);
   p.use_firmware_retraction  = jbool(j,"use_firmware_retraction",p.use_firmware_retraction);
   p.z_offset                 = jget(j,"z_offset",p.z_offset);

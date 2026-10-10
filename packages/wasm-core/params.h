@@ -28,6 +28,7 @@ struct Params {
   //  ;_GP_LAST_LINE_M73_PLACEHOLDER at the end), which the host fills with M73 from the finished estimate
   //  (three-slicer-viewer/gcode finalizeGcode). true (no key sent) writes neither.
   bool   disable_m73=true;
+  bool   reduce_infill_retraction=false;   // no retraction for a travel inside the infill (GCode::needs_retraction); off = the kernel's own rule
   bool   use_relative_e_distances=true;   // false = absolute E (M82, G92 E0 after each retraction), upstream's two modes
   bool   use_firmware_retraction=false;   // G10/G11 instead of E moves (upstream GCodeWriter::_retract)
   double z_offset=0.0;                    // added to every Z the G-code writes (upstream GCodeWriter, z_offset)

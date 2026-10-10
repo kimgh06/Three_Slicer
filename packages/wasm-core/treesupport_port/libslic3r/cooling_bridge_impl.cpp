@@ -60,6 +60,14 @@ Markers markers(unsigned int extruder) {
   const PrintConfig& config = g_session->config;
   out.overhang = config.enable_overhang_bridge_fan.get_at(extruder);
   out.overhang_external = config.overhang_fan_threshold.get_at(extruder) == int(Overhang_threshold_none);
+  switch (config.overhang_fan_threshold.get_at(extruder)) {
+  case int(Overhang_threshold_1_4):    out.overhang_overlap = 0.9;  break;
+  case int(Overhang_threshold_2_4):    out.overhang_overlap = 0.75; break;
+  case int(Overhang_threshold_3_4):    out.overhang_overlap = 0.5;  break;
+  case int(Overhang_threshold_4_4):    out.overhang_overlap = 0.25; break;
+  case int(Overhang_threshold_bridge): out.overhang_overlap = 0.05; break;
+  default: break;
+  }
   out.support_interface = config.support_material_interface_fan_speed.get_at(extruder) > -1;
   out.ironing = config.ironing_fan_speed.get_at(extruder) > -1;
   return out;

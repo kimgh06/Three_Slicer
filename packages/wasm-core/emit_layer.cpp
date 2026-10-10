@@ -162,6 +162,7 @@ void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
   gw.z = zE;
   gw.pe_reset();
   if (!gw.dry) gw.island = g_keep_island ? ld.island : std::move(ld.island);   // G003: copy when the cache is kept
+  if (!gw.dry) { gw.overhang_area = std::move(pre.overhangArea); gw.internal_area = std::move(pre.internalArea); }
   seamCtx.rng = 2654435761u * (uint32_t)(i+1);
   g_seg_w = gw.dry ? nullptr : &widths; g_seg_w_cur = (float)w;
   char cm[72];
