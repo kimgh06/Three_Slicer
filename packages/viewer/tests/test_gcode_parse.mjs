@@ -6,7 +6,7 @@ import assert from 'node:assert'
 //  back with the permissive parser — so it stays on the AGPL side. The permissive package must not
 //  depend on the kernel, in tests either.
 import createSlicer from '../../engine/src/slicer_core.js'
-import { parseGcode, resultToolColors, withFilamentColours } from 'three-slicer-viewer/gcode'
+import { parseGcode, resultToolColors, withFilamentColours, previewFromGcode } from 'three-slicer-viewer/gcode'
 
 const ROLE_OF = (v) => v & 15, TOOL_OF = (v) => v >>> 4
 
@@ -178,4 +178,32 @@ if (r.gcode.includes('; CONFIG_BLOCK_END')) {
 }
 assert.strictEqual(withFilamentColours('G1 X1', ['#123456']), 'G1 X1\n; filament_colour = #123456\n', 'no block -> appended')
 console.log('  ok: file palette, per-tool filament, T>254 opcodes, export round trip')
+
+// ── (3) the preview of a slice is its exported G-code read back, in the slice's own frame ─────────────
+// A printer whose bed starts at (20, 10) and whose start G-code extrudes a line in front of the bed: the preview has
+//  that line as its own first layer, and every model layer lands where the kernel's stream put it.
+{
+  const start = 'G1 X30 Y5 Z0.3 F3000\nG1 X80 Y5 E5 F1500'
+  const framed = { ...params, gcode_role_tags: true, bed_width: 200, bed_depth: 200, bed_origin_x: 20, bed_origin_y: 10, machine_start_gcode: start,
+    placeholder_config: JSON.stringify({ machine_start_gcode: start, printable_area: ['20x10', '220x10', '220x210', '20x210'] }) }
+  const sliced = Module.slice(new Uint8Array(makeBoxSTL(20, 20, 4)), JSON.stringify(framed), () => {})
+  const { layers: preview, stats: previewStats } = previewFromGcode(sliced.gcode, { center: { x: 120, y: 110 }, filamentDiameter: 1.75, layerHeight: 0.2 })
+  const extrusionBox = (layer) => {
+    const box = [Infinity, -Infinity, Infinity, -Infinity]
+    for (let k = 0; k + 8 <= layer.paths.length; k += 8) {
+      if (ROLE_OF(layer.paths[k + 3]) === 0) continue
+      for (const [x, y] of [[layer.paths[k], layer.paths[k + 1]], [layer.paths[k + 4], layer.paths[k + 5]]]) {
+        box[0] = Math.min(box[0], x); box[1] = Math.max(box[1], x); box[2] = Math.min(box[2], y); box[3] = Math.max(box[3], y)
+      }
+    }
+    return box.map(v => Math.round(v * 100) / 100)
+  }
+  assert.strictEqual(preview.length, sliced.layers.length + 1, 'the start G-code\'s extrusion is a layer of its own before the model\'s')
+  assert.deepStrictEqual(extrusionBox(preview[0]), [30 - 120, 80 - 120, 5 - 110, 5 - 110], 'the start line, in the slice frame')
+  const kernelTop = sliced.layers.at(-1), previewTop = preview.at(-1)
+  assert.ok(Math.abs(kernelTop.z - previewTop.z) < 1e-6, 'the model layers keep their z')
+  assert.deepStrictEqual(extrusionBox(previewTop), extrusionBox(kernelTop), 'and their place: the preview and the kernel stream agree')
+  assert.ok(previewStats.filament_mm > sliced.stats.filament_mm + 4.9, 'the figures count the start line too (5 mm of it)')
+  console.log('  ok: preview read back from the exported G-code, start line included, in the slice frame')
+}
 console.log('gcode_parse: ALL OK')

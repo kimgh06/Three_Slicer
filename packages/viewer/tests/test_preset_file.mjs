@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { writePresetFile, readPresetFile, presetOptionKeys,
-         printerSettings, printerKeys, printerDefaultBedType, filamentPresets } from '../../engine/src/settings.js'
+         printerSettings, printerKeys, printerDefaultBedType, filamentPresets, printersByVendor } from '../../engine/src/settings.js'
 // The bundle codec moved with the viewer into the permissive package; this test stays here because it also
 //  exercises the vendor catalog (printerSettings/printerKeys), which is AGPL data.
 import { writePrinterBundle, readPresetArchive, isPresetArchive } from '../../../viewer-package/src/core/preset_bundle.js'
@@ -83,6 +83,9 @@ check('...and without the parent the bed is missing',
 
 const resolved = readPresetFile(upstream, { resolveParent: (name) => printerSettings(name) })
 check('the parent resolves out of the shipped catalog', resolved.missingParent === null)
+// The parent is an abstract preset (`instantiation: false`): resolvable by name, never offered for picking.
+check('...but the picker does not list it',
+  !Object.values(printersByVendor).some(models => upstream.inherits in models))
 check('...and the bed comes back', Array.isArray(resolved.settings.printable_area) && resolved.settings.printable_height === 250,
   JSON.stringify(resolved.settings.printable_area))
 // The file is the diff, so where both carry a key the file must win.

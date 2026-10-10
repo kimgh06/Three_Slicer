@@ -18,6 +18,9 @@ struct EmitPre {
   //  bottom (erBottomSurface) of the current layer, and the brim rings, which otherwise ride in flExtra with the skirt.
   Paths topExposedLines, bottomLines, brimLoops;
   bool brim=false; int fPrint=0, fBridge=0, fSup=0;
+  RoleFeeds feeds;   // the feed per role on this layer (emit.cpp role_feeds); every role at fPrint without per-role speeds
+  // The writer's per-layer regions (GW overhang_area / internal_area), empty when not checked.
+  Paths overhangArea, internalArea;
 };
 
 void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,

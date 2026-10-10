@@ -34,6 +34,13 @@ struct SliceCtx {
   double sparse_spacing = 0, solid_spacing = 0, support_spacing = 0;
   double zShift = 0;
   bool ironOn = false;
+  // Upstream's cooling filter runs on the layers (cooling_bridge.h): it then owns the layer-time slowdown and the
+  //  fan, and the kernel's own approximations of both stand down.
+  bool cooling = false;
+  // The per-layer regions the writer checks (EmitPre overhangArea / internalArea): the overhang fan's overlap
+  //  threshold (cooling_bridge Markers, -1 = off) and whether reduce_infill_retraction applies.
+  double overhangOverlap = -1.0;
+  bool reduceInfillRetraction = false;
 };
 
 // The per-layer flush callback (batch push / streamed sink) that raft emission borrows from slice().
@@ -55,6 +62,15 @@ struct EmitFlags { bool realPE, ironOn, scarfOn; int seamMode; };
 struct CustomStart;
 // `start` is the expanded custom start block (custom_gcode.h), or null for the raw path.
 EmitFlags gw_setup_preamble(GW& gw, const Params& p, int treeSupLayers, double treeZMaxResid, const CustomStart* start = nullptr);
+// The temperatures of the first layer (the host's _initial_layer values, else the print's own) and the switch to
+//  the print's own at the second printed layer (preamble.cpp).
+// The writer's machine state from the profile (flavor, E mode, firmware retraction, z_offset), and the modes block
+//  the G-code switches to after the start G-code (preamble.cpp). Shared by the single- and multi-material paths.
+void gw_setup_machine(GW& gw, const Params& p);
+void gw_write_modes(GW& gw, const Params& p, bool is_bbl);
+double first_layer_bed(const Params& p);
+double first_layer_nozzle(const Params& p, int tool);
+std::string second_layer_temperatures(const Params& p, const std::vector<int>& tools, bool multiple_extruders, int bed_set);
 void setup_time_limits(const Params& p, gcode_time::Limits& glim, gcodeproc_bridge::Limits& gl);
 
 // ---- Raft -> raft.cpp ---------------------------------------------------------

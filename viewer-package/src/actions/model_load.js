@@ -1,7 +1,7 @@
 import { log } from '../core/log.js'
 import { parseGcode } from '../core/gcode_parse.js'
 import { objectRows } from '../core/object_rows.js'
-import { normalizeProjectSettings, deriveKernelParams } from 'three-slicer-viewer/settings'
+import { normalizeProjectSettings, deriveKernelParams, bedOrigin, bedCenter } from 'three-slicer-viewer/settings'
 import { loadModel, SUPPORTED_EXT, GCODE_EXTS, fileExt } from '../scene/model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO, MAX_PLATES } from '../core/plate_layout.js'
 import { PRESET_ACCEPT } from './preset_actions.js'
@@ -52,9 +52,13 @@ function groupCentredPlacements(plates, byObjectId) {
 }
 
 /** Exported for the import test — the placement rule is the part with a wrong answer worth pinning. */
-export function platePlacements(plates, loaded, bedWidth, bedDepth) {
+//  `origin` is the printable area's lower-left corner in printer coordinates (settings bedOrigin): upstream lays a
+//  plate's objects out in printer coordinates, so an object sits between the corner and corner + bed, and the plate
+//  frame's (0,0) is the bed centre.
+export function platePlacements(plates, loaded, bedWidth, bedDepth, origin = { x: 0, y: 0 }) {
   const byObjectId = new Map(loaded.map(e => [e.objectid, e]))
   if (!(bedWidth > 0 && bedDepth > 0)) return groupCentredPlacements(plates, byObjectId)
+  const center = bedCenter({ bed_width: bedWidth, bed_depth: bedDepth, bed_origin_x: origin.x, bed_origin_y: origin.y })
   const cols = plateCols(plates.length)
   const strideX = bedWidth * (1 + UPSTREAM_PLATE_GAP_RATIO)
   const strideY = bedDepth * (1 + UPSTREAM_PLATE_GAP_RATIO)
@@ -71,8 +75,8 @@ export function platePlacements(plates, loaded, bedWidth, bedDepth) {
       // The decode is only right if every object lands on the plate it says it is on. A project written under a
       //  different grid rule would put them somewhere else entirely, and scattering objects off the bed is worse
       //  than losing the absolute placement — so one bad object drops the whole file to the fallback.
-      if (localX < 0 || localX > bedWidth || localY < 0 || localY > bedDepth) decoded = false
-      out.push([e.id, plate.index, localX - bedWidth / 2, localY - bedDepth / 2])
+      if (localX < origin.x || localX > origin.x + bedWidth || localY < origin.y || localY > origin.y + bedDepth) decoded = false
+      out.push([e.id, plate.index, localX - center.x, localY - center.y])
     }
   }
   return decoded ? out : groupCentredPlacements(plates, byObjectId)
@@ -95,10 +99,13 @@ function droppedFeatures(project, loaded) {
   return dropped
 }
 
+// The keys that say which printer a project was made for: a project holding none of them leaves the chosen printer.
+const PROJECT_PRINTER_KEYS = ['printer_model', 'printer_settings_id', 'printable_area']
+
 export function makeModelLoad(deps) {
   const {
     apiRef, objectsRef, layersDataRef, segDataRef, plateResultsRef, plateOffsetsRef,
-    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, setSettings, setPlateSettings, importSl1, loadPresetFile,
+    clearToolpaths, refreshSlicedCount, dragOver, registerSelectorRef, applyProjectFilaments, settings, setSettings, setPlateSettings, importSl1, loadPresetFile,
     selectedPlateRef, disposePlateToolpath, plateCountRef, setPlateCount, bedRef,
     setError, clearError, setTriWarn, clearTriWarn, setProgress, setStats, setOverBed, setLayerCount, setSegCount,
     setColorRange, setSliceNotice, clearSliceNotice, setDowngradeOffer, setGcodeResult, setCanvasMode, setObjects, setDragOver,
@@ -132,11 +139,18 @@ export function makeModelLoad(deps) {
   function applyProject(project, loaded) {
     const notices = []
     const imported = project.settings ? normalizeProjectSettings(project.settings) : null
+    // A project that names no printer keeps the one already chosen, as upstream keeps its presets for a 3mf without
+    //  a printer config. Replacing the map with such a project (one saved from a session with no printer picked
+    //  holds only the keys that session edited) set the printer back to the 200 mm default with no start G-code, and
+    //  the printer started its job without homing (measured: a Bambu Lab A1 mini picked, then a 3mf holding
+    //  enable_support and support_style opened, exported a job with no G28).
+    let projectMap = imported?.settings
+    if (imported?.applied && !PROJECT_PRINTER_KEYS.some(key => key in imported.settings)) projectMap = { ...settings, ...imported.settings }
     // The bed the project was authored on. Needed twice below and BOTH times before React has applied the new
     //  settings, so it is derived here from the incoming map rather than read back off the component.
-    const bed = imported?.applied ? deriveKernelParams(imported.settings) : null
+    const bed = imported?.applied ? deriveKernelParams(projectMap) : null
     if (imported?.applied) {
-      // Replace rather than merge: this map is "what the project is", and merging would leave keys from whatever
+      // Replace rather than merge when the project names its printer: this map is then "what the project is", and merging would leave keys from whatever
       //  was loaded before silently overriding the author's preset in ways nothing on screen would explain.
       //  The per-plate overrides go with it, for the same reason: an upstream 3mf carries no per-plate printer state, so a
       //  previous session's "plate 2 is SLA / 330mm" surviving onto the imported project would resize its grid
@@ -144,8 +158,8 @@ export function makeModelLoad(deps) {
       //  What does travel with it is this package's own member (write_3mf.js): the global viewer knobs the schema
       //  cannot type (wipe_tower_real...) layered over the map here, and the per-plate overrides once the plates
       //  exist (below).
-      let settingsWithKnobs = imported.settings
-      if (project.viewerSettings) settingsWithKnobs = { ...imported.settings, ...project.viewerSettings }
+      let settingsWithKnobs = projectMap
+      if (project.viewerSettings) settingsWithKnobs = { ...projectMap, ...project.viewerSettings }
       setSettings?.(settingsWithKnobs)
       notices.push(`${imported.applied} settings`)
       // The filament list, before the per-object extruders below — those are coloured by looking the extruder up
@@ -168,7 +182,7 @@ export function makeModelLoad(deps) {
       if (meta.name) { const o = objectsRef.current.find(x => x.id === entry.id); if (o) { o.name = meta.name; o.mesh.userData.name = meta.name } }
     }
     // Plates last: placing an object needs the FINAL plate count, because the plate origins are laid out against it.
-    const assignments = platePlacements(project.plates, loaded, bed?.bed_width, bed?.bed_depth)
+    const assignments = platePlacements(project.plates, loaded, bed?.bed_width, bed?.bed_depth, bedOrigin(bed))
     let beyondLastPlate = 0, finalPlateCount = plateCountRef?.current ?? 1
     if (assignments.length && applyProjectPlates) {
       //  The saved plate count counts too (our member): the <plate> records name only plates holding objects, so an

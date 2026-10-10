@@ -151,7 +151,7 @@ def _parse_list_items(raw, macros):
     pat = (r'"((?:[^"\\]|\\.)*)"'                                        # 1: string
            r'|FloatOrPercent\(\s*([0-9.\-]+)\s*,\s*(true|false)\s*\)'    # 2,3: FloatOrPercent
            r'|Vec2d\(\s*([0-9.\-]+)\s*,\s*([0-9.\-]+)\s*\)'              # 4,5: coordinates
-           r'|([A-Za-z_][\w.]*|[0-9.\-]+)')                              # 6: identifier/number
+           r'|([A-Za-z_][\w.]*|[0-9.\-]+)[fF]?')                        # 6: identifier/number (a C++ 280.f drops its f)
     for m in re.finditer(pat, raw):
         s, fov, fob, vx, vy, ident = m.groups()
         if s is not None:
@@ -454,6 +454,9 @@ PRINTER_KEYS = [
     #  set it, against 28 machine profiles). Claiming them here would let a printer pick block a quality preset.
     # Geometry / hardware — the bed and nozzle the viewer draws and the kernel slices against
     'printable_area', 'printable_height', 'nozzle_diameter', 'z_hop', 'extruder_offset',
+    # The images the printer shows for a job: the viewer renders and writes them into the G-code on export
+    #  (viewer-package core/thumbnails.js).
+    'thumbnails',
     # The custom G-code (machine_start_gcode, …) and every machine option it reads are added by extract_printers
     #  from _custom_gcode_keys: the kernel expands the templates with upstream's PlaceholderParser (issue 63).
 ]
@@ -466,7 +469,11 @@ def _coerce(value, ctype):
         except (TypeError, ValueError): return tok
     if ctype == 'coPoints':          # ["0x0","220x0"] -> [[0,0],[220,0]]
         pts = []
-        for tok in (value if isinstance(value, list) else [value]):
+        # Some profiles write the list as ONE comma-separated string ("0x0,220x0,220x220,0x220"; 17 Creality
+        #  machines), which upstream's loader splits the same way. Taken as one token it parsed to nothing, and those
+        #  printers lost their bed size.
+        tokens = value if isinstance(value, list) else str(value).split(',')
+        for tok in tokens:
             parts = str(tok).split('x')
             if len(parts) == 2: pts.append([num(parts[0]), num(parts[1])])
         return pts or None
@@ -535,6 +542,25 @@ def _custom_gcode_keys(schema):
                         keys.update(re.findall(r'[a-z_][a-z0-9_]*', expression))
     return sorted(k for k in keys if k in schema and not k.endswith('_settings_id'))
 
+def _cooling_keys(schema):
+    """The options upstream's cooling filter reads (the ported CoolingBuffer.cpp, as EXTRUDER_CONFIG(x) / m_config.x,
+    and the kernel's marker switches in cooling_bridge_impl.cpp, as config.x): a preset has to carry them for the
+    filter to cool with the preset's own values instead of the schema defaults. Read from the sources, which are the
+    owners, so a key the filter starts reading is extracted with no list to keep in step."""
+    sources = [os.path.join(REPO, 'packages', 'wasm-core', 'treesupport_port', 'libslic3r', 'GCode', 'CoolingBuffer.cpp'),
+               os.path.join(REPO, 'packages', 'wasm-core', 'treesupport_port', 'libslic3r', 'cooling_bridge_impl.cpp')]
+    keys = set()
+    for path in sources:
+        with open(path, encoding='utf-8') as fh:
+            text = fh.read()
+        keys.update(re.findall(r'EXTRUDER_CONFIG\((\w+)\)', text))
+        keys.update(re.findall(r'\bm_config\.(\w+)', text))
+        keys.update(re.findall(r'\bconfig\.(\w+)', text))
+    found = sorted(k for k in keys if k in schema)
+    if not found:
+        raise SystemExit('no cooling keys found in CoolingBuffer.cpp / cooling_bridge_impl.cpp')
+    return found
+
 def _intern_text(table, schema):
     """Issue 63: store every multi-line text value (the schema's `multiline` options — custom G-code, notes) once, in
     table['text'], and put its index in the rows. A start G-code is shared by every nozzle variant of a machine, so
@@ -557,7 +583,7 @@ def _intern_text(table, schema):
 
 def _preset_keys(schema):
     """What a process or filament preset carries: the kernel's keys and the ones its custom G-code reads."""
-    return sorted(set(_kernel_keys(schema)) | set(_custom_gcode_keys(schema)))
+    return sorted(set(_kernel_keys(schema)) | set(_custom_gcode_keys(schema)) | set(_cooling_keys(schema)))
 
 def extract_processes(schema):
     """Print (process) presets — where the print-side accelerations and speeds live. Joined to printers by the
@@ -682,7 +708,13 @@ def extract_filaments(schema):
         if str(prof.get('instantiation')) != 'true': continue
         compat = inherited(vendor, prof, 'compatible_printers')
         if not compat: continue                       # nothing to attach it to
-        entries.append((name, resolve(vendor, prof),
+        vals = resolve(vendor, prof)
+        # filament_ids is the per-filament column upstream fills from each preset's own `filament_id` (a preset
+        #  property, not an option: PresetBundle::full_fff_config, PresetBundle.cpp:4158). Bambu Lab start G-code
+        #  branches on it ({if filament_ids[initial_filament_id]=="GFA05"}), and an empty column stops the parse.
+        filament_id = inherited(vendor, prof, 'filament_id')
+        if isinstance(filament_id, str) and filament_id: vals['filament_ids'] = [filament_id]
+        entries.append((name, vals,
                         label(inherited(vendor, prof, 'filament_type')),
                         label(inherited(vendor, prof, 'filament_vendor')), compat))
 
@@ -717,7 +749,8 @@ def extract_printers(schema):
     #  column: upstream writes it to curr_bed_type when the printer is picked (Plater.cpp:3306-3325), a project
     #  option and not a printer preset key, and the bed temperature a template prints follows it.
     printer_options = set(extract_preset_keys(schema)['printer'])
-    printer_keys = PRINTER_KEYS + [k for k in _custom_gcode_keys(schema) if k in printer_options and k not in PRINTER_KEYS]
+    printer_keys = PRINTER_KEYS + [k for k in _custom_gcode_keys(schema) + _cooling_keys(schema) if k in printer_options and k not in PRINTER_KEYS]
+    printer_keys = list(dict.fromkeys(printer_keys))
     model_bed_type = {}
     # Load every machine profile first: `inherits` points at a sibling profile by name and chains up to 5 deep
     profiles = {}   # (vendor, name) -> dict
@@ -747,10 +780,15 @@ def extract_printers(schema):
 
     # Column layout: the key names are written once and each printer's values are a positional row.
     #  Repeating ~20 long key names per set costs several hundred KB — more than the values themselves.
-    sets, index, by_vendor = [], {}, {}
+    sets, index, by_vendor, parents = [], {}, {}, {}
     for (vendor, name), prof in sorted(profiles.items()):
         # Abstract "…_common" parents carry no printer_model/variant — they exist only to be inherited
         if not (prof.get('printer_model') or prof.get('printer_variant')): continue
+        # Nor are they selectable when they do carry one: upstream lists only `instantiation: true` presets. 114 such
+        #  parents (fdm_machine_common, fdm_klipper_common, …) reached the picker, most without a bed of their own.
+        #  They still have to resolve BY NAME, because a user preset file is a diff against one of them
+        #  (`"inherits": "fdm_bbl_3dp_001_common"`), so they go to `parents` instead of `byVendor`.
+        abstract = str(prof.get('instantiation', 'true')).lower() == 'false'
         vals = resolve(vendor, prof, printer_keys)
         if not vals: continue
         bed_type = model_bed_type.get(resolve(vendor, prof, ['printer_model']).get('printer_model', ''), '')
@@ -770,8 +808,9 @@ def extract_printers(schema):
             while cur is not None and depth < 10 and not default_preset:
                 default_preset = cur.get('default_print_profile') or ''
                 cur = profiles.get((vendor, cur.get('inherits'))); depth += 1
-        by_vendor.setdefault(vendor, {})[name] = [nozzle, index[sig], model, default_preset, bed_type]
-    return {'keys': printer_keys, 'sets': sets, 'byVendor': by_vendor}
+        if abstract: parents[name] = [nozzle, index[sig], model, default_preset, bed_type]
+        else: by_vendor.setdefault(vendor, {})[name] = [nozzle, index[sig], model, default_preset, bed_type]
+    return {'keys': printer_keys, 'sets': sets, 'byVendor': by_vendor, 'parents': parents}
 
 # ---------------------------------------------------------------- SLA printers (PrusaSlicer vendor bundles)
 # The keys an SLA machine sets on top of the shared geometry keys. Appended to printers.json `keys`; the FFF
@@ -1061,11 +1100,6 @@ if __name__ == '__main__':
     lean_ui = {builder: [key for page in pages for group in page['groups'] for key in group['options']]
                for builder, pages in ui.items()}
     json.dump(lean_ui, open(os.path.join(OUT, 'ui-tree-keys.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
-    # The permissive package ships its own copies of the three prose-free artifacts.
-    import shutil
-    MIT_DATA = os.path.join(REPO, 'viewer-package', 'data'); os.makedirs(MIT_DATA, exist_ok=True)
-    for name in ('config-schema-lean.json', 'ui-tree-keys.json', 'preset-keys.json'):
-        if os.path.exists(os.path.join(OUT, name)): shutil.copy(os.path.join(OUT, name), os.path.join(MIT_DATA, name))
     npages = sum(len(v) for v in ui.values())
     nopts = sum(len(g['options']) for v in ui.values() for p in v for g in p['groups'])
 
@@ -1120,6 +1154,13 @@ if __name__ == '__main__':
 
     pk = extract_preset_keys(sch)
     json.dump(pk, open(os.path.join(OUT, 'preset-keys.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
+
+    # The permissive package ships its own copies of the three prose-free artifacts — copied once all three are
+    #  written, or it ships the previous extraction's lean schema.
+    import shutil
+    MIT_DATA = os.path.join(REPO, 'viewer-package', 'data'); os.makedirs(MIT_DATA, exist_ok=True)
+    for name in ('config-schema-lean.json', 'ui-tree-keys.json', 'preset-keys.json'):
+        if os.path.exists(os.path.join(OUT, name)): shutil.copy(os.path.join(OUT, name), os.path.join(MIT_DATA, name))
 
     # Emitted as a JS module, not JSON: this one is dynamically imported, and a dynamic JSON import needs
     #  `with { type: 'json' }` in Node while that same attribute makes browsers reject Vite's text/javascript

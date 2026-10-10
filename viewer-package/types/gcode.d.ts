@@ -9,6 +9,13 @@ export interface GcodeLayer {
   widths: Float32Array
 }
 
+/**
+ * Fills the placeholders a slice leaves for its finished estimate, as upstream's GCodeProcessor post-process does:
+ * the M73 progress lines (`;_GP_FIRST_LINE_M73_PLACEHOLDER` / `;_GP_LAST_LINE_M73_PLACEHOLDER`, one M73 per layer
+ * start) and file_start_gcode's `@PRINT_TIME_SEC@` / `@USED_FILAMENT_LENGTH@`. A G-code without them is returned as is.
+ */
+export function finalizeGcode(gcode: string, stats: { time_estimate?: number; filament_mm?: number; layer_times?: number[] } | null | undefined): string
+
 export interface ParseGcodeResult {
   layers: GcodeLayer[]
   stats: {
@@ -53,3 +60,9 @@ export interface ParseGcodeOptions {
  * Recovery is lossy where G-code carries no data: unknown roles become wall(1), widths are derived from E.
  */
 export function parseGcode(text: string, opts?: ParseGcodeOptions): ParseGcodeResult
+
+/**
+ * A slice as it is shown: its exported G-code parsed back (start and end G-code extrusions included),
+ * moved from printer coordinates into the slice's plate-local frame by taking the bed centre off.
+ */
+export function previewFromGcode(gcode: string, opts?: { center?: { x: number; y: number }; filamentDiameter?: number; layerHeight?: number }): ParseGcodeResult

@@ -6,6 +6,7 @@
 import { SEG_VS, SEG_FS } from '../core/toolpath_shaders.js'
 import { THEME } from '../core/theme.js'
 import { LOD_LEVELS, baseLayerTop, decimateLayers, typicalLayerHeight, projectedPixels, chooseLevel } from '../core/toolpath_lod.js'
+import { moveCursor, topMoveLayer } from '../core/toolpath_segments.js'
 
 // The bead template: a four-corner ring at each end of the segment, so 8 vertices.
 //  tpl = [which end (0 = start, 1 = end), which ring corner (0 = +side, 1 = +up, 2 = -side, 3 = -up)]
@@ -141,10 +142,13 @@ export function makeToolpath(THREE, data) {
   travLines.visible = false
   travLines.frustumCulled = false
 
+  let shownLo = 0, shownHi = Math.max(0, layerCount - 1)
   const setLayerRange = (lo, hi) => {
     const top = Math.max(0, layerCount - 1)
     const l = Math.max(0, Math.min(lo | 0, top))
     const h = Math.max(l, Math.min(hi | 0, top))
+    shownLo = l; shownHi = h
+    if (level === 1) geometry.instanceCount = nSeg   // a move cut (setMoveRange) ends with the range it was made in
     material.uniforms.uLayerLo.value = l
     material.uniforms.uLayerHi.value = h
     fullRange = l === 0 && h === top
@@ -157,10 +161,28 @@ export function makeToolpath(THREE, data) {
   }
   setLayerRange(0, layerCount - 1)
 
+  // The move scrub (use_move_scrub.js): the top shown layer drawn up to its move `at`, extrusions and travels in the
+  //  order they are printed, so the bar walks the nozzle through the layer. Both lists are stored in layer and print
+  //  order, so the cut is a count on each. null draws the whole range again. Returns moveCursor's answer with the
+  //  layer it walked. The renderer that replaced the ported one had left this and `data` out, and the bar read 0 / 0.
+  const setMoveRange = (at) => {
+    if (at == null) { setLayerRange(shownLo, shownHi); return null }
+    const layer = topMoveLayer(data, shownLo, shownHi)
+    const cursor = moveCursor(data, layer, at)
+    fullRange = false
+    showLevel(1)
+    geometry.instanceCount = data.layerSegPrefix[layer] + cursor.segCount
+    const from = travelPrefix[shownLo] * 2
+    travGeometry.setDrawRange(from, Math.max(0, (travelPrefix[layer] + cursor.travCount) * 2 - from))
+    return { ...cursor, layer }
+  }
+
   return {
     mesh,
     travLines,
     setLayerRange,
+    setMoveRange,
+    data,
     setVisibleLayers: (n) => setLayerRange(0, (n | 0) - 1),
     setTravelVisible: (visible) => { travLines.visible = !!visible },
     /** color is Float32Array(nV*4) with the packed value in .r — computeColors' output shape. One instance

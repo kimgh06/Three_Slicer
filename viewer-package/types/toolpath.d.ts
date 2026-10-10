@@ -110,6 +110,11 @@ export interface ToolpathHandle {
   setVisibleLayers(n: number): void
   setTravelVisible(visible: boolean): void
   setColors(color: Float32Array): void
+  /** Draws the top shown layer up to its move `at`, extrusions and travels in print order; null draws the whole
+   *  range again. Returns where the nozzle is (moveCursor) and the layer walked, or null. */
+  setMoveRange(at: number | null): { point: number[] | null; segCount: number; travCount: number; onTravel: boolean; layer: number } | null
+  /** The SegmentData the handle was built from. */
+  data: SegmentData
   dispose(): void
   nSeg: number
   layerCount: number

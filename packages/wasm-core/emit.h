@@ -39,8 +39,20 @@ struct TreePath { Path pl; float w; int role; float h; float mm3; };
 //  is Support. Upstream's internal bridge and overhang wall have no kernel feature, so internal_bridge_flow and
 //  overhang_flow_ratio are not read.
 enum class FlowRole { OuterWall, InnerWall, SparseInfill, InternalSolid, TopSurface, BottomSurface, Bridge, GapFill,
-                      Support, SupportInterface, Skirt, Brim, Other };
+                      Support, SupportInterface, Skirt, Brim, Ironing, Other };
 double role_flow_ratio(const Params& p, FlowRole role, bool firstLayer);
+constexpr int FLOW_ROLE_COUNT = (int)FlowRole::Other + 1;
+// The feedrate (mm/min) each role prints at on one layer: upstream GCode::_extrude's speed rule (GCode.cpp:7393-7479).
+//  Without any per-role speed from the host, every role gets `legacy` and the bridge `legacyBridge` — the speeds the
+//  kernel used before they were mapped, so its G-code is unchanged. `capSpeed` > 0 is the layer-time slowdown's cap
+//  (pass2.cpp) applied to every role but the bridge, as the legacy feed already carries it.
+struct RoleFeeds {
+  int f[FLOW_ROLE_COUNT] = {};
+  int of(FlowRole role) const { return f[(int)role]; }
+};
+RoleFeeds role_feeds(const Params& p, bool firstLayer, int printedLayer, int nraft, int legacy, int legacyBridge, double capSpeed);
+// Resolves the writer's per-role acceleration and jerk tables from the profile (GW::apply_motion).
+void gw_setup_motion(GW& gw, const Params& p, bool is_bbl);
 // The mm³/mm of a thick bridge (thick_bridges): upstream's round thread of nozzle * sqrt(bridge_flow)
 //  (LayerRegion::bridging_flow). bridge_line_width is not wired, so the thread starts from the nozzle as upstream's
 //  default (100%) does.
@@ -48,7 +60,7 @@ double thick_bridge_mm3_per_mm(const Params& p);
 void emit_lines_vw(GW& gw, std::vector<float>& tp, const std::vector<TreePath>& lines,
                    double z, double h, const Params& p, float type, int fPrint, int fTravel);
 void emit_arachne_walls(GW& gw, std::vector<float>& tp, const std::vector<arachne_bridge::WLine>& walls,
-                        double z, double h, const Params& p, int fPrint, int fTravel);
+                        double z, double h, const Params& p, const RoleFeeds& feeds, int fTravel);
 void emit_spiral(GW& gw, std::vector<float>& tp, const Paths& outerWall, double z0, double h, int fPrint, int fTravel);
 void emit_scarf_loop(GW& gw, std::vector<float>& tp, Path wp, double z, double h,
                      int fPrint, int fTravel, int seamMode, SeamCtx& sc);

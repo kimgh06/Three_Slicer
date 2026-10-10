@@ -2,7 +2,9 @@ import { log } from '../core/log.js'
 import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef } from 'react'
-import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
+import { deriveKernelParams, deriveSlaParams, settingRaw, bedCenter, bedOrigin, partialSupport } from 'three-slicer-viewer/settings'
+import { finalizeGcode } from '../core/finalize_gcode.js'
+import { previewFromGcode } from '../core/gcode_parse.js'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
@@ -154,7 +156,7 @@ export function useSlicer(deps) {
           const a = streamAccumRef.current
           if (a) { a.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) a.gcode.push(d.gcode); noteLayers(a.layers.length) }
         }
-        else if (d.type === 'done') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
+        else if (d.type === 'done') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.resolve(assembleResult(d.result, undefined, pnd.paramsStr)) } else { handleResult(assembleResult(d.result)); setSlicing(false) } }
         // An error that names a request belongs to that request's own wait (worker_reply.js) — a paint command's,
         //  never the slice's: read here too, it showed "Slice failed" and killed a running slice over a paint load.
         else if (d.type === 'error' && d.requestId !== undefined) { /* answered by request() */ }
@@ -187,13 +189,27 @@ export function useSlicer(deps) {
   }
   // Stage 30: assemble the streamed result — when streamed, g-code/layers already arrived as 'layer', so they are built from the accumulator.
   //  batch/MM keep gcode+layers in result as before. Economy mode yields an empty layers array (no toolpath) and g-code only.
-  function assembleResult(result, a = streamAccumRef.current) {
+  //  Either way the G-code then gets what upstream writes once the estimate exists (finalizeGcode: M73, file totals).
+  function assembleResult(result, a = streamAccumRef.current, paramsStr = null) {
     if (result && result.stats && result.stats.streamed) {
       a = a || { layers: [], gcode: [] }
       // Spread first: fields beside the stream (the SLA solid meshes) must survive assembly.
-      return { ...result, stats: result.stats, layers: a.layers, gcode: a.gcode.join('') }
+      return shownAsExported({ ...result, stats: result.stats, layers: a.layers, gcode: finalizeGcode(a.gcode.join(''), result.stats) }, paramsStr)
     }
+    if (result && typeof result.gcode === 'string' && result.stats) return shownAsExported({ ...result, gcode: finalizeGcode(result.gcode, result.stats) }, paramsStr)
     return result
+  }
+  // An FFF slice is shown as the G-code it exports (previewFromGcode), in the frame of the params it was sliced with:
+  //  the toolpaths, and the layer, segment and filament figures counted from the same text, so a sliced plate and the
+  //  saved file opened again show the same thing. The time estimate and the bed verdicts stay the kernel's. Economy
+  //  mode keeps no toolpath to save memory, and the resin path has no G-code: both stay as they are.
+  function shownAsExported(result, paramsStr) {
+    if (!paramsStr || result.sla || !result.layers?.length || !result.gcode) return result
+    const params = JSON.parse(paramsStr)
+    const parsed = previewFromGcode(result.gcode, { center: bedCenter(params), filamentDiameter: params.filament_diameter, layerHeight: params.layer_height })
+    if (!parsed.layers.length) return result
+    const { layers, path_segments, filament_mm, filament_mm_by_tool } = parsed.stats
+    return { ...result, layers: parsed.layers, stats: { ...result.stats, layers, path_segments, filament_mm, filament_mm_by_tool } }
   }
   function handleResult(result) {
     if (result.error) { setError(String(result.error)); return }
@@ -257,7 +273,7 @@ export function useSlicer(deps) {
         try { workerRef.current?.terminate() } catch {} ; workerRef.current = null   // force-terminate the stalled worker
         reject(new Error(`watchdog: no progress for ${ms}ms — assuming memory pressure`))
       }, ms) }
-      pendingSliceRef.current = { resolve, reject, kick, stop, note, sla: cmd === 'sla' }
+      pendingSliceRef.current = { resolve, reject, kick, stop, note, sla: cmd === 'sla', paramsStr }
       kick()
       const message = { stl: buf, params: paramsStr, stall }
       if (cmd) message.cmd = cmd
@@ -316,7 +332,7 @@ export function useSlicer(deps) {
           onProgress?.(mapProgress(d.done, d.total))
         }
         else if (d.type === 'layer') { kick(); if (accum) { accum.layers.push({ z: d.z, paths: d.paths, widths: d.widths }); if (d.gcode) accum.gcode.push(d.gcode); noteRate(accum.layers.length) } }
-        else if (d.type === 'done') { const p = settle(); p?.resolve(assembleResult(d.result, accum)) }
+        else if (d.type === 'done') { const p = settle(); p?.resolve(assembleResult(d.result, accum, p?.paramsStr)) }
         else if (d.type === 'error') { const p = settle(); p?.reject(new Error(d.error)) }
       }
       // A worker that dies before it ever answered the warmup never ran the kernel — its SCRIPT did not load
@@ -354,7 +370,7 @@ export function useSlicer(deps) {
       if (typeof window !== 'undefined' && window.__vpPoolFail > 0) { window.__vpPoolFail--; reject(new Error('Worker terminated (likely out of memory): test hook')); return }
       if (!wk) spawn()
       accum = { layers: [], gcode: [] }; rate = null; lastD = 0; lastT = 0; onRate?.(0)
-      pending = { resolve, reject, sla: cmd === 'sla' }
+      pending = { resolve, reject, sla: cmd === 'sla', paramsStr }
       kick()
       wk.postMessage({ ...(cmd ? { cmd } : {}), stl: buf, params: paramsStr })
       if (cmd !== 'sla') {   // the two SAB bands between progress messages, as the selector path polls them
@@ -428,7 +444,7 @@ export function useSlicer(deps) {
     //  arrays index by it. With no override `effective` IS `settings` (same reference), so the pre-feature
     //  behaviour is preserved byte for byte.
     const effective = effectiveSettings(settings, plateSettings, merged.plate)
-    const params = deriveKernelParams(effective, { plate: merged.plate })
+    const params = deriveKernelParams(effective, { plate: merged.plate, objectNames: merged.members?.map(member => member.name) })
     // Ring or the real WipeTower: `wipe_tower_real` is a viewer knob in the settings map (not a schema key, like
     //  sla_antialias), so it follows the plate override like every other tower setting. It used to be component
     //  state — one mode for every plate, lost on reload.
@@ -496,13 +512,19 @@ export function useSlicer(deps) {
       //  difference stays: the slice keeps AUTO_EDGE_MARGIN_MM inside the bed edge, the stand-in clamps flush.
       const towerSide = towerFootprint(params, params.wipe_tower_real ?? true)
       const bedWidth = params.bed_width ?? DEFAULT_BED.width, bedDepth = params.bed_depth ?? DEFAULT_BED.depth
-      // Slice frame -> bed frame is one addition (the kernel's own gw.offX), and both boxes are now in it.
-      const modelLeft = merged.minX + bedWidth / 2, modelMiddleY = (merged.minY + merged.maxY) / 2 + bedDepth / 2
-      const lowestCorner = AUTO_EDGE_MARGIN_MM
-      const highestCornerX = bedWidth - towerSide - AUTO_EDGE_MARGIN_MM, highestCornerY = bedDepth - towerSide - AUTO_EDGE_MARGIN_MM
-      params.prime_tower_x = Math.min(Math.max(modelLeft - AUTO_GAP - towerSide, lowestCorner), highestCornerX)
-      params.prime_tower_y = Math.min(Math.max(modelMiddleY - towerSide / 2, lowestCorner), highestCornerY)
+      // Slice frame -> printer frame is one addition, the bed centre (the kernel's own gw.offX), and both boxes are in it.
+      const center = bedCenter(params), origin = bedOrigin(params)
+      const modelLeft = merged.minX + center.x, modelMiddleY = (merged.minY + merged.maxY) / 2 + center.y
+      const lowestCornerX = origin.x + AUTO_EDGE_MARGIN_MM, lowestCornerY = origin.y + AUTO_EDGE_MARGIN_MM
+      const highestCornerX = origin.x + bedWidth - towerSide - AUTO_EDGE_MARGIN_MM, highestCornerY = origin.y + bedDepth - towerSide - AUTO_EDGE_MARGIN_MM
+      params.prime_tower_x = Math.min(Math.max(modelLeft - AUTO_GAP - towerSide, lowestCornerX), highestCornerX)
+      params.prime_tower_y = Math.min(Math.max(modelMiddleY - towerSide / 2, lowestCornerY), highestCornerY)
     }
+    // Profile settings the template path reads but does not do yet (settings_core.js partialSupport). Before the paint
+    //  notices, which say more about why a print came out single-material and so take the line.
+    const gaps = partialSupport(effective, { toolCount: params.extruder_count ?? 1 })
+    if (gaps.length)
+      setSliceNotice?.(`Not applied from the printer profile: ${gaps.map(gap => `${gap.key} (${gap.effect})`).join('; ')}.`)
     // Two ways a painted model slices exactly like an unpainted one, both of them by design and neither of them
     //  visible in the result — the export just comes out single-material. Said here, at the one place that knows
     //  both the paint and the settings, because the alternative is the user concluding the brush is broken.

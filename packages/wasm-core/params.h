@@ -14,6 +14,69 @@ struct Params {
   double infill_density=0.15, nozzle_diameter=0.4, filament_diameter=1.75, flow_ratio=1.0;
   double print_speed=60, first_layer_speed=20, travel_speed=150;
   double nozzle_temp=210, bed_temp=60;
+  // The first layer's own temperatures (nozzle_temperature_initial_layer, the plate type's _initial_layer bed option).
+  //  <0 = the host sent none: the print runs at nozzle_temp/bed_temp throughout, as it always did. Given, the print
+  //  starts at them and switches at the second printed layer (upstream GCode.cpp:5631-5650).
+  double first_layer_nozzle_temp=-1.0;   // nozzle_temperature_initial_layer (<0 = none sent)
+  double first_layer_bed_temp=-1.0;      // the plate type's _initial_layer bed option (<0 = none sent)
+  inline double first_layer_nozzle_temp_of(int tool) const { return forTool(extruder_first_layer_temp, tool, first_layer_nozzle_temp); }
+  bool   single_extruder_multi_material=true;   // one nozzle carries every filament: the switch names no tool
+  // Upstream's gcode_flavor ("marlin", "marlin2", "klipper", "reprapfirmware", "repetier", ...). Empty = the host sent
+  //  none: the commands the kernel always wrote keep their form, and new ones use Marlin's (machine_writer.h).
+  std::string gcode_flavor;
+  // disable_m73 false: the G-code carries upstream's progress placeholders (;_GP_FIRST_LINE_M73_PLACEHOLDER at the top,
+  //  ;_GP_LAST_LINE_M73_PLACEHOLDER at the end), which the host fills with M73 from the finished estimate
+  //  (three-slicer-viewer/gcode finalizeGcode). true (no key sent) writes neither.
+  bool   disable_m73=true;
+  bool   reduce_infill_retraction=false;   // no retraction for a travel inside the infill (GCode::needs_retraction); off = the kernel's own rule
+  bool   use_relative_e_distances=true;   // false = absolute E (M82, G92 E0 after each retraction), upstream's two modes
+  bool   use_firmware_retraction=false;   // G10/G11 instead of E moves (upstream GCodeWriter::_retract)
+  double z_offset=0.0;                    // added to every Z the G-code writes (upstream GCodeWriter, z_offset)
+  // emit_machine_limits_to_gcode: upstream's print_machine_envelope (M201/M203/M204/M205) for Marlin and RepRap.
+  //  Sent only when the profile turns it on, as 16 numbers in this order: max acceleration X Y Z E, max speed X Y Z E,
+  //  acceleration extruding, retracting, travel, jerk X Y Z E, junction deviation. Empty = not written.
+  std::vector<double> machine_envelope;
+  // Per-role speeds (mm/s), upstream's names. <0 = not sent: the role prints at print_speed, as every role did before
+  //  these were mapped. Any one of them sent switches the speed rule to upstream's (emit.cpp role_feeds).
+  double inner_wall_speed=-1.0;
+  double sparse_infill_speed=-1.0;
+  double internal_solid_infill_speed=-1.0;
+  double top_surface_speed=-1.0;
+  double support_speed=-1.0;
+  double support_interface_speed=-1.0;
+  double initial_layer_infill_speed=-1.0;
+  double skirt_speed=-1.0;                  // 0 = follow the role's speed
+  double initial_layer_travel_speed=-1.0;   // the first layer's travel speed
+  int    slow_down_layers=0;                // layers over which the first layer's speed ramps up to the print's
+  double small_perimeter_speed=-1.0;        // mm/s for a wall loop within small_perimeter_threshold; 0 = half the outer wall's
+  double small_perimeter_threshold=0.0;     // a RADIUS (mm): loops up to 2*pi*threshold long are small (0 = off)
+  // Per-role acceleration (mm/s^2) and jerk (mm/s), upstream's names. default_acceleration / default_jerk <0 = not
+  //  sent, 0 = off: no command is written. The role values are 0 = "use the default".
+  double default_acceleration=-1.0;
+  double outer_wall_acceleration=0.0;
+  double inner_wall_acceleration=0.0;
+  double top_surface_acceleration=0.0;
+  double sparse_infill_acceleration=0.0;
+  double internal_solid_infill_acceleration=0.0;
+  double bridge_acceleration=0.0;
+  double initial_layer_acceleration=0.0;
+  double travel_acceleration=0.0;
+  double initial_layer_travel_acceleration=0.0;
+  double default_jerk=-1.0;
+  double outer_wall_jerk=0.0;
+  double inner_wall_jerk=0.0;
+  double top_surface_jerk=0.0;
+  double infill_jerk=0.0;
+  double initial_layer_jerk=0.0;
+  double travel_jerk=0.0;
+  double initial_layer_travel_jerk=0.0;
+  // The writer's clamps (upstream GCodeWriter::apply_print_config) and Klipper's ACCEL_TO_DECEL.
+  double machine_max_acceleration_extruding=0.0;
+  double machine_max_acceleration_travel=0.0;
+  double machine_max_acceleration_y=0.0;
+  double machine_max_jerk_y=0.0;
+  bool   accel_to_decel_enable=false;
+  double accel_to_decel_factor=50.0;      // percent
   // New in stage 2 (defaults follow the matching config-schema.json keys)
   int    top_shell_layers=4, bottom_shell_layers=3;   // top_shell_layers/bottom_shell_layers
   int    skirt_loops=1;                                // skirt_loops
@@ -76,7 +139,13 @@ struct Params {
   //  are used only when the UI/consumer passes them explicitly (preserving existing behavior).
   double prime_tower_x=10.0, prime_tower_y=10.0;
   double prime_tower_ring_size=15.0;                   // side length of the fallback square ring (mm)
-  double bed_width=256.0, bed_depth=256.0;             // bed size (offset = bed/2)
+  double bed_width=256.0, bed_depth=256.0;             // bed size
+  // The printable area's lower-left corner in printer coordinates. Most beds start at (0,0); a delta bed is centred
+  //  on it (Anycubic Predator: -185..185) and some cartesian beds are offset (CR-10 V3: 5..305). The kernel slices in
+  //  plate-local coordinates around the bed centre, so the G-code adds the centre, bed_center_x/y(), not bed/2.
+  double bed_origin_x=0.0, bed_origin_y=0.0;
+  inline double bed_center_x() const { return bed_origin_x + bed_width * 0.5; }
+  inline double bed_center_y() const { return bed_origin_y + bed_depth * 0.5; }
   double bed_height=0.0;                                // printable_height (mm). 0 = no ceiling (backwards compatible)
   std::string machine_start_gcode, machine_end_gcode;   // printer profile custom G-code. Empty = the mini-kernel's own preamble/footer only
   // Issue 63: the flattened settings as a JSON object of upstream option strings (plus "$model_name", "$plate_name",
@@ -120,6 +189,13 @@ struct Params {
   //  single-material slice — and any host that never sends these — behaves exactly as before.
   std::vector<double> extruder_nozzle_temp, extruder_filament_diameter, extruder_flow_ratio,
                       extruder_retract_length, extruder_retract_speed, extruder_z_hop;
+  std::vector<double> extruder_first_layer_temp;   // nozzle_temperature_initial_layer per extruder (the first layer's own)
+  // support_filament / support_interface_filament are 1-based with 0 = "keep the object's tool": the tool to switch
+  //  to, or -1 for none.
+  static int support_tool_of(int filament_index) {
+    if (filament_index > 0) return filament_index - 1;
+    return -1;
+  }
   static double forTool(const std::vector<double>& per, int tool, double fallback) {
     return (tool >= 0 && tool < (int)per.size()) ? per[tool] : fallback;
   }

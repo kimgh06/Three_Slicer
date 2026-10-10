@@ -17,6 +17,9 @@ import { statsFromKernel } from '../core/kernel_stats.js'
 import { download, saveWindowOpen } from './export_actions.js'
 import { writeGcode3MF } from '../core/write_3mf.js'
 import { exportedGcode } from '../core/gcode_parse.js'
+import { thumbnailList, thumbnailsText, withThumbnails } from '../core/thumbnails.js'
+import { encodeRgba8 } from '../core/png_gray.js'
+import { zlibSync } from 'three/examples/jsm/libs/fflate.module.js'
 
 // SL1 reconstruction tuning. Every number here is measured on the same 1095-layer archive (15-core machine,
 // click to mesh on screen), and the ones that did NOT work are recorded with them so they are not retried:
@@ -50,8 +53,21 @@ export function makePlateActions(deps) {
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
     onSlicedRef, extruderColorsRef,
   } = deps
-  // The saved text names its filament colours, so the file opens in them again (here and upstream).
-  const gcodeForExport = (result) => exportedGcode(result, extruderColorsRef?.current)
+  // The saved text names its filament colours, so the file opens in them again (here and upstream), and carries the
+  //  printer's thumbnails (`thumbnails`, core/thumbnails.js) rendered from the plate's objects as it is saved.
+  const renderOf = (plate) => (width, height) => apiRef.current?.renderThumbnail?.(plate, width, height) ?? null
+  const gcodeForExport = async (result, plate) => {
+    const text = exportedGcode(result, extruderColorsRef?.current)
+    const list = thumbnailList(settingRaw(effectiveSettings(settings, plateSettings, plate), 'thumbnails'))
+    return withThumbnails(text, await thumbnailsText(list, renderOf(plate), { deflate: zlibSync }))
+  }
+  // The plate picture a .gcode.3mf carries (Metadata/plate_N.png, 512x512 as upstream writes it).
+  const PLATE_PICTURE_SIZE = 512
+  const platePicture = async (plate) => {
+    const rgba = renderOf(plate)(PLATE_PICTURE_SIZE, PLATE_PICTURE_SIZE)
+    if (!rgba) return null
+    return encodeRgba8(rgba, PLATE_PICTURE_SIZE, PLATE_PICTURE_SIZE, { deflate: zlibSync })
+  }
 
   // Hands a finished slice to the host (the Viewport `onSliced` prop). Fired where the result is cached, not where
   //  it is displayed, so switching plate tabs — which re-displays a cached result — does not re-announce it.
@@ -112,7 +128,7 @@ export function makePlateActions(deps) {
   //  whole G-code each time (33-203ms per switch on haaland.3mf) for a file that is rarely saved.
   async function exportPlainGcode(result) {
     if (!result) return
-    await download(gcodeForExport(result), `plate_${selectedPlateRef.current + 1}.gcode`, 'text/plain', onExport)
+    await download(await gcodeForExport(result, selectedPlateRef.current), `plate_${selectedPlateRef.current + 1}.gcode`, 'text/plain', onExport)
   }
   // Build and save the focused plate's SL1 archive. Built on demand — rasterizing hundreds of layer PNGs is
   //  seconds of work, and paying it on every plate focus for a file that may never be saved is the same waste
@@ -418,9 +434,10 @@ export function makePlateActions(deps) {
       setError(skipped ? 'Every sliced plate extends beyond the bed — nothing exported' : 'No slice results to export — slice first')
       return
     }
-    const gcodePlates = done.filter(([, r]) => !r.stats?.sla).map(([i, r]) => ({ index: Number(i), gcode: gcodeForExport(r), stats: r.stats }))
     setExporting?.('Writing…')
     try {
+      const gcodePlates = await Promise.all(done.filter(([, r]) => !r.stats?.sla).map(async ([i, r]) => ({
+        index: Number(i), gcode: await gcodeForExport(r, Number(i)), stats: r.stats, thumbnail: await platePicture(Number(i)) })))
       if (gcodePlates.length) {
         const bytes = await writeGcode3MF(gcodePlates, settings, { plateCount: plateCountRef.current })
         let name = 'plates.gcode.3mf'
@@ -441,7 +458,8 @@ export function makePlateActions(deps) {
     if (!r || r.error || !r.gcode || r.stats?.over_bed) return
     setExporting?.('Writing…')
     try {
-      const bytes = await writeGcode3MF([{ index: idx, gcode: r.gcode, stats: r.stats }], settings, { plateCount: plateCountRef.current })
+      const plate = { index: idx, gcode: await gcodeForExport(r, idx), stats: r.stats, thumbnail: await platePicture(idx) }
+      const bytes = await writeGcode3MF([plate], settings, { plateCount: plateCountRef.current })
       await download(bytes, `plate_${idx + 1}.gcode.3mf`, 'model/3mf', onExport)
     } catch (e) {
       setError('G-code export failed: ' + (e?.message || e))

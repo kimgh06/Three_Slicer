@@ -90,7 +90,9 @@ const PROBE_BY_TYPE = {
   coPercent: [77], coPercents: [[77, 88]],
   coFloatOrPercent: [7.25, '77%'], coFloatsOrPercents: [[7.25, 8.5], ['77%', '88%']],
   coString: ['probe'], coStrings: [['probe', 'probe2']],
-  coPoint: [[7, 8]], coPoints: [[[0, 0], [123, 0], [123, 77], [0, 77]]],
+  // The second rectangle does not start at (0,0): a bed's corner is a param of its own (bed_origin_x/y), sent only
+  //  when it is not the origin.
+  coPoint: [[7, 8]], coPoints: [[[0, 0], [123, 0], [123, 77], [0, 77]], [[-5, -6], [118, -6], [118, 71], [-5, 71]]],
   coPointsGroups: [[[7, 8], [9, 10]]],
 }
 const probesFor = (key) => {

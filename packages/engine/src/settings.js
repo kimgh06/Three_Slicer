@@ -102,12 +102,14 @@ export function filamentPresets() {
   return filamentsPromise
 }
 
+// `parents` holds the abstract machine presets (`instantiation: false`): never offered by the picker, but a user
+//  preset file names one as its `inherits`, so printerSettings has to resolve it by name.
 function printerEntry(profileName) {
   for (const models of Object.values(printers.byVendor)) {
     const entry = models[profileName]
     if (entry) return entry
   }
-  return null
+  return printers.parents?.[profileName] ?? null
 }
 
 /** The settings a printer profile applies, ready to merge into the settings map. `null` when unknown. */

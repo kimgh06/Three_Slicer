@@ -106,7 +106,10 @@ setLayerRange(lo, hi)   show only layers lo..hi inclusive
 setVisibleLayers(n)     === setLayerRange(0, n - 1)
 setTravelVisible(bool)  travels start hidden
 setColors(Float32Array) swap the per-vertex colours in place, without rebuilding geometry
+setMoveRange(at)        draw the top shown layer up to its move `at` (null = whole range again); returns
+                        moveCursor's answer plus the `layer` it walked — the move scrub (use_move_scrub.js)
 dispose()               release GPU resources
+data                    the SegmentData it was built from — the move scrub counts moves in it
 nSeg, layerCount        mirrored from the data
 ```
 

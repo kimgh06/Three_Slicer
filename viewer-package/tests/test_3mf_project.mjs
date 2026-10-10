@@ -160,6 +160,12 @@ eq('coordinates that do not decode fall back to group re-centring',
 eq('two objects keep their relative arrangement in the fallback',
    platePlacements([at(0, []), at(1, ['e', 'f'])], [obj('e', 5, 0, 0), obj('f', 6, 40, 0)], 200, 200),
    [[5, 1, -20, 0], [6, 1, 20, 0]])
+// A delta bed's printable area is centred on the printer's (0,0) (Anycubic Predator: -185..185), so upstream lays
+//  its objects out around 0 on plate 0. The bed corner (settings bedOrigin) decodes them: an object at the printer's
+//  (0,0) is at the bed centre, and one at (-50,30) is 50 left of it.
+eq('a bed centred on the printer origin decodes around 0',
+   platePlacements([at(0, ['h', 'i'])], [obj('h', 8, 0, 0), obj('i', 9, -50, 30)], 200, 200, { x: -100, y: -100 }),
+   [[8, 0, 0, 0], [9, 0, -50, 30]])
 eq('no bed means no decode is possible, so the fallback is used',
    platePlacements([at(0, ['g'])], [obj('g', 7, 50, 60)], 0, 0),
    [[7, 0, 0, 0]])
@@ -203,6 +209,12 @@ const DECIDED = new Set(['coBool','coBools','coFloat','coFloats','coInt','coInts
   'coFloatOrPercent','coFloatsOrPercents','coPoint','coPoints','coPointsGroups','coString','coStrings','coEnum','coEnums'])
 const unknownTypes = [...new Set(Object.values(schema).map(o => o.type))].filter(t => !DECIDED.has(t))
 check('every config-schema option type has a decided coercion', unknownTypes.length === 0, `undecided: ${unknownTypes.join(', ')}`)
+// Guard: a C++ float literal in a default list ("0.f, 280.f") is one number. The extractor once split it into the
+//  number and an "f", so flush_volumes_matrix defaulted to [0,"f",280,...] and every template-path tool change
+//  purged nothing.
+const suffixSplit = Object.entries(schema).filter(([, o]) => Array.isArray(o.default) && o.default.includes('f')).map(([key]) => key)
+check('no default list holds a split float suffix', suffixSplit.length === 0, `split: ${suffixSplit.join(', ')}`)
+eq('flush_volumes_matrix defaults to numbers', schema.flush_volumes_matrix.default.slice(0, 2), [0, 280])
 
 // ---- optional parts ------------------------------------------------------------------------------------------
 check('no layer-height profile in the base fixture', project.hasLayerHeightProfile === false)
@@ -278,6 +290,42 @@ check('unparsable project_settings yields null settings', broken.project.setting
   eq('the grid grows to the project\'s plates, on the project\'s bed', plateCalls[0], [PLATES, BED, BED])
   check('each object lands on the plate the file names', placed.some(([, index]) => index === 1), JSON.stringify(placed))
   check('the plate an object lands on drops its stale slice', !(1 in deps.plateResultsRef.current), JSON.stringify(deps.plateResultsRef.current))
+}
+
+// ---- a project that names no printer keeps the printer already chosen ----
+// One saved from a session with no printer picked holds only the keys that session edited. Replacing the map with it
+//  set a picked Bambu Lab A1 mini back to the 200 mm default with no start G-code.
+{
+  const tetra = Float32Array.from([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]].flatMap(face => face.flatMap(corner =>
+    [[0, 0, 0], [20, 0, 0], [0, 20, 0], [0, 0, 20]][corner])))
+  const objects = [{ id: 1, name: 'box', extruder: 1, plate: 0, plateOriginX: 0, plateOriginY: 0, tris: tetra, faceCount: 4, paint: null }]
+  const PICKED = { printer_model: 'Bambu Lab A1 mini', printer_settings_id: 'Bambu Lab A1 mini 0.4 nozzle',
+                   printable_area: [[0, 0], [180, 0], [180, 180], [0, 180]], machine_start_gcode: 'G28' }
+  const loadOver = async (bytes, current) => {
+    const settingsCalls = []
+    const api = { addObject: (name) => ({ id: 1, name }), placeObjectOnPlate: () => {}, setPlates: () => false, showObjects: () => {}, setObjectExtruder: () => {} }
+    const refStartValues = { plateResultsRef: {}, plateOffsetsRef: {}, bedRef: { bedW: 180, bedD: 180 }, plateCountRef: 1, selectedPlateRef: 0 }
+    const deps = new Proxy({ apiRef: { current: api }, objectsRef: { current: [] }, setError: () => {}, settings: current,
+      setSettings: (value) => settingsCalls.push(value), setPlateSettings: () => {} }, {
+      get: (target, key) => {
+        if (key in target) return target[key]
+        if (String(key).endsWith('Ref')) return (target[key] = { current: refStartValues[key] ?? null })
+        return () => {}
+      },
+      has: () => true,
+    })
+    await makeModelLoad(deps).loadFiles([new File([bytes], 'project.3mf')])
+    return settingsCalls.reduce((map, call) => (typeof call === 'function' ? call(map) : call), current)
+  }
+  const supportOnly = await write3MFProject(objects, { enable_support: true, support_style: 'tree_slim' }, { bedWidth: 200, bedDepth: 200, plateCount: 1 })
+  const kept = await loadOver(supportOnly, PICKED)
+  eq('a project with no printer keeps the picked printer', [kept.printer_model, kept.printable_area, kept.machine_start_gcode],
+     [PICKED.printer_model, PICKED.printable_area, PICKED.machine_start_gcode])
+  eq('and takes the project\'s own settings over it', [kept.enable_support, kept.support_style], [true, 'tree_slim'])
+  const otherPrinter = await write3MFProject(objects, { printer_model: 'Prusa MK4', printable_area: [[0, 0], [250, 0], [250, 210], [0, 210]], layer_height: 0.3 },
+    { bedWidth: 250, bedDepth: 210, plateCount: 1 })
+  const replaced = await loadOver(otherPrinter, PICKED)
+  eq('a project that names its printer replaces the map', [replaced.printer_model, replaced.machine_start_gcode], ['Prusa MK4', undefined])
 }
 
 // ---- our member (three_slicer_settings.json) through the same loader: overrides, knobs, the plate count ----

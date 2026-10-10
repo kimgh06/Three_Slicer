@@ -44,14 +44,14 @@ static std::string shift_axis(std::string line, char axis, double d) {
     return line;
 }
 
-WipeTowerBlock wipe_tower_block(double bed_w, double bed_d, double first_layer_h, double layer_h,
+WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_w, double bed_d, double first_layer_h, double layer_h,
                                 double z, bool is_first_layer, int old_tool, int new_tool,
                                 double tower_x, double tower_y, double tower_width,
                                 double filament_diameter, double purge_volume_mm3) {
     WipeTowerBlock out;
     try {
         PrintConfig cfg; // real StaticPrintConfig from print_config_def defaults
-        cfg.printable_area.values = { Vec2d(0,0), Vec2d(bed_w,0), Vec2d(bed_w,bed_d), Vec2d(0,bed_d) };
+        cfg.printable_area.values = { Vec2d(bed_x0,bed_y0), Vec2d(bed_x0+bed_w,bed_y0), Vec2d(bed_x0+bed_w,bed_y0+bed_d), Vec2d(bed_x0,bed_y0+bed_d) };
         cfg.nozzle_diameter.values = { 0.4, 0.4 };
         cfg.single_extruder_multi_material.value = true;
         cfg.wipe_tower_x.values = { tower_x };
@@ -82,7 +82,7 @@ WipeTowerBlock wipe_tower_block(double bed_w, double bed_d, double first_layer_h
         std::vector<std::vector<WipeTower::ToolChangeResult>> result;
         wt.generate(result);
 
-        const double offX = bed_w * 0.5, offY = bed_d * 0.5;
+        const double offX = bed_x0 + bed_w * 0.5, offY = bed_y0 + bed_d * 0.5;   // the bed centre (Params::bed_center_x/y)
         std::ostringstream gc;
         for (auto& layer : result) {
             for (auto& tcr : layer) {

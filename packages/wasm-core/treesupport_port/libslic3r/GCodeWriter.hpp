@@ -142,5 +142,49 @@ public:
     static bool supports_separate_travel_acceleration(GCodeFlavor flavor) {
         return (flavor == gcfRepetier || flavor == gcfMarlinFirmware || flavor == gcfRepRapFirmware);
     }
+    // set_fan / set_additional_fan, verbatim from GCodeWriter.cpp:1258/:1305 — what the ported CoolingBuffer writes
+    //  its fan commands with (full_gcode_comment is upstream's default, true).
+    static std::string set_fan(const GCodeFlavor gcode_flavor, unsigned int speed, unsigned int part_cooling_fan_min_pwm) {
+        std::ostringstream gcode;
+        if (speed > 0 && part_cooling_fan_min_pwm > 0 && speed < part_cooling_fan_min_pwm)
+            speed = part_cooling_fan_min_pwm;
+        if (speed == 0) {
+            switch (gcode_flavor) {
+            case gcfTeacup:
+                gcode << "M106 S0"; break;
+            case gcfMakerWare:
+            case gcfSailfish:
+                gcode << "M127";    break;
+            default:
+                gcode << "M106 S0";    break;
+            }
+            gcode << " ; disable fan";
+            gcode << "\n";
+        } else {
+            switch (gcode_flavor) {
+            case gcfMakerWare:
+            case gcfSailfish:
+                gcode << "M126";    break;
+            case gcfMach3:
+            case gcfMachinekit:
+                gcode << "M106 P" << static_cast<unsigned int>(255.5 * speed / 100.0); break;
+            default:
+                gcode << "M106 S" << static_cast<unsigned int>(255.5 * speed / 100.0); break;
+            }
+            gcode << " ; enable fan";
+            gcode << "\n";
+        }
+        return gcode.str();
+    }
+    static std::string set_additional_fan(unsigned int speed) {
+        std::ostringstream gcode;
+        gcode << "M106 " << "P2 " << "S" << (int)(255.0 * speed / 100.0);
+        if (speed == 0)
+            gcode << " ; disable additional fan ";
+        else
+            gcode << " ; enable additional fan ";
+        gcode << "\n";
+        return gcode.str();
+    }
 };
 } // namespace Slic3r

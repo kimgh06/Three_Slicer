@@ -277,8 +277,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   in two independent annotations that can both mark the same facet. On import **material paint wins** and the
   support paint is reported as dropped — half-applying it would be worse than not applying it.
 - **The G-code text names the roles the stream records** (`Params::gcode_role_tags`, which the viewer turns on).
-  The preview draws a slice from the toolpath stream, but an exported `.gcode` / `.gcode.3mf` comes back as TEXT, and
-  the multi-material path wrote no role marks: an opened painted model drew its object as prime tower. `GW::role_tag`
+  A finished FFF slice is previewed from its own exported G-code read back (next rule), and an exported `.gcode` /
+  `.gcode.3mf` opened again is read the same way, so the roles have to be in the TEXT; the multi-material path wrote
+  no role marks, and an opened painted model drew its object as prime tower. `GW::role_tag`
   writes upstream's `;TYPE:<name>` from the same kernel type `push_seg` records — one call per run in every `emit_*`
   path, re-stated after every layer marker (`GW::layer_begin`) and after the real WipeTower's own tagged block
   (`role_tag_unknown`). Upstream names where one exists; raft and thin wall, which upstream folds into Support and
@@ -394,10 +395,15 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   start block the kernel follows upstream's temperature rule (M190/M104 before it only when the template does not set
   them, none for Klipper, M109 after it for Bambu Lab — decided by `printer_model` starting with "Bambu Lab", which
   matches the BBL vendor exactly over the bundled profiles: 56 of 56, 0 of 873) and writes its own `G21/G90/M83` after
-  it. Left unset, so a template reading them fails typed instead of expanding to a guess: the adaptive bed mesh
-  variables and `filament_pre_cooling_temperature(_nc)` (no such options in the port's config), and `print_time_sec` /
-  `used_filament_length`, whose upstream value is a reserved tag GCodeProcessor's post-process replaces — the kernel
-  streams the text out and runs no post-process. `random()` uses a fixed seed (upstream seeds from the clock), so the
+  it. `print_time_sec` / `used_filament_length` expand to upstream's reserved tags (`@PRINT_TIME_SEC@`, …) and the M73
+  progress lines to `;_GP_…` placeholders, which the host fills from the estimate (`core/finalize_gcode.js`), as
+  GCodeProcessor's post-process does upstream; the printer's thumbnails go where the kernel leaves
+  `;_GP_THUMBNAILS_PLACEHOLDER` (`core/thumbnails.js`, PNG and QOI). The layer templates (`before_layer_change_gcode`,
+  `layer_change_gcode`, `time_lapse_gcode`) and every tool change (`custom_gcode_toolchanges`: `filament_end_gcode`,
+  `change_filament_gcode` with `GCode::set_extruder`'s variables, the T command the template does not write itself,
+  `filament_start_gcode`) are left as slot lines by the parallel writers and expanded in print order, before upstream's
+  ported cooling filter (`GCode/CoolingBuffer.cpp`) runs over each layer. A template variable this port does not set
+  still fails typed instead of expanding to a guess. `random()` uses a fixed seed (upstream seeds from the clock), so the
   same input gives the same bytes. A template error is `CUSTOM_GCODE_ERROR: <key>: <parser message>`; reporting it at
   all needs the kernel's `-fwasm-exceptions` (`build.sh`: without it a throw aborted the module), and
   `core/slice_errors.js` keeps the slice ladder from retrying any typed refusal. The presets carry what the templates
@@ -478,6 +484,21 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   succ^(2^R)): a tail leading into a cycle once misplaced every slot after it. The worker takes this route on the st
   kernel only: st's own cut and chain measured 419-442 ms against 34-154 ms of mesh hand-over plus 64-153 ms on the
   GPU, while mt's threads do it in 64-77 ms and the mesh route was 20 ms slower there.
+- **A finished slice is shown as the G-code it exports.** `use_slicer.js` (`shownAsExported`) parses the finalized
+  G-code back (`previewFromGcode`, `core/gcode_parse.js`) into the plate's layers, taking the slice's bed centre off
+  so they stay plate-local, and takes the layer, segment and filament figures from the same text; the time estimate
+  and the bed verdicts stay the kernel's. The kernel's toolpath stream left the printer's start and end G-code out,
+  so a sliced plate and the same file opened again differed (benchy on an A1 mini: 240 vs 241 layers, 5255.5 vs
+  5279.3 mm). Economy mode (no toolpath kept) and resin results stay on the stream. Measured on the benchmark model
+  (3M facets, tree slim, A1 mini): 13 MB of G-code read back in 192 ms on the main thread, 0.57x the stream's
+  segments; a multi-hundred-MB G-code has not been measured. `test_gcode_parse.mjs` pins the frame and the start
+  line. The toolpath handle carries `data` and `setMoveRange` for the move scrub (`TOOLPATH_SPEC.md`): the renderer
+  that replaced the ported one had left both out and the bar read 0 / 0.
+- **A layer is cut at its middle** (`slice_planes.h plan_layers`, upstream's `generate_object_layers` for a fixed
+  layer height): a layer exists while its middle is below the object's top, on every path (st, mt, multi-material,
+  the GPU contour route). The kernel cut each layer at its top and kept only tops below the object height, so the
+  top face's plane cut nothing and a 20 mm cube printed 19.8 mm. Golden moved with it (cube 99 -> 100 layers, both
+  table fixtures 69 -> 70; every layer below the top shells byte-identical). `[layer count]` in `test.mjs` pins it.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
   `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and

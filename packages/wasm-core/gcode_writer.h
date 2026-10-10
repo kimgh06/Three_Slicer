@@ -5,6 +5,7 @@
 #include "arcfit_bridge.h"
 #include "clip_util.h"
 #include "geom_helpers.h"
+#include "machine_writer.h"
 #include "params.h"
 
 #include <algorithm>
@@ -13,6 +14,14 @@
 #include <cstring>
 #include <string>
 #include <vector>
+
+// The slots a layer's custom G-code goes into (custom_gcode.cpp custom_gcode_layer): before_layer_change_gcode ahead
+//  of the layer's Z move, the timelapse and layer_change_gcode after it — upstream's GCode::process_layer order.
+//  The writers only mark them, because the template session is single-threaded and the parallel writers are not.
+static const char* const BEFORE_LAYER_SLOT = ";_BEFORE_LAYER_CHANGE_SLOT";
+static const char* const AFTER_LAYER_SLOT = ";_AFTER_LAYER_CHANGE_SLOT";
+// A tool change on a printer with custom G-code (custom_gcode_toolchanges): the line names the change by its index.
+static const char* const TOOLCHANGE_SLOT = ";_TOOLCHANGE_SLOT ";
 
 struct GWBedOverflow { double x = 0.0, y = 0.0, z = 0.0; bool any() const { return x > 0.0 || y > 0.0 || z > 0.0; } };
 
@@ -66,7 +75,109 @@ struct GW {
   double retract_len=0.8; int retractF=1800; // mm, mm/min
   double retract_min_travel=2.0;             // stage 33: retraction_minimum_travel (formerly the TRAVEL_RETRACT_MIN constant)
   double z_hop=0.0;
-  double offX=128.0, offY=128.0;   // G-code XY offset = bed/2
+  double offX=128.0, offY=128.0;   // G-code XY offset = the bed centre in printer coordinates (Params::bed_center_x/y)
+  // Upstream's E modes and firmware retraction (GCodeWriter.cpp _retract/unretract/reset_e). The defaults are the
+  //  kernel's own relative E with E-move retractions, which every caller before these keys got.
+  Flavor flavor=Flavor::Unset;
+  bool   absolute_e=false;          // M82: every E word is the running position, reset by G92 E0 after a retraction
+  double e_pos=0.0;                 // the running E position in absolute mode
+  bool   firmware_retraction=false; // G10/G11 instead of E moves
+  double z_offset=0.0;              // added to every Z written (upstream's z_offset)
+  // Upstream's per-role acceleration and jerk (GCode::_extrude :7289-7342, travel_to :8285-8333): what each role and
+  //  travel prints at, resolved once from the profile (gw_setup_motion, emit.cpp) as [on_first_layer][role], and the
+  //  writer's dedupe state (GCodeWriter m_last_acceleration / m_last_travel_acceleration / m_last_jerk). Both off — the
+  //  host sent no default_acceleration / default_jerk — writes nothing, as every caller before these keys got.
+  bool     motion_accel=false, motion_jerk=false, motion_bbl=false;
+  unsigned role_accel[2][16] = {};
+  double   role_jerk[2][16] = {};
+  unsigned travel_accel[2] = {0, 0};
+  double   travel_jerk[2] = {0, 0};
+  unsigned short_travel_accel=0;  // a short travel ahead of the outer wall moves at the wall's acceleration (Orca)
+  double   short_travel_jerk=0;
+  int      outer_wall_role=0;     // FlowRole::OuterWall's index, for that rule
+  int      inner_wall_role=1;     // FlowRole::InnerWall's index (the small perimeter rule)
+  // Upstream's small perimeter rule (GCode::extrude_loop :6667): a wall loop no longer than 2*pi*small_perimeter_threshold
+  //  prints at small_perimeter_speed — on the first layer the first layer's speed wins, as it does upstream. 0 = off.
+  double   small_perimeter_length=0.0;
+  int      small_perimeter_feed=0;
+  int loop_feed(double loopLength, int fPrint) const {
+    if (small_perimeter_length <= 0 || on_first_layer) return fPrint;
+    if (feature_role != outer_wall_role && feature_role != inner_wall_role) return fPrint;
+    if (loopLength > small_perimeter_length) return fPrint;
+    return small_perimeter_feed;
+  }
+  int      feature_role=0;        // the role being printed (set_feature)
+  unsigned max_accel=0, max_travel_accel=0;   // the writer's clamps, 0 = none
+  double   max_jerk_x=0, max_jerk_y=0, jerk_z=0, jerk_e=0;
+  bool     accel_to_decel=false; double accel_to_decel_factor=50.0;
+  unsigned last_accel=0, last_travel_accel=0;
+  double   last_jerk=0;
+  void set_feature(int role) { feature_role = role; }
+  // GCodeWriter::set_print_acceleration / set_travel_acceleration + set_jerk_xy, or Klipper's set_accel_and_jerk.
+  //  Runs in the dry pass too (raw() writes nothing there), so the state the parallel writers start from is right.
+  void apply_motion(unsigned accel, double jerk, bool travel) {
+    if (!motion_accel) accel = 0;
+    if (!motion_jerk) jerk = 0;
+    if (accel == 0 && jerk == 0) return;
+    if (flavor == Flavor::Klipper) {
+      if (max_accel > 0 && accel > max_accel) accel = max_accel;
+      if (max_jerk_x > 0 && jerk > max_jerk_x) jerk = max_jerk_x;
+      if (max_jerk_y > 0 && jerk > max_jerk_y) jerk = max_jerk_y;
+      const bool setAccel = accel != 0 && accel != last_accel;
+      const bool setJerk = jerk > 0.01 && std::fabs(jerk - last_jerk) > 1e-10;
+      if (setAccel) last_accel = accel;
+      if (setJerk) last_jerk = jerk;
+      raw_lines(machine_klipper_velocity_limit(setAccel, accel, accel_to_decel, accel_to_decel_factor, setJerk, jerk));
+      return;
+    }
+    if (!travel && max_accel > 0 && accel > max_accel) accel = max_accel;
+    if (travel && max_travel_accel > 0 && accel > max_travel_accel) accel = max_travel_accel;
+    const bool separate = travel && machine_separate_travel_acceleration(flavor);
+    unsigned* lastValue = &last_accel;
+    if (separate) lastValue = &last_travel_accel;
+    if (accel != 0 && accel != *lastValue) {
+      *lastValue = accel;
+      raw_lines(machine_acceleration_text(accel, separate, flavor, accel_to_decel, accel_to_decel_factor));
+    }
+    if (jerk >= 0.01 && std::fabs(jerk - last_jerk) > 1e-10) {
+      last_jerk = jerk;
+      raw_lines(machine_jerk_text(jerk, flavor, max_jerk_x, max_jerk_y, motion_bbl, jerk_z, jerk_e));
+    }
+  }
+  void apply_print_motion() {
+    const int layer = on_first_layer;
+    apply_motion(role_accel[layer][feature_role], role_jerk[layer][feature_role], false);
+  }
+  void apply_travel_motion(double distance) {
+    const int layer = on_first_layer;
+    unsigned accel = travel_accel[layer];
+    double jerk = travel_jerk[layer];
+    if (!on_first_layer && feature_role == outer_wall_role && distance < retract_min_travel) {
+      accel = short_travel_accel;
+      jerk = short_travel_jerk;
+    }
+    apply_motion(accel, jerk, true);
+  }
+  // The E word of an extrusion of dE: dE itself in relative mode, the position after it in absolute mode.
+  double e_word(double dE) { if (!absolute_e) return dE; e_pos += dE; return e_pos; }
+  // The Z move that starts a layer. In absolute mode the layer also starts from E0 (G92 E0) — upstream resets after
+  //  every retraction instead, which leaves the machine in the same state; resetting here as well lets each layer
+  //  writer of the parallel path (slicer_core.cpp) start from a known position.
+  bool layer_slots=false;   // the printer has layer templates (custom_gcode_layer_slots)
+  void layer_z(double zLayer, int fTravel) {
+    if (layer_slots) raw(BEFORE_LAYER_SLOT);
+    char line[64]; std::snprintf(line, sizeof line, "G1 Z%.3f F%d", zLayer + z_offset, fTravel); raw(line);
+    if (absolute_e) { raw("G92 E0"); e_pos = 0.0; }
+    if (layer_slots) {
+      raw(AFTER_LAYER_SLOT);
+      // A layer template may set the acceleration or jerk itself (upstream invalidates the writer's state after any
+      //  custom G-code that does, GCode::placeholder_parser_process): the next move states them again.
+      last_accel = 0; last_travel_accel = 0; last_jerk = 0;
+    }
+    // The cooling filter takes a layer at a time: an open role fan region is opened again on the new layer.
+    fan_marker_on[0] = fan_marker_on[1] = fan_marker_on[2] = false;
+    last_extrusion_role = -1;
+  }
   int    lastFan=-1;               // current cooling fan value (M106 only on change)
   bool   arc_fitting=false;        // G2/G3 arc fitting
   double arc_resolution=0.01;     // the print's `resolution` (mm): the arc fitting tolerance outside sparse infill and support
@@ -115,6 +226,11 @@ struct GW {
   }
   // Stage 6: wall-avoiding travel
   Paths  island;                   // region travels should stay inside (inside the walls). Empty means no check.
+  // reduce_infill_retraction (GCode::needs_retraction): a travel that stays inside the layer's internal region (the
+  //  slice minus its top and bottom surfaces) and leads to something other than a wall is not retracted, unless the
+  //  last extrusion was the outer wall. Empty = the option is off or the layer has no internal region.
+  Paths  internal_area;
+  int    last_extrusion_role=-1;   // reset on every layer (layer_z), so the parallel writers start where st starts
   bool   avoid_walls=false;
   long   wall_crossings=0;         // number of travels that actually crossed a wall (for cross-checking)
   // Upstream's ;TYPE: role tag (Params::gcode_role_tags). `type` is the kernel's toolpath type, the value push_seg
@@ -133,6 +249,11 @@ struct GW {
     s += ";TYPE:"; s += NAMES[type]; s += '\n';
   }
   void role_tag_unknown(){ tag_type = -1; }
+  // The temperature switch of the second printed layer (second_layer_temperatures, preamble.cpp), set once the
+  //  preamble knows what it left the printer at. Copied with the writer into the parallel layer writers, and written
+  //  by whichever of them starts the second printed layer (second_layer_begin).
+  std::string second_layer_text;
+  void second_layer_begin(){ raw_lines(second_layer_text); }
   void layer_begin(const char* marker){ raw(marker); tag_type = -1; }
   // Stage 9: emitting the real PE tags (OrcaSlicer format)
   bool   emit_pe_tags=false;
@@ -211,23 +332,50 @@ struct GW {
   // Straight travel including retraction (upstream behavior)
   void travel_raw(double x, double y, int fTravel) {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
-    bool retract = d > retract_min_travel && retract_len > 0;
+    // Firmware retraction retracts whatever length is configured, 0 included (GCodeWriter::_retract's "fake 1").
+    bool retract = d > retract_min_travel && (retract_len > 0 || firmware_retraction);
     if (retract) {
-      line_vf("G1 E-", retract_len, 4, retractF, "G1 E-%.4f F%d");
-      if (z_hop > 0) line_vf("G1 Z", z + z_hop, 3, fTravel, "G1 Z%.3f F%d");
+      retract_move();
+      if (z_hop > 0) line_vf("G1 Z", z + z_hop + z_offset, 3, fTravel, "G1 Z%.3f F%d");
     }
     line_xyf("G0 X", x+offX, y+offY, fTravel, "G0 X%.3f Y%.3f F%d");
     if (retract) {
-      if (z_hop > 0) line_vf("G1 Z", z, 3, fTravel, "G1 Z%.3f F%d");
-      line_vf("G1 E", retract_len, 4, retractF, "G1 E%.4f F%d");
+      if (z_hop > 0) line_vf("G1 Z", z + z_offset, 3, fTravel, "G1 Z%.3f F%d");
+      unretract_move();
     }
     px=x; py=y; curF=-1;
+  }
+  // GCodeWriter::_retract / unretract: G10/G11 with firmware retraction, else an E move — relative, or in absolute
+  //  mode the position minus the length followed by G92 E0 (reset_e), then the unretract back to +length.
+  void retract_move() {
+    if (firmware_retraction) { raw(machine_firmware_retract(flavor)); return; }
+    if (!absolute_e) { line_vf("G1 E-", retract_len, 4, retractF, "G1 E-%.4f F%d"); return; }
+    char line[64]; std::snprintf(line, sizeof line, "G1 E%.5f F%d", e_pos - retract_len, retractF); raw(line);
+    raw("G92 E0"); e_pos = 0.0;
+  }
+  void unretract_move() {
+    if (firmware_retraction) {
+      raw(machine_firmware_unretract(flavor));
+      if (absolute_e) { raw("G92 E0"); e_pos = 0.0; }
+      return;
+    }
+    if (!absolute_e) { line_vf("G1 E", retract_len, 4, retractF, "G1 E%.4f F%d"); return; }
+    char line[64]; std::snprintf(line, sizeof line, "G1 E%.5f F%d", retract_len, retractF); raw(line);
+    e_pos = retract_len;
   }
   // Detour move inside the material (no retraction — stays inside the material, the §6.5 desktop behavior)
   void travel_hop(double x, double y, int fTravel) {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
     line_xyf("G0 X", x+offX, y+offY, fTravel, "G0 X%.3f Y%.3f F%d");
     px=x; py=y; curF=-1;
+  }
+  // True when the straight line A->B lies entirely inside internal_area (RetractWhenCrossingPerimeters::
+  //  travel_inside_internal_regions: diff_pl(travel, island).empty()).
+  bool inside_internal_area(double ax, double ay, double bx, double by) const {
+    Path segment; segment.push_back(IntPoint((cInt)std::llround(ax*SCALE),(cInt)std::llround(ay*SCALE)));
+    segment.push_back(IntPoint((cInt)std::llround(bx*SCALE),(cInt)std::llround(by*SCALE)));
+    Paths one; one.push_back(segment);
+    return paths_len(clip_open(one, internal_area), false) >= std::hypot(bx-ax, by-ay) - 1e-3;
   }
   // True when the straight line A->B lies (almost) entirely inside the island (inside the walls)
   bool seg_inside(double ax,double ay,double bx,double by){
@@ -286,7 +434,13 @@ struct GW {
   }
   void travel(double x, double y, int fTravel) {
     double d = std::hypot(x-px, y-py); if (d < 1e-6) return;
+    apply_travel_motion(d);
     if (dry) { px=x; py=y; curF=-1; return; }   // G003: a detour ends at the same point -> position only
+    if (!internal_area.empty() && feature_role != outer_wall_role && feature_role != inner_wall_role &&
+        last_extrusion_role != outer_wall_role && inside_internal_area(px, py, x, y)) {
+      travel_hop(x, y, fTravel);
+      return;
+    }
     if (!island.empty() && !(avoid_walls ? seg_inside(px,py,x,y) : seg_inside_fast(px,py,x,y))) {
       if (avoid_walls) {
         std::vector<DPt> way = detour_path(px,py,x,y);
@@ -297,55 +451,163 @@ struct GW {
     travel_raw(x, y, fTravel);
   }
   void extrude(double x, double y, int fPrint) {
+    if (!dry && checks_overhang_segments()) {
+      // Each piece between two crossings is either over the layer below or not; its middle decides, and the fan
+      //  follows. Pieces shorter than a quarter of the line width are not split off (upstream's min_spacing).
+      const double ax = px, ay = py, length = std::hypot(x-ax, y-ay);
+      std::vector<double> cuts;
+      for (double t : overhang_crossings(ax, ay, x, y))
+        if (t * length >= 0.25*line_width && (1 - t) * length >= 0.25*line_width && (cuts.empty() || (t - cuts.back()) * length >= 0.25*line_width))
+          cuts.push_back(t);
+      cuts.push_back(1.0);
+      double from = 0.0;
+      for (double to : cuts) {
+        const double mx = ax + (x-ax)*(from+to)/2, my = ay + (y-ay)*(from+to)/2;
+        fan_marker(0, outside_overhang_area(mx, my), "_OVERHANG");
+        extrude_move(ax + (x-ax)*to, ay + (y-ay)*to, fPrint);
+        from = to;
+      }
+      return;
+    }
+    extrude_move(x, y, fPrint);
+  }
+  void extrude_move(double x, double y, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) return;
+    apply_print_motion();
     fPrint = capped_feed(fPrint);
     if (dry) { px=x; py=y; curF=fPrint; return; }   // G003 dry run (assumes pe off — guarded in parallel mode)
+    last_extrusion_role = feature_role;
     int fUse = pe_feed(d, fPrint);               // PE-lite: apply the flow change rate limit (fPrint when off)
     double dE = e_per_mm * d; filament += dE; ++segments;
+    const double eWord = e_word(dE);
     note_xy(px, py); note_xy(x, y);   // both ends: an open path's first point follows a travel, so it is noted nowhere else
     char* r = buf; memcpy(r, "G1 X", 4); r += 4;
     r = fmt_fixed_safe(r, x+offX, 3);
     if (r) { memcpy(r, " Y", 2); r = fmt_fixed_safe(r+2, y+offY, 3); }
-    if (r) { memcpy(r, " E", 2); r = fmt_fixed_safe(r+2, dE, 5); }
+    if (r) { memcpy(r, " E", 2); r = fmt_fixed_safe(r+2, eWord, 5); }
     if (r) {                                     // fast path succeeded — F only when it changes
       if (fUse != curF) { memcpy(r, " F", 2); r = fmt_i(r+2, fUse); }
       *r = '\0';
-    } else if (fUse != curF) std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f F%d", x+offX,y+offY,dE,fUse);
-    else                     std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f",     x+offX,y+offY,dE);
+    } else if (fUse != curF) std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f F%d", x+offX,y+offY,eWord,fUse);
+    else                     std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f",     x+offX,y+offY,eWord);
     curF = fUse;
     raw(buf); px=x; py=y;
   }
   // For spiral mode: extrusion that raises Z as it goes
   void extrude_z(double x, double y, double zz, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) { z=zz; return; }
+    apply_print_motion();
     fPrint = capped_feed(fPrint);
     double dE = e_per_mm * d; filament += dE; ++segments;
+    const double eWord = e_word(dE);
     note_xy(px, py); note_xy(x, y);
     if (zz > exMaxZ) exMaxZ = zz;     // z ramps within the move here, so the member z is one layer behind
-    if (fPrint != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,zz,dE,fPrint); curF=fPrint; }
-    else                { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,zz,dE); }
+    if (fPrint != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,zz+z_offset,eWord,fPrint); curF=fPrint; }
+    else                { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,zz+z_offset,eWord); }
     raw(buf); px=x; py=y; z=zz;
   }
   // For the scarf seam: extrusion applying both Z and flow (an E multiplier) (Z always written)
   void extrude_zf(double x, double y, double zz, double flowMul, int fPrint) {
     double d = std::hypot(x-px, y-py); if (d < 1e-9) { z=zz; return; }
+    apply_print_motion();
     fPrint = capped_feed(fPrint);
     double dE = e_per_mm * d * flowMul * scarf_flow; filament += dE; ++segments;
+    const double eWord = e_word(dE);
     note_xy(px, py); note_xy(x, y);
     if (zz > exMaxZ) exMaxZ = zz;     // z ramps within the move here, so the member z is one layer behind
-    if (fPrint != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,zz,dE,fPrint); curF=fPrint; }
-    else                { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,zz,dE); }
+    if (fPrint != curF) { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,zz+z_offset,eWord,fPrint); curF=fPrint; }
+    else                { std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,zz+z_offset,eWord); }
     raw(buf); px=x; py=y; z=zz;
   }
-  // Cooling fan (M106 emitted only on change)
-  void set_fan(int S) { if (S==lastFan) return; lastFan=S; if (dry) return; std::snprintf(buf,sizeof buf,"M106 S%d",S); raw(buf); }
+  // Cooling fan (M106 emitted only on change). With the cooling filter running the fan is the filter's to set.
+  void set_fan(int S) { if (cooling_markers) return; if (S==lastFan) return; lastFan=S; if (dry) return; std::snprintf(buf,sizeof buf,"M106 S%d",S); raw(buf); }
+  // Upstream's cooling markers around every extrusion path (GCode::_extrude :7767-8171) for the cooling filter
+  //  (cooling_bridge.h), which reads and removes them: the speed line marked ;_EXTRUDE_SET_SPEED (and
+  //  ;_EXTERNAL_PERIMETER on the outer wall), ;_EXTRUDE_END after the path, and the role fan regions — the overhang
+  //  fan on bridges (and on the outer wall when overhang_fan_threshold is 0%), the support interface fan and the
+  //  ironing fan, each opened and closed as the role changes and re-opened on a new layer. Off without the filter.
+  bool cooling_markers=false;
+  bool fan_overhang=false, fan_overhang_external=false, fan_support_interface=false, fan_ironing=false;
+  int  bridge_role=6, support_interface_role=9, ironing_role=12;   // FlowRole indices (emit.h), set by gw_setup_motion
+  bool fan_marker_on[3] = { false, false, false };                 // overhang, support interface, ironing
+  // The overhang fan per wall segment (GCode::_extrude with ExtrusionQualityEstimator): a segment whose overlap with
+  //  the layer below is at most the threshold gets it. overlap = 1 - (signed distance to the lower slice + w/2) / w, so
+  //  "overlap <= t" is "outside the lower slice offset by w*(0.5 - t)"; that offset region is overhang_area, set per
+  //  layer. Empty = not checked (first layer, threshold 0%, the fan off or no cooling filter).
+  // ponytail: a segment is judged by its two ends against one region, the line width of the print (not each wall's
+  //  own), and without upstream's curled-line distance or its smoothing between neighbouring points.
+  Paths overhang_area;
+  double line_width = 0.42;   // the print's line width (gw_setup_machine), the overhang pieces' scale
+  bool outside_overhang_area(double x, double y) const {
+    const IntPoint point((cInt)std::llround(x*SCALE), (cInt)std::llround(y*SCALE));
+    int inside = 0;
+    for (const Path& polygon : overhang_area) if (PointInPolygon(point, polygon) != 0) ++inside;
+    return (inside & 1) == 0;
+  }
+  bool checks_overhang_segments() const {
+    return cooling_markers && fan_overhang && !overhang_area.empty() &&
+           (feature_role == outer_wall_role || feature_role == inner_wall_role);
+  }
+  // Where the segment A->B crosses overhang_area's boundary, as fractions of its length in (0, 1), ascending. Upstream
+  //  adds these points to the path (estimate_points_properties ADD_INTERSECTIONS) so that only the part of a line
+  //  that leaves the layer below gets the fan.
+  std::vector<double> overhang_crossings(double ax, double ay, double bx, double by) const {
+    std::vector<double> cuts;
+    const double dx = bx - ax, dy = by - ay;
+    for (const Path& polygon : overhang_area) {
+      const size_t n = polygon.size();
+      for (size_t k = 0; k < n; ++k) {
+        const double cx = polygon[k].x()*INV, cy = polygon[k].y()*INV;
+        const double ex = polygon[(k+1)%n].x()*INV - cx, ey = polygon[(k+1)%n].y()*INV - cy;
+        const double denominator = dx*ey - dy*ex;
+        if (std::fabs(denominator) < 1e-12) continue;
+        const double t = ((cx-ax)*ey - (cy-ay)*ex) / denominator, u = ((cx-ax)*dy - (cy-ay)*dx) / denominator;
+        if (t > 1e-9 && t < 1-1e-9 && u >= 0 && u <= 1) cuts.push_back(t);
+      }
+    }
+    std::sort(cuts.begin(), cuts.end());
+    return cuts;
+  }
+  bool overhang_touches(double ax, double ay, double bx, double by) const {
+    return outside_overhang_area(ax, ay) || outside_overhang_area(bx, by) || !overhang_crossings(ax, ay, bx, by).empty();
+  }
+  void fan_marker(int which, bool on, const char* prefix) {
+    if (on == fan_marker_on[which]) return;
+    fan_marker_on[which] = on;
+    const char* edge = "END";
+    if (on) edge = "START";
+    std::snprintf(buf, sizeof buf, ";%s_FAN_%s", prefix, edge); raw(buf);
+  }
+  void path_begin(int fPrint) {
+    if (!cooling_markers) return;
+    fPrint = capped_feed(fPrint);
+    if (feature_role == outer_wall_role) std::snprintf(buf, sizeof buf, "G1 F%d;_EXTRUDE_SET_SPEED;_EXTERNAL_PERIMETER", fPrint);
+    else                                 std::snprintf(buf, sizeof buf, "G1 F%d;_EXTRUDE_SET_SPEED", fPrint);
+    raw(buf); curF = fPrint;
+    bool overhang = fan_overhang && (feature_role == bridge_role || (fan_overhang_external && feature_role == outer_wall_role));
+    fan_marker(0, overhang, "_OVERHANG");
+    fan_marker(1, fan_support_interface && feature_role == support_interface_role, "_SUPP_INTERFACE");
+    fan_marker(2, fan_ironing && feature_role == ironing_role, "_IRONING");
+  }
+  void path_end() { if (cooling_markers) raw(";_EXTRUDE_END"); }
   // Emit a continuous polyline (pts[0] = current position). G2/G3 with arc_fitting, otherwise G1.
   //  The arcs are upstream's ArcFitter (arcfit_bridge.cpp) at upstream's per-role tolerance (LayerRegion::simplify_path,
   //  Layer::simplify_support_path): SPARSE_INFILL_RESOLUTION for sparse infill, SUPPORT_RESOLUTION for support and raft,
   //  the print's `resolution` for everything else. `type` is the toolpath type the caller emits (emit.cpp).
   void extrude_run(const std::vector<DPt>& pts, int fPrint, float type) {
+    if (pts.size() > 1) apply_print_motion();
     if (dry) { if (pts.size()>1) { px=pts.back().x; py=pts.back().y; curF=capped_feed(fPrint); } return; }
     if (!arc_fitting) { for (size_t i=1;i<pts.size();++i) extrude(pts[i].x,pts[i].y,fPrint); return; }
+    // A wall path with an overhang goes out as G1 moves, as upstream's per-point branch does: an arc cannot carry a fan
+    //  switch in its middle.
+    if (checks_overhang_segments()) {
+      bool touches = false;
+      for (size_t k = 1; k < pts.size() && !touches; ++k) touches = overhang_touches(pts[k-1].x, pts[k-1].y, pts[k].x, pts[k].y);
+      if (touches) { for (size_t k = 1; k < pts.size(); ++k) extrude(pts[k].x, pts[k].y, fPrint); return; }
+    }
+    extrude_fitted(pts, fPrint, type);
+  }
+  void extrude_fitted(const std::vector<DPt>& pts, int fPrint, float type) {
     // An arc stands for the points it was fitted to, so they never reach extrude() and its note_xy. Noting every
     //  input point here keeps the extent honest: the arc stays within the fitting tolerance of them.
     for (const DPt& q : pts) note_xy(q.x, q.y);
@@ -367,14 +629,17 @@ struct GW {
   }
   // One G2/G3 from the current position to `end` around (centerX, centerY), E from upstream's arc length.
   void extrude_arc(DPt end, double centerX, double centerY, double length, bool counterClockwise, int fPrint) {
+    apply_print_motion();
     fPrint = capped_feed(fPrint);
     double dE = e_per_mm*length; filament+=dE; ++segments;
+    const double eWord = e_word(dE);
     double I=centerX-px, J=centerY-py;
     const char* command = "G2";
     if (counterClockwise) command = "G3";
-    if (fPrint!=curF){ std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",command,end.x+offX,end.y+offY,I,J,dE,fPrint); curF=fPrint; }
-    else            { std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   command,end.x+offX,end.y+offY,I,J,dE); }
+    if (fPrint!=curF){ std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",command,end.x+offX,end.y+offY,I,J,eWord,fPrint); curF=fPrint; }
+    else            { std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   command,end.x+offX,end.y+offY,I,J,eWord); }
     raw(buf); px=end.x; py=end.y;
+    last_extrusion_role = feature_role;
   }
 };
 
