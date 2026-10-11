@@ -39,6 +39,7 @@ export interface SegmentMeta {
 
 export interface SegmentData {
   position: Float32Array
+  /** vec4 per vertex: [height, width, heading of the extrusion joined at this endpoint (its own when none), packed colour] */
   hwa: Float32Array
   segIndex: Uint32Array
   nV: number

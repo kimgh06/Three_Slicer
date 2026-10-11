@@ -19,7 +19,7 @@ import { buildSegmentData, roleRatios } from '../src/core/toolpath_segments.js'
 import { computeColors, VIEW_TYPES } from '../src/core/toolpath_views.js'
 import { TYPE_COLOR, TYPE_LABEL, TOOL_COLOR, DEFAULT_RANGES_COLORS, packColor, hexToRgb, rangeColorAt }
   from '../src/core/toolpath_palette.js'
-import { SEG_VS } from '../src/core/toolpath_shaders.js'
+import { SEG_VS, packJoin, JOIN_STEPS } from '../src/core/toolpath_shaders.js'
 import { VERTEX_DATA, TEMPLATE_TPL } from '../src/scene/toolpath_mesh.js'
 
 let failures = 0
@@ -160,6 +160,29 @@ check('no layers -> zero counts and a null bbox', empty.nSeg === 0 && empty.laye
   `nSeg=${empty.nSeg} layerCount=${empty.layerCount} bbox=${empty.bbox}`)
 const zeroLen = buildSegmentData([{ z: 0.2, paths: Float32Array.from(seg(5, 5, 0.2, 5, 5, 1)), widths: Float32Array.from([0.4]) }], DEFAULT_WIDTH)
 check('a zero-length segment produces no NaN', zeroLen.hasNaN === false)
+
+// Joins: hwa[+2] at an endpoint is the heading of the extrusion joined there (toolpath_segments.js linkJoins).
+//  Vertex 2s is segment s's start, 2s+1 its end.
+console.log('\n[toolpath: endpoints carry the heading they join]')
+const joinedHeading = (built, vertex) => built.hwa[vertex * 4 + 2]
+check('a joined end holds the next segment\'s heading', near(joinedHeading(data, 1), Math.PI / 2), `${joinedHeading(data, 1)}`)
+check('a joined start holds the previous segment\'s heading', near(joinedHeading(data, 2), 0), `${joinedHeading(data, 2)}`)
+check('an open run\'s first start keeps its own heading', near(joinedHeading(data, 0), 0), `${joinedHeading(data, 0)}`)
+check('nothing joins across a layer', near(joinedHeading(data, 3), Math.PI / 2), `${joinedHeading(data, 3)}`)
+const square = buildSegmentData([{ z: 0.2, paths: Float32Array.from([
+  ...seg(0, 0, 0.2, 10, 0, 1), ...seg(10, 0, 0.2, 10, 10, 1), ...seg(10, 10, 0.2, 0, 10, 1), ...seg(0, 10, 0.2, 0, 0, 1),
+]), widths: Float32Array.from([0.4, 0.4, 0.4, 0.4]) }], DEFAULT_WIDTH)
+check('a closed loop\'s first start joins its last segment', near(joinedHeading(square, 0), -Math.PI / 2), `${joinedHeading(square, 0)}`)
+check('a closed loop\'s last end joins its first segment', near(joinedHeading(square, 7), 0), `${joinedHeading(square, 7)}`)
+const throughPoint = buildSegmentData([{ z: 0.2, paths: Float32Array.from([
+  ...seg(0, 0, 0.2, 5, 0, 1), ...seg(5, 0, 0.2, 5, 0, 1), ...seg(5, 0, 0.2, 5, 5, 1),
+]), widths: Float32Array.from([0.4, 0.4, 0.4]) }], DEFAULT_WIDTH)
+check('a zero-length segment joins nothing', near(joinedHeading(throughPoint, 1), 0), `${joinedHeading(throughPoint, 1)}`)
+const extremes = [packJoin(-Math.PI, -Math.PI), packJoin(Math.PI, Math.PI)]
+check('packJoin stays an exact float integer', extremes.every(v => Number.isInteger(v) && v >= 0 && v < 2 ** 24 && Math.fround(v) === v),
+  extremes.join(' '))
+check('packJoin keeps start and end apart', Math.floor(packJoin(Math.PI, -Math.PI) / JOIN_STEPS) === JOIN_STEPS - 1
+  && packJoin(Math.PI, -Math.PI) % JOIN_STEPS === 0, `${packJoin(Math.PI, -Math.PI)}`)
 
 // The bead material culls back faces (toolpath_mesh.js), which is only correct while every template face winds
 //  counter-clockwise seen from outside the bead. The ring -> corner mapping is read from the vertex shader's own
