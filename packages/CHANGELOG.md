@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.3.4 — 2026-10-11
+
+### Added
+
+- The G-code follows the printer profile for every FFF printer in the bundled catalog. This applies when the host
+  sends a printer's custom G-code; a slice without one stays on the kernel's raw path and its output is unchanged.
+  - The custom G-code bridge sets the template variables upstream's `GCode::_do_export` sets, in its order (object
+    names, the adaptive bed mesh, preset names, pre-cooling temperatures, every `print_config_def` default).
+    `CUSTOM_GCODE_ERROR`s over the catalog: 112 -> 0.
+  - Coordinates are written in the printer's frame, centred on `printable_area`: delta and round beds and origins
+    other than (0,0) included. The scene draws the real bed outline and checks a footprint against it; 3mf
+    placement, injected G-code and the prime tower use the same frame. Profiles printing off the bed centre: 128 -> 0.
+    `bedOrigin` / `bedCenter` (`three-slicer/settings`) convert a stored printer coordinate to the plate frame.
+  - First-layer and later-layer nozzle and bed temperatures follow upstream's rules, including the `curr_bed_type`
+    plate temperatures and chamber `M191`.
+  - Machine commands are formatted per firmware flavor: temperatures, pressure advance, absolute E, firmware
+    retraction, `z_offset`, the machine envelope, Klipper's velocity limits, the Machinekit postamble.
+  - Upstream's per-role speed table, the small-perimeter slowdown, and per-role acceleration and jerk within the
+    machine limits.
+  - Upstream's `CoolingBuffer`, ported verbatim, runs over each finished layer: fan curves, layer-time slowdown, the
+    overhang, bridge, interface and ironing fans. The overhang fan is decided per wall segment from its overlap with
+    the layer below (Benchy on an A1 mini: fan commands 19 -> 665, OrcaSlicer 653).
+  - `before_layer_change_gcode`, `layer_change_gcode` and `time_lapse_gcode` are expanded in print order.
+  - A tool change runs upstream's `set_extruder` sequence: `filament_end_gcode`, `change_filament_gcode` with its
+    variables, the T command when the template does not write one (`M1020` on Bambu Lab), `filament_start_gcode`
+    and pressure advance. Two-filament sweep over the 921 FFF printers: 0 errors, 0 leftover slot lines.
+  - Thumbnails in PNG and QOI where the printer asks for them, and a 512x512 `plate_N.png` in a `.gcode.3mf`.
+    `file_start_gcode` is written at the top of the file; `@PRINT_TIME_SEC@`, `@USED_FILAMENT_LENGTH@` and the M73
+    lines are filled from the estimate.
+- `reduce_infill_retraction`: a travel that stays inside the layer's internal region is not retracted (Benchy on an
+  A1 mini: retractions 4928 -> 2726, OrcaSlicer 1586). The region is wider than upstream's because top and bottom
+  surfaces are not split from internal solid infill yet.
+- The slice notice names profile settings the template path does not apply, instead of dropping them silently
+  (`partialSupport`, code `PROFILE_PARTIAL_SUPPORT`) — today `retract_length_toolchange`.
+- A user preset file can inherit from an abstract printer of the catalog.
+- `examples/octoprint`: a demo that uploads the exported G-code to an OctoPrint server through `<Viewport onExport>`.
+
+### Changed
+
+- A finished FFF slice is previewed from the G-code it exports, start and end G-code included, so a sliced plate and
+  the same file opened again show the same layers, segments and filament (Benchy: 241 layers, 5279.3 mm on both; it
+  was 240 / 5255.5 mm before). Reading back 13 MB of G-code took 192 ms. Economy mode and resin plates stay on the
+  kernel's stream.
+- Consecutive toolpath beads meet at a turn instead of leaving a wedge on its outside: each endpoint carries the
+  heading of the extrusion it joins (4 more bytes per segment instance). Turns past 140 degrees keep a square end.
+
+### Fixed
+
+- The top layer was lost: the kernel cut each layer at its top, so the top face's plane cut nothing and a 20 mm cube
+  printed 99 layers, 19.8 mm. Layers are now cut at their middle, as upstream's `generate_object_layers`, on every
+  path. A model's G-code changes in its top shells (cube 99 -> 100 layers); every layer below them is unchanged.
+- Vector enum settings sent by the host (`overhang_fan_threshold`, `z_hop_types`, ...) were read as empty lists, so
+  the template path ran on their defaults.
+- A C++ float literal in a schema default list (`280.f`) was extracted as two values. Six defaults were affected,
+  `flush_volumes_matrix` among them, so a template-path tool change purged nothing.
+- The viewer shipped the previous extraction's copy of the lean schema.
+- Opening a 3mf whose settings name no printer replaced the chosen printer with the 200 mm default and no start
+  G-code. Such a project now keeps the chosen printer.
+- The move scrub read 0 / 0: the toolpath handle had no `setMoveRange` and no `data`.
+
 ## 0.3.3 — 2026-10-01
 
 ### Added
