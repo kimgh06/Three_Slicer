@@ -12,26 +12,41 @@
 
 namespace Slic3r {
 
-inline std::vector<Polygons> project_custom_facets_footprint(const indexed_triangle_set &its,
+inline std::vector<Polygons> project_custom_facets_footprint(const indexed_triangle_set &facets,
                                                              const std::vector<float> &zs)
 {
     std::vector<Polygons> out(zs.size());
-    if (its.indices.empty() || zs.empty()) return out;
+    if (facets.indices.empty() || zs.empty()) return out;
     // half the layer spacing (uniform layers) — tolerance so a flat face lands on its nearest plane.
-    float halfgap = zs.size() > 1 ? std::max(1e-4f, 0.5f * std::abs(zs[1] - zs[0])) : 1e-3f;
-    for (const auto &f : its.indices) {
-        const Vec3f &a = its.vertices[f[0]], &b = its.vertices[f[1]], &c = its.vertices[f[2]];
-        float zmin = std::min({a.z(), b.z(), c.z()}), zmax = std::max({a.z(), b.z(), c.z()});
-        Point A(scale_(a.x()), scale_(a.y())), B(scale_(b.x()), scale_(b.y())), C(scale_(c.x()), scale_(c.y()));
+    float half_gap;
+    if (zs.size() > 1)
+        half_gap = std::max(1e-4f, 0.5f * std::abs(zs[1] - zs[0]));
+    else
+        half_gap = 1e-3f;
+    for (const auto &face : facets.indices) {
+        const Vec3f &vertex_a = facets.vertices[face[0]];
+        const Vec3f &vertex_b = facets.vertices[face[1]];
+        const Vec3f &vertex_c = facets.vertices[face[2]];
+        float z_min = std::min({vertex_a.z(), vertex_b.z(), vertex_c.z()});
+        float z_max = std::max({vertex_a.z(), vertex_b.z(), vertex_c.z()});
+        Point point_a(scale_(vertex_a.x()), scale_(vertex_a.y()));
+        Point point_b(scale_(vertex_b.x()), scale_(vertex_b.y()));
+        Point point_c(scale_(vertex_c.x()), scale_(vertex_c.y()));
         // Orientation via double cross product (scaled coords overflow coord_t area math on large facets).
-        double cross = double(B.x()-A.x())*double(C.y()-A.y()) - double(B.y()-A.y())*double(C.x()-A.x());
+        double cross = double(point_b.x()-point_a.x())*double(point_c.y()-point_a.y())
+                     - double(point_b.y()-point_a.y())*double(point_c.x()-point_a.x());
         if (cross == 0.0) continue;   // degenerate (edge-on) projection
-        Polygon tri; tri.points = (cross > 0.0) ? Points{A,B,C} : Points{A,C,B};   // ensure CCW
+        Polygon triangle;
+        if (cross > 0.0)   // ensure CCW
+            triangle.points = Points{point_a, point_b, point_c};
+        else
+            triangle.points = Points{point_a, point_c, point_b};
         for (size_t i = 0; i < zs.size(); ++i)
-            if (zs[i] >= zmin - halfgap && zs[i] <= zmax + halfgap)
-                out[i].push_back(tri);
+            if (zs[i] >= z_min - half_gap && zs[i] <= z_max + half_gap)
+                out[i].push_back(triangle);
     }
-    for (Polygons &p : out) if (!p.empty()) p = union_(p);
+    for (Polygons &polygons : out)
+        if (!polygons.empty()) polygons = union_(polygons);
     return out;
 }
 
