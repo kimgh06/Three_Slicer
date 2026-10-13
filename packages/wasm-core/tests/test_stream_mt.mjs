@@ -10,8 +10,8 @@ import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
 
 function boxSTL(size, height) {
-  const h = size / 2
-  const vertices = [[-h,-h,0],[h,-h,0],[h,h,0],[-h,h,0],[-h,-h,height],[h,-h,height],[h,h,height],[-h,h,height]]
+  const halfSize = size / 2
+  const vertices = [[-halfSize,-halfSize,0],[halfSize,-halfSize,0],[halfSize,halfSize,0],[-halfSize,halfSize,0],[-halfSize,-halfSize,height],[halfSize,-halfSize,height],[halfSize,halfSize,height],[-halfSize,halfSize,height]]
   const faces = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
   const buffer = Buffer.alloc(84 + faces.length * 50)
   buffer.writeUInt32LE(faces.length, 80)
@@ -33,14 +33,14 @@ function streamed(kernel, stl, params) {
   return chunks
 }
 
-const st = await createSlicer()
-const mt = await createSlicerMt()
+const singleThreadSlicer = await createSlicer()
+const threadedSlicer = await createSlicerMt()
 const stl = boxSTL(20, 6)
 let checks = 0
 for (const raft_layers of [0, 2]) {
   const params = JSON.stringify({ layer_height: 0.2, first_layer_height: 0.2, wall_loops: 2, infill_density: 0.15, raft_layers })
-  const batch = st.slice(stl, params, () => {}).gcode
-  for (const [name, kernel] of [['st', st], ['mt', mt]]) {
+  const batch = singleThreadSlicer.slice(stl, params, () => {}).gcode
+  for (const [name, kernel] of [['st', singleThreadSlicer], ['mt', threadedSlicer]]) {
     const chunks = streamed(kernel, stl, params)
     assert.ok(chunks[0].startsWith('; OrcaSlicer'), `${name} raft=${raft_layers}: the first chunk carries the preamble, got ${JSON.stringify(chunks[0].slice(0, 30))}`)
     assert.equal(chunks.join(''), batch, `${name} raft=${raft_layers}: joined chunks == the batch G-code`)

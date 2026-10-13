@@ -44,18 +44,21 @@ const params = {
   enable_support: true, support_style: 'tree', support_on_build_plate_only: true,
 }
 
-const st = await createSlicer()
-const mt = await createSlicerMt()
+const singleThreadSlicer = await createSlicer()
+const threadedSlicer = await createSlicerMt()
 let failures = 0
 for (const treeStyle of ['slim', 'strong', 'hybrid']) {
   const styled = JSON.stringify({ ...params, tree_style: treeStyle })
-  const serial = st.slice(model, styled, () => {})
+  const serial = singleThreadSlicer.slice(model, styled, () => {})
   assert.ok(!serial.error, `${treeStyle}: st slices (${serial.error})`)
   for (let run = 1; run <= 3; run++) {
-    const threaded = mt.slice(model, styled, () => {})
+    const threaded = threadedSlicer.slice(model, styled, () => {})
     const same = threaded.gcode === serial.gcode
     let verdict = 'ok'
-    if (!same) { verdict = 'FAIL'; failures++ }
+    if (!same) {
+      verdict = 'FAIL'
+      failures++
+    }
     console.log(`  ${verdict}: ${treeStyle} mt run ${run} equals st (${serial.gcode.length} bytes)`)
   }
 }
@@ -64,20 +67,30 @@ for (const treeStyle of ['slim', 'strong', 'hybrid']) {
 const layerBytes = (result) => result.layers.map((layer) => [layer.z, Array.from(layer.paths), Array.from(layer.widths)])
 {
   const arachne = JSON.stringify({ ...params, tree_style: 'hybrid', wall_generator: 'arachne' })
-  const serial = st.slice(model, arachne, () => {})
+  const serial = singleThreadSlicer.slice(model, arachne, () => {})
   assert.ok(!serial.error, `arachne: st slices (${serial.error})`)
-  const threaded = mt.slice(model, arachne, () => {})
+  const threaded = threadedSlicer.slice(model, arachne, () => {})
   const sameText = threaded.gcode === serial.gcode
   let sameLayers = true
-  try { assert.deepStrictEqual(layerBytes(threaded), layerBytes(serial)) } catch { sameLayers = false }
+  try {
+    assert.deepStrictEqual(layerBytes(threaded), layerBytes(serial))
+  } catch {
+    sameLayers = false
+  }
   let verdict = 'ok'
-  if (!sameText || !sameLayers) { verdict = 'FAIL'; failures++ }
+  if (!sameText || !sameLayers) {
+    verdict = 'FAIL'
+    failures++
+  }
   let textWord = 'equals'
   if (!sameText) textWord = 'differs from'
   let layersWord = 'equal'
   if (!sameLayers) layersWord = 'differ'
   console.log(`  ${verdict}: arachne walls, mt G-code ${textWord} st, toolpaths and widths ${layersWord}`)
 }
-if (failures) { console.log(`${failures} TREE SUPPORT MT CHECK(S) FAILED`); process.exit(1) }
+if (failures) {
+  console.log(`${failures} TREE SUPPORT MT CHECK(S) FAILED`)
+  process.exit(1)
+}
 console.log('ALL TREE SUPPORT MT CHECKS PASSED')
 process.exit(0)
