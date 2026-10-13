@@ -15,15 +15,27 @@ const ok = (condition, message) => {
   if (!condition) failures++
 }
 
-function boxTris(ox, oy, oz, sx, sy, sz) {
-  const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v => [v[0]+ox, v[1]+oy, v[2]+oz])
-  const q = (a,b,cc,d) => [[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]]
-  return [...q(0,1,2,3), ...q(4,5,6,7), ...q(0,1,5,4), ...q(1,2,6,5), ...q(2,3,7,6), ...q(3,0,4,7)]
+function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
+  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
+  const quad = (first,second,third,fourth) => [[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
+  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
 }
 function trisToSTL(tris) {
-  const buf = Buffer.alloc(84 + tris.length*50); buf.writeUInt32LE(tris.length, 80); let off = 84
-  for (const t of tris) { off += 12; for (const p of t) { buf.writeFloatLE(p[0],off); buf.writeFloatLE(p[1],off+4); buf.writeFloatLE(p[2],off+8); off += 12 } buf.writeUInt16LE(0,off); off += 2 }
-  return new Uint8Array(buf)
+  const buffer = Buffer.alloc(84 + tris.length*50)
+  buffer.writeUInt32LE(tris.length, 80)
+  let offset = 84
+  for (const triangle of tris) {
+    offset += 12
+    for (const point of triangle) {
+      buffer.writeFloatLE(point[0],offset)
+      buffer.writeFloatLE(point[1],offset+4)
+      buffer.writeFloatLE(point[2],offset+8)
+      offset += 12
+    }
+    buffer.writeUInt16LE(0,offset)
+    offset += 2
+  }
+  return new Uint8Array(buffer)
 }
 // A cube centred on the plate-local origin, as the viewer sends it.
 const CUBE_SIZE = 20
@@ -60,7 +72,7 @@ const withConfig = (extra, overrides = {}) => {
 }
 
 const slicer = await createSlicer()
-const slice = (p, stl = cube) => slicer.slice(stl, JSON.stringify(p), () => {})
+const slice = (sliceParams, stl = cube) => slicer.slice(stl, JSON.stringify(sliceParams), () => {})
 
 console.log('[raw path] no placeholder_config: the templates are copied as written')
 const raw = slice(params)
@@ -96,9 +108,13 @@ ok(!/^M104 S0$/m.test(gcode), "the kernel's own heater shutdown is replaced by t
 console.log('[streamed] the worker slices through the layer sink; the chunks join to the batch text')
 {
   const chunks = []
-  slicer.set_layer_sink((z, idx, text) => { chunks.push(text) })
+  slicer.set_layer_sink((z, layerIndex, text) => { chunks.push(text) })
   let streamed
-  try { streamed = slicer.slice(cube, JSON.stringify(withConfig({})), () => {}) } finally { slicer.clear_layer_sink() }
+  try {
+    streamed = slicer.slice(cube, JSON.stringify(withConfig({})), () => {})
+  } finally {
+    slicer.clear_layer_sink()
+  }
   ok(!streamed.error && streamed.stats.streamed, `streams (${streamed.error ?? 'no error'})`)
   ok(chunks.join('') === gcode, `streamed chunks == batch G-code (${chunks.join('').length} vs ${gcode.length} bytes)`)
 }
@@ -119,7 +135,10 @@ for (const key of CUSTOM_GCODE_KEYS) {
   const keyParams = { ...params, machine_start_gcode: onlyThis.machine_start_gcode, machine_end_gcode: onlyThis.machine_end_gcode,
                       placeholder_config: JSON.stringify(onlyThis) }
   let stl = cube
-  if (toolChange) { Object.assign(keyParams, { extruder_count: 2, mm_group_split: 12 }); stl = mmBoxes }
+  if (toolChange) {
+    Object.assign(keyParams, { extruder_count: 2, mm_group_split: 12 })
+    stl = mmBoxes
+  }
   const run = slice(keyParams, stl)
   ok(new RegExp(`; marker ${key} \\d+`).test(run.gcode ?? ''), `${key} is expanded by the kernel`)
 }
@@ -130,10 +149,10 @@ const barePre = bare.gcode.slice(0, bare.gcode.indexOf('; machine_start_gcode'))
 ok(/^M190 S65 ; set bed temperature and wait for it to be reached$/m.test(barePre), 'M190 with the first-layer bed temperature is written before it')
 
 console.log('[Bambu Lab] printer_model "Bambu Lab ..." waits for the nozzle after the start block')
-const bbl = slice(withConfig({ printer_model: 'Bambu Lab A1 mini', machine_start_gcode: 'G28' }))
-const bblAfter = bbl.gcode.slice(bbl.gcode.indexOf('; machine_start_gcode'), bbl.gcode.indexOf('G21 ; mm'))
-ok(/^M109 S220 ; set nozzle temperature and wait for it to be reached$/m.test(bblAfter), 'M109 follows the start block')
-ok(bbl.gcode.includes('M981 S0 P20000 ; close spaghetti detector'), 'the end block closes the spaghetti detector')
+const bambuLab = slice(withConfig({ printer_model: 'Bambu Lab A1 mini', machine_start_gcode: 'G28' }))
+const bambuAfterStart = bambuLab.gcode.slice(bambuLab.gcode.indexOf('; machine_start_gcode'), bambuLab.gcode.indexOf('G21 ; mm'))
+ok(/^M109 S220 ; set nozzle temperature and wait for it to be reached$/m.test(bambuAfterStart), 'M109 follows the start block')
+ok(bambuLab.gcode.includes('M981 S0 P20000 ; close spaghetti detector'), 'the end block closes the spaghetti detector')
 
 console.log('[error] a template error fails the slice with a typed code and leaves the kernel usable')
 const broken = slice(withConfig({ machine_start_gcode: 'M104 S[no_such_variable]' }))
@@ -143,18 +162,18 @@ const afterError = slice(withConfig({}))
 ok(afterError.gcode === gcode, 'the next slice is byte-identical to the one before the error')
 
 console.log('[multi-material] the start block is spliced in after emission, with the real tool changes')
-const A = boxTris(-13, -5, 0, 10, 10, 4), B = boxTris(3, -5, 0, 10, 10, 4)
-const twoBoxes = trisToSTL([...A, ...B])
+const leftBox = boxTris(-13, -5, 0, 10, 10, 4), rightBox = boxTris(3, -5, 0, 10, 10, 4)
+const twoBoxes = trisToSTL([...leftBox, ...rightBox])
 const mmSettings = { ...settings, filament_type: ['PLA', 'PETG'], nozzle_temperature_initial_layer: ['210', '230'], nozzle_temperature: ['210', '230'],
                      filament_end_gcode: ['; end A', '; end B'], machine_start_gcode: '; changes [total_toolchanges] used {is_extruder_used[1]}' }
-const mm = slice(withConfig(mmSettings, { extruder_count: 2, mm_group_split: A.length }), twoBoxes)
-ok(!mm.error, `multi-material slices (${mm.error ?? 'no error'})`)
-const changes = Number(/; changes (\d+) used (\w+)/.exec(mm.gcode ?? '')?.[1])
-const toolChanges = (mm.gcode.match(/^T\d+$/gm) ?? []).length - 1   // the first selection is a T command too
+const multiMaterial = slice(withConfig(mmSettings, { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
+ok(!multiMaterial.error, `multi-material slices (${multiMaterial.error ?? 'no error'})`)
+const changes = Number(/; changes (\d+) used (\w+)/.exec(multiMaterial.gcode ?? '')?.[1])
+const toolChanges = (multiMaterial.gcode.match(/^T\d+$/gm) ?? []).length - 1   // the first selection is a T command too
 ok(changes === toolChanges && changes > 0, `total_toolchanges = the T commands written after the first (${changes} vs ${toolChanges})`)
-ok(/; changes \d+ used true/.test(mm.gcode), 'is_extruder_used marks the second filament (a bool prints as true)')
-ok(mm.gcode.indexOf('; machine_start_gcode') < mm.gcode.search(/^T0$/m), 'the start block precedes the first tool select')
-ok(mm.gcode.includes('; end A') && mm.gcode.includes('; end B'), 'every filament_end_gcode is written')
+ok(/; changes \d+ used true/.test(multiMaterial.gcode), 'is_extruder_used marks the second filament (a bool prints as true)')
+ok(multiMaterial.gcode.indexOf('; machine_start_gcode') < multiMaterial.gcode.search(/^T0$/m), 'the start block precedes the first tool select')
+ok(multiMaterial.gcode.includes('; end A') && multiMaterial.gcode.includes('; end B'), 'every filament_end_gcode is written')
 
 console.log('[first filaments] per physical extruder, as cal_non_support_filaments + physical_extruder_map set them')
 // A two-nozzle printer whose logical extruder 0 is physical nozzle 1 (Bambu Lab H2D/X2D profiles). Their start
@@ -165,11 +184,11 @@ const onOneNozzle = slice(withConfig({ ...twoNozzles, filament_map: ['1'] }))
 ok(!onOneNozzle.error, `a two-nozzle template slices (${String(onOneNozzle.error).split('\n')[0]})`)
 ok((onOneNozzle.gcode ?? '').includes('; first -1 0 non-support -1 0 tools 0'),
    `filament 0 on logical extruder 0 lands at physical index 1 (${/; first .*/.exec(onOneNozzle.gcode ?? '')?.[0]})`)
-const onTwoNozzles = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_map: ['1', '2'] }, { extruder_count: 2, mm_group_split: A.length }), twoBoxes)
+const onTwoNozzles = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_map: ['1', '2'] }, { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
 ok((onTwoNozzles.gcode ?? '').includes('; first 1 0 non-support 1 0 tools 0'),
    `one filament per nozzle, swapped by the physical map (${/; first .*/.exec(onTwoNozzles.gcode ?? '')?.[0]})`)
 const supportFirst = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_map: ['1', '1'], filament_is_support: ['1', '0'] },
-                                      { extruder_count: 2, mm_group_split: A.length }), twoBoxes)
+                                      { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
 ok((supportFirst.gcode ?? '').includes('; first -1 0 non-support -1 1 tools 0'),
    `a support filament is skipped for first_non_support_filaments only (${/; first .*/.exec(supportFirst.gcode ?? '')?.[0]})`)
 
@@ -202,6 +221,9 @@ const mtResult = slicerMt.slice(cube, JSON.stringify(withConfig({})), () => {})
 ok(mtResult.gcode === gcode, 'byte-identical')
 ok(slicerMt.slice(cube, JSON.stringify(withConfig(singleSettings, singleParams)), () => {}).gcode === singleText, 'byte-identical on a single tool')
 
-if (failures) { console.log(`${failures} CUSTOM G-CODE CHECK(S) FAILED`); process.exit(1) }
+if (failures) {
+  console.log(`${failures} CUSTOM G-CODE CHECK(S) FAILED`)
+  process.exit(1)
+}
 console.log('ALL CUSTOM G-CODE CHECKS PASSED')
 process.exit(0)
