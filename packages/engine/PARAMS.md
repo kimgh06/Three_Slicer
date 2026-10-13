@@ -230,7 +230,7 @@ same unit — `first_layer_height` comes from `initial_layer_print_height`, and 
 | `extruder_retract_speed` | `?` | `[]` | `filament_retraction_speed` | undefined |
 | `extruder_z_hop` | `?` | `[]` | `filament_z_hop` | undefined |
 | `extrusion_rate_slope_segment_length` | `number` | `1.0` | — | segment split length for the real PE (mm) |
-| `filament_max_volumetric_speed` | `number[]` | `[]` | `filament_max_volumetric_speed` | mm³/s, per filament; empty = no cap (GW::capped_feed) |
+| `filament_max_volumetric_speed` | `number[]` | `[]` | `filament_max_volumetric_speed` | mm³/s, per filament; empty = no cap (GcodeWriter::capped_feed) |
 | `filter_out_gap_fill` | `number` | `0.0` | `filter_out_gap_fill` | filter_out_gap_fill (mm): gap fill shorter than this is dropped |
 | `first_layer_bed_temp` | `number` | `-1.0` | `before_layer_change_gcode`, `change_filament_gcode`, `filament_end_gcode`, `filament_start_gcode`, `file_start_gcode`, `hot_plate_temp_initial_layer`, `layer_change_gcode`, `machine_end_gcode`, `machine_start_gcode`, `time_lapse_gcode` | the plate type's _initial_layer bed option (<0 = none sent) |
 | `first_layer_flow_ratio` | `?` | — | `first_layer_flow_ratio` | undefined |

@@ -256,7 +256,7 @@ struct Params {
   //  makes by material name (PETG's extra unretract, TPU on the first layer).
   std::vector<std::string> filament_type, filament_settings_id;
   std::vector<double> filament_density;      // g/cm3, per filament
-  std::vector<double> filament_max_volumetric_speed;   // mm³/s, per filament; empty = no cap (GW::capped_feed)
+  std::vector<double> filament_max_volumetric_speed;   // mm³/s, per filament; empty = no cap (GcodeWriter::capped_feed)
   std::vector<double> filament_cost;         // currency per kg, per filament
   // Upstream always writes the per-filament totals and the config dump. Here they are opt-in, because every byte the
   //  default path emits is pinned by golden.mjs — the viewer turns them on, so the shipped app matches upstream
