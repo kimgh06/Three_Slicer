@@ -31,5 +31,5 @@ struct LayerData {
   std::vector<arachne_bridge::WLine> arachneWalls;  // stage 7: the real Arachne variable-width walls (arachne mode)
 };
 
-em::val slice_multimaterial(std::vector<Tri>& tris, const Params& p, em::val onProgress,
+em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::val onProgress,
                             double height, bool over_bed);
