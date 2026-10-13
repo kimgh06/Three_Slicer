@@ -52,7 +52,7 @@ std::vector<Paths> split_components(const Paths& in){
 Paths grid_snap(const Paths& region, double cell) {
   if (region.empty() || cell <= 1e-6) return region;
   double minx,miny,maxx,maxy;
-  bbox_of(region, minx,miny,maxx,maxy);
+  bounding_box_of(region, minx,miny,maxx,maxy);
   const long firstColumn=(long)std::floor(minx/cell);
   const long lastColumn=(long)std::ceil(maxx/cell);
   const long firstRow=(long)std::floor(miny/cell);
@@ -99,7 +99,7 @@ static Paths gyroid_lines(const Paths& region, double spacing, double z) {
   Paths lines;
   if (region.empty()||spacing<=1e-6) return lines;
   double minx,miny,maxx,maxy;
-  bbox_of(region,minx,miny,maxx,maxy);
+  bounding_box_of(region,minx,miny,maxx,maxy);
   double amplitude=spacing*0.55;
   double lambda=spacing*2.0;
   double phase=z*(2*PI/lambda);
@@ -177,20 +177,20 @@ Paths build_sparse(const Paths& region, const std::string& pattern, double base,
   return infill_clipped(region, angle, spacing);           // rectilinear (default)
 }
 // Path length (for estimating layer time)
-static double path_len(const Path& path, bool closed) {
+static double path_length(const Path& path, bool closed) {
   double length=0;
   for (size_t i=1;i<path.size();++i) length+=std::hypot((path[i].x()-path[i-1].x())*INV,(path[i].y()-path[i-1].y())*INV);
   if (closed && path.size()>=2) length+=std::hypot((path[0].x()-path.back().x())*INV,(path[0].y()-path.back().y())*INV);
   return length;
 }
-double paths_len(const Paths& paths, bool closed){
+double paths_length(const Paths& paths, bool closed){
   double length=0;
-  for (auto& path:paths) length+=path_len(path,closed);
+  for (auto& path:paths) length+=path_length(path,closed);
   return length;
 }
-double vwalls_len(const std::vector<Paths>& walls){
+double walls_length(const std::vector<Paths>& walls){
   double length=0;
-  for (auto& wall:walls) length+=paths_len(wall,true);
+  for (auto& wall:walls) length+=paths_length(wall,true);
   return length;
 }
 // Cooling fan ramp: [0,close)=0, [full,∞)=target, linear in between
@@ -219,7 +219,7 @@ static uint32_t lcg(uint32_t& state){
   return state;
 }
 // Seam modes: 0=back (max Y) 1=nearest (closest to the nozzle) 2=aligned (previous seam) 3=random, -1=no rotation
-void rotate_seam(Path& path, int mode, SeamCtx& seamContext, double nozzleX, double nozzleY) {
+void rotate_seam(Path& path, int mode, SeamContext& seamContext, double nozzleX, double nozzleY) {
   if (mode < 0 || path.size() < 3) return;
   size_t best = 0;
   if (mode == 0 || (mode == 2 && !seamContext.hasLast)) {          // back / the first layer of aligned

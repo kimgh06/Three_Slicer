@@ -12,7 +12,7 @@ static const double SCALE  = 1e6;          // mm -> clipper integer coordinates
 static const double INV    = 1.0 / SCALE;
 static const double PI     = 3.14159265358979323846;
 // Stage 33: BED_CENTER (=128.0, assuming a 256mm bed) removed — it was declared and never referenced (measured).
-//  The bed center is Params::bed_center_x/y (the printable area's corner plus half its size) -> GW::offset_x/offset_y.
+//  The bed center is Params::bed_center_x/y (the printable area's corner plus half its size) -> GcodeWriter::offset_x/offset_y.
 // TRAVEL_RETRACT_MIN was removed too — wired to p.retraction_minimum_travel instead.
 
 // ---- Clipper helpers -----------------------------------------------------------
@@ -43,7 +43,7 @@ inline Paths union_paths(const Paths& first, const Paths& second) {
   return clip_paths(first,second,ctUnion);
 }
 // Generate parallel lines at a given angle, then clip them to a region (open paths)
-inline void bbox_of(const Paths& paths, double& minx,double& miny,double& maxx,double& maxy){
+inline void bounding_box_of(const Paths& paths, double& minx,double& miny,double& maxx,double& maxy){
   minx=miny=1e18;
   maxx=maxy=-1e18;
   for (const Path& path:paths) for (const IntPoint& point:path){
@@ -59,7 +59,7 @@ inline Paths infill_lines(const Paths& region, double angleDeg, double spacing) 
   Paths lines;
   if (region.empty()||spacing<=1e-6) return lines;
   double minx,miny,maxx,maxy;
-  bbox_of(region,minx,miny,maxx,maxy);
+  bounding_box_of(region,minx,miny,maxx,maxy);
   double angleRad=angleDeg*PI/180.0;
   double directionX=std::cos(angleRad);
   double directionY=std::sin(angleRad);
