@@ -323,7 +323,7 @@ struct Params {
   //  and the time estimate (r.moves would stay resident in bulk) -> only G-code is streamed out to the end. Effective only on the
   //  streaming path with a layer sink installed (default false — no effect on the batch path).
   bool   economy=false;
-  // G003 incremental: decided and requested by the viewer (invalidation-map). 0 = full, 1 = reuse geometry (tris), 2 = reuse through support (L[]).
+  // G003 incremental: decided and requested by the viewer (invalidation-map). 0 = full, 1 = reuse geometry (triangles), 2 = reuse through support (layers[]).
   int    reuse_stages=0;
   bool   keep_stages=false;                             // keep the stages cached after slicing (skips the early release — a memory trade-off)
   bool   arachne_dump=false;   // temporary diagnostic: dump the PASS1 arachne input polygons to stderr

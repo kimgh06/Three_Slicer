@@ -31,30 +31,30 @@ ModelPrep prepare_model(std::vector<Tri>& tris, const Params& params, bool reuse
     maxx=maxy=maxz=0;
   } else {
     for (auto& triangle:tris) for (int k=0;k<3;++k){
-      minx=std::min(minx,(double)triangle.v[k].x);
-      maxx=std::max(maxx,(double)triangle.v[k].x);
-      miny=std::min(miny,(double)triangle.v[k].y);
-      maxy=std::max(maxy,(double)triangle.v[k].y);
-      minz=std::min(minz,(double)triangle.v[k].z);
-      maxz=std::max(maxz,(double)triangle.v[k].z);
+      minx=std::min(minx,(double)triangle.vertices[k].x);
+      maxx=std::max(maxx,(double)triangle.vertices[k].x);
+      miny=std::min(miny,(double)triangle.vertices[k].y);
+      maxy=std::max(maxy,(double)triangle.vertices[k].y);
+      minz=std::min(minz,(double)triangle.vertices[k].z);
+      maxz=std::max(maxz,(double)triangle.vertices[k].z);
     }
   }
   double centerX=(minx+maxx)/2, centerY=(miny+maxy)/2;
   if (reuseGeom) {
-    centerX = g_scache.cx;
-    centerY = g_scache.cy;
+    centerX = g_scache.centerX;
+    centerY = g_scache.centerY;
   }
   // Stage 28 P2: with auto_center=true the combined bbox is realigned to the origin (legacy). false (default) = keep the viewer XY coordinates and only seat Z.
   //  G003: with reuseGeom the cached tris are already normalized — do not move again (avoids a double shift).
   if (!reuseGeom) {
     if (params.auto_center) {
       for (auto& triangle:tris) for (int k=0;k<3;++k){
-        triangle.v[k].x-=centerX;
-        triangle.v[k].y-=centerY;
-        triangle.v[k].z-=minz;
+        triangle.vertices[k].x-=centerX;
+        triangle.vertices[k].y-=centerY;
+        triangle.vertices[k].z-=minz;
       }
     } else {
-      for (auto& triangle:tris) for (int k=0;k<3;++k){ triangle.v[k].z-=minz; }
+      for (auto& triangle:tris) for (int k=0;k<3;++k){ triangle.vertices[k].z-=minz; }
     }
   }
   double height;
@@ -85,7 +85,7 @@ static void classic_walls(LayerData& layer, const Params& params, int i, int lay
     config.perimeter_width     = params.initial_layer_line_width;
     config.solid_infill_width  = params.initial_layer_line_width;
   }
-  config.layer_height              = layer.h;
+  config.layer_height              = layer.thickness;
   config.nozzle_diameter           = params.nozzle_diameter;
   config.wall_loops                = params.wall_loops;
   config.layer_id                  = i + raftLayers;      // upstream numbers object layers after the raft
@@ -128,23 +128,23 @@ static void classic_walls(LayerData& layer, const Params& params, int i, int lay
     layer.classicWalls.push_back({ to_path(extrusion.points), extrusion.closed, extrusion.inset, (float)extrusion.width });
     if (!extrusion.closed) continue;
     if ((int)layer.walls.size() <= extrusion.inset) layer.walls.resize(extrusion.inset + 1);
-    layer.walls[extrusion.inset].push_back(layer.classicWalls.back().pl);
+    layer.walls[extrusion.inset].push_back(layer.classicWalls.back().path);
   }
   for (const classic_bridge::Extrusion& extrusion : result.gap_fill)
-    layer.classicGapFill.push_back({ to_path(extrusion.points), (float)extrusion.width, 0, (float)layer.h, 0.0f });
+    layer.classicGapFill.push_back({ to_path(extrusion.points), (float)extrusion.width, 0, (float)layer.thickness, 0.0f });
   for (const classic_bridge::IPath& points : result.fill) layer.fill.push_back(to_path(points));
 }
 
 bool pass1_run(SliceCtx& context) {
-  const Params& params = *context.p;
-  std::vector<Tri>& tris = *context.tris;
-  std::vector<LayerData>& layers = *context.L;
-  auto& isCanceled = context.CX;
+  const Params& params = *context.params;
+  std::vector<Tri>& tris = *context.triangles;
+  std::vector<LayerData>& layers = *context.layers;
+  auto& isCanceled = context.isCanceled;
   auto& report = context.report;
-  const int layerCount = context.N;
+  const int layerCount = context.layerCount;
   const int total = context.total;
   const double height = context.height;
-  const double lineWidth = context.w;
+  const double lineWidth = context.lineWidth;
   { const LayerPlan layerPlan = plan_layers(params.first_layer_height, params.layer_height, height);
     const std::vector<double>& planes = layerPlan.plane;   // the cutting planes; a layer's print z is layerPlan.top
     // [facet-major segment collection — matching upstream] Like the upstream slice_facet_at_zs (TriangleMeshSlicer.cpp:476),
@@ -171,7 +171,7 @@ bool pass1_run(SliceCtx& context) {
         Seg segment;
         for (size_t triangleIndex = firstTriangle; triangleIndex < endTriangle; ++triangleIndex) {
           const Tri& triangle = tris[triangleIndex];
-          double zmin=std::min({triangle.v[0].z,triangle.v[1].z,triangle.v[2].z}), zmax=std::max({triangle.v[0].z,triangle.v[1].z,triangle.v[2].z});
+          double zmin=std::min({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z}), zmax=std::max({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z});
           for (auto it = std::lower_bound(planes.begin(), planes.end(), zmin); it != planes.end() && *it < zmax; ++it)
             if (tri_plane(triangle, *it, segment)) out[(size_t)(it - planes.begin())].push_back(segment);
         }
@@ -213,9 +213,9 @@ bool pass1_run(SliceCtx& context) {
       const double z = layerPlan.top[i];
       LayerData layer;
       layer.z=z;
-      layer.idx=i;
-      if (i==0) layer.h=params.first_layer_height;
-      else layer.h=params.layer_height;
+      layer.index=i;
+      if (i==0) layer.thickness=params.first_layer_height;
+      else layer.thickness=params.layer_height;
       std::vector<Seg> segments;
       segments.swap(layerSegs[i]);
       if (captureLoops) {
@@ -296,7 +296,7 @@ bool pass1_run(SliceCtx& context) {
             }
             fflush(stderr);
           }
-          layer.arachneWalls = arachne_bridge::generate_walls(polys, lineWidth, params.wall_loops, layer.h);
+          layer.arachneWalls = arachne_bridge::generate_walls(polys, lineWidth, params.wall_loops, layer.thickness);
         }
         }
       }

@@ -9,17 +9,17 @@ em::val build_stats(const SliceCtx& context, const GW& writer, const gcode_time:
                     const std::string& engine_used, const gcode_time::Limits& timeLimits,
                     bool over_bed, bool streaming, bool economy,
                     double phaseStartMs, double pass1EndMs, double surfaceEndMs, double supportEndMs, double flushMs) {
-  const int layerCount = context.N;
-  const int raftLayerCount = context.nraft;
+  const int layerCount = context.layerCount;
+  const int raftLayerCount = context.raftLayerCount;
   em::val stats = em::val::object();
   stats.set("layers", layerCount + raftLayerCount);          // total emitted layers (raft included) = the length of the layers array
   stats.set("model_layers", layerCount);
   stats.set("raft_layers", raftLayerCount);
   stats.set("path_segments", (double)writer.segments);
   stats.set("filament_mm", writer.filament);
-  if (context.p->single_tool > 0) {   // the whole print on one filament other than the first: indexed by tool, as slice_multimaterial reports it
+  if (context.params->single_tool > 0) {   // the whole print on one filament other than the first: indexed by tool, as slice_multimaterial reports it
     em::val byTool = em::val::array();
-    for (int tool = 0; tool < context.p->single_tool; ++tool) byTool.call<void>("push", 0.0);
+    for (int tool = 0; tool < context.params->single_tool; ++tool) byTool.call<void>("push", 0.0);
     byTool.call<void>("push", writer.filament);
     stats.set("filament_mm_by_tool", byTool);
   }
@@ -34,24 +34,24 @@ em::val build_stats(const SliceCtx& context, const GW& writer, const gcode_time:
   // over_bed answers "would this print leave the bed", not "is the MODEL too big" — so the model verdict from
   //  prepare_model (which also carries the height check) is widened by what the emitted extrusions actually did.
   //  Support/skirt/brim/raft reach past the model and were invisible to the old flag; see extrusion_bed_overflow.
-  const GWBedOverflow overflow = extrusion_bed_overflow(writer, *context.p);
+  const GWBedOverflow overflow = extrusion_bed_overflow(writer, *context.params);
   stats.set("over_bed", over_bed || overflow.any());
   stats.set("over_bed_model", over_bed);       // the model-only verdict, kept so the two can be told apart
   stats.set("over_bed_x", overflow.x);             // how far past the bed the toolpaths reach, mm (0 = inside)
   stats.set("over_bed_y", overflow.y);
   stats.set("over_bed_z", overflow.z);   // emitted top layer past printable_height (raft included), mm
   // Upstream time estimate results
-  stats.set("time_estimate", timeEstimate.total_s);                   // total estimated print time (seconds)
-  stats.set("first_layer_time", timeEstimate.first_layer_s);
-  stats.set("time_extrude", timeEstimate.extrude_s);
-  stats.set("time_travel", timeEstimate.travel_s);
+  stats.set("time_estimate", timeEstimate.total_seconds);                   // total estimated print time (seconds)
+  stats.set("first_layer_time", timeEstimate.first_layer_seconds);
+  stats.set("time_extrude", timeEstimate.extrude_seconds);
+  stats.set("time_travel", timeEstimate.travel_seconds);
   stats.set("time_filament_mm", timeEstimate.filament_mm);            // filament usage from parsing (to compare against writer.filament)
   stats.set("time_moves", (double)timeEstimate.moves);
   { em::val layerTimes = em::val::array();
-    for (size_t k = 0; k < timeEstimate.layer_s.size(); ++k) layerTimes.call<void>("push", timeEstimate.layer_s[k]);
+    for (size_t k = 0; k < timeEstimate.layer_seconds.size(); ++k) layerTimes.call<void>("push", timeEstimate.layer_seconds[k]);
     stats.set("layer_times", layerTimes); }
   { em::val roleTimes = em::val::object();
-    for (auto& roleTime : timeEstimate.role_s) roleTimes.set(std::to_string(roleTime.first), roleTime.second);
+    for (auto& roleTime : timeEstimate.role_seconds) roleTimes.set(std::to_string(roleTime.first), roleTime.second);
     stats.set("role_times", roleTimes); }
   stats.set("time_engine", engine_used);                    // stage 13: which time estimation engine ran (full|transcribed|fallback)
   // Echo back the machine limits the estimator actually ran with, so the UI reports what was used instead of

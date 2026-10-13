@@ -10,12 +10,12 @@
 #include <vector>
 
 void support_run(SliceCtx& context) {
-  const Params& params = *context.p;
-  std::vector<LayerData>& layers = *context.L;
-  const int layerCount = context.N;
-  const double lineWidth = context.w;
-  const double modelCenterX = context.cx;
-  const double modelCenterY = context.cy;
+  const Params& params = *context.params;
+  std::vector<LayerData>& layers = *context.layers;
+  const int layerCount = context.layerCount;
+  const double lineWidth = context.lineWidth;
+  const double modelCenterX = context.centerX;
+  const double modelCenterY = context.centerY;
   const double support_spacing = context.support_spacing;
   double& treeZMaxResid = *context.treeZMaxResid;
   int&    treeSupLayers = *context.treeSupLayers;
@@ -146,8 +146,8 @@ void support_run(SliceCtx& context) {
       ++treeSupLayers;
       for (const treesupport_bridge::Line& line : treeLayer.lines) {
         Path polyline;
-        polyline.reserve(line.pts.size());
-        for (const auto& xy : line.pts)
+        polyline.reserve(line.points.size());
+        for (const auto& xy : line.points)
           polyline.push_back(IntPoint((cInt)std::llround((xy.first+treeShiftX)*SCALE),(cInt)std::llround((xy.second+treeShiftY)*SCALE)));  // stage 28: shift back to the model position
         if (polyline.size()>=2) layers[bestLayer].supTree.push_back({std::move(polyline), (float)line.width,
                               line.role, (float)line.height, (float)line.mm3_per_mm});  // WP3: preserve role/height/mm3

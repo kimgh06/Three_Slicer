@@ -12,11 +12,11 @@
 #include <vector>
 
 EmitPre compute_pre_layer(const SliceCtx& context, int i) {
-  const Params& params = *context.p;
-  std::vector<LayerData>& layers = *context.L;
-  const int layerCount = context.N;
-  const int raftLayers = context.nraft;
-  const double lineWidth = context.w;
+  const Params& params = *context.params;
+  std::vector<LayerData>& layers = *context.layers;
+  const int layerCount = context.layerCount;
+  const int raftLayers = context.raftLayerCount;
+  const double lineWidth = context.lineWidth;
   const double zShift = context.zShift;
   const double sparse_spacing = context.sparse_spacing;
   const double solid_spacing = context.solid_spacing;
@@ -150,8 +150,8 @@ EmitPre compute_pre_layer(const SliceCtx& context, int i) {
     }
 
     double classicLen = 0;   // the classic generator's thin walls and gap fill (its loops are in layer.walls)
-    for (const ClassicWall& wall : layer.classicWalls) if (!wall.loop) classicLen += paths_len(Paths{wall.pl}, false);
-    for (const TreePath& gapPath : layer.classicGapFill) classicLen += paths_len(Paths{gapPath.pl}, false);
+    for (const ClassicWall& wall : layer.classicWalls) if (!wall.loop) classicLen += paths_len(Paths{wall.path}, false);
+    for (const TreePath& gapPath : layer.classicGapFill) classicLen += paths_len(Paths{gapPath.path}, false);
     double layerLen = vwalls_len(layer.walls) + paths_len(emitPre.solidLines,false) + paths_len(emitPre.sparseLines,false)
                     + paths_len(emitPre.supI,false) + paths_len(emitPre.supB,false) + paths_len(emitPre.flExtra,true)
                     + paths_len(emitPre.gapLines,false) + paths_len(emitPre.bridgeLines,false) + classicLen;

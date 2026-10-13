@@ -78,22 +78,22 @@ void gw_write_modes(GW& writer, const Params& params, bool is_bbl) {
 
 EmitFlags gw_setup_preamble(GW& writer, const Params& params, int treeSupLayers, double treeZMaxResid, const CustomStart* start) {
   gw_setup_machine(writer, params);
-  writer.retract_len = params.retract_length;
+  writer.retract_length = params.retract_length;
   writer.retract_min_travel = params.retraction_minimum_travel;
-  writer.retractF    = (int)std::llround(params.retract_speed * 60);
+  writer.retract_feed    = (int)std::llround(params.retract_speed * 60);
   writer.z_hop       = params.z_hop;
-  writer.offX        = params.bed_center_x();
-  writer.offY        = params.bed_center_y();
+  writer.offset_x        = params.bed_center_x();
+  writer.offset_y        = params.bed_center_y();
   writer.arc_fitting = params.enable_arc_fitting;
   writer.arc_resolution = params.gcode_resolution;
-  writer.scarf_len   = params.scarf_length;
+  writer.scarf_length   = params.scarf_length;
   double peSlope = 0.0;   // in-kernel PE-lite only when pe_lite; else real PE post-processes
   if (params.pe_lite) peSlope = std::max(0.0, params.max_volumetric_extrusion_rate_slope);
   writer.pe_slope    = peSlope;
   writer.filament_area = PI * params.filament_diameter * params.filament_diameter / 4.0;
   writer.tool_filament_diameter = params.filament_diameter;   // single-material path: one tool, so these never change again
   writer.tool_flow_ratio        = params.flow_ratio;
-  writer.max_vol_speed          = Params::forTool(params.filament_max_volumetric_speed, params.single_tool, 0.0);
+  writer.max_volumetric_speed          = Params::forTool(params.filament_max_volumetric_speed, params.single_tool, 0.0);
   writer.print_flow             = params.print_flow_ratio;
   writer.scarf_flow             = params.scarf_joint_flow_ratio;
   writer.avoid_walls = params.reduce_crossing_wall;                                 // wall-avoiding travel
@@ -122,7 +122,7 @@ EmitFlags gw_setup_preamble(GW& writer, const Params& params, int treeSupLayers,
     writer.raw(line);
     std::snprintf(line,sizeof line,"; support=%d angle=%.0f density=%.2f topz=%.2f xy=%.2f iface=%d  raft=%d  bed=%.0fx%.0f off=%.1f,%.1f",
       (int)params.enable_support,params.support_threshold_angle,params.support_density,params.support_top_z_distance,params.support_xy_distance,
-      params.support_interface_top_layers,params.raft_layers,params.bed_width,params.bed_depth,writer.offX,writer.offY);
+      params.support_interface_top_layers,params.raft_layers,params.bed_width,params.bed_depth,writer.offset_x,writer.offset_y);
     writer.raw(line);
     if (treeSupLayers > 0) {   // stage 19: tree support z alignment diagnostics (max residual against the object z grid, mm)
       std::snprintf(line,sizeof line,"; tree_support layers=%d z_resid_max=%.6fmm", treeSupLayers, treeZMaxResid);

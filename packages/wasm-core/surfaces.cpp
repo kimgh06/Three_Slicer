@@ -9,8 +9,8 @@
 #include <vector>
 
 void surfaces_run(SliceCtx& context) {
-  std::vector<LayerData>& layers = *context.L;
-  const int layerCount = context.N;
+  std::vector<LayerData>& layers = *context.layers;
+  const int layerCount = context.layerCount;
   // ---- PASS 1.5: surface detection (this layer's fill − the neighboring contour) ----
   //  Per-layer independent (reads: immutable neighboring contours, writes: its own topSurf/botSurf) -> the same layer parallelism as PASS1.
   {
