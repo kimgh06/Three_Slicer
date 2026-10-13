@@ -8,30 +8,41 @@
 #include <thread>
 #include <vector>
 
-void surfaces_run(SliceCtx& C) {
-  std::vector<LayerData>& L = *C.L;
-  const int N = C.N;
+void surfaces_run(SliceCtx& context) {
+  std::vector<LayerData>& layers = *context.L;
+  const int layerCount = context.N;
   // ---- PASS 1.5: surface detection (this layer's fill − the neighboring contour) ----
   //  Per-layer independent (reads: immutable neighboring contours, writes: its own topSurf/botSurf) -> the same layer parallelism as PASS1.
   {
-    auto surfOne = [&](int i){
-      if (L[i].fill.empty()) return;
-      Paths above = (i+1<N) ? L[i+1].contour : Paths{};
-      Paths below = (i-1>=0) ? L[i-1].contour : Paths{};
-      L[i].topSurf = clip_paths(L[i].fill, above, ctDifference);  // nothing above -> a top surface
-      L[i].botSurf = clip_paths(L[i].fill, below, ctDifference);  // nothing below -> a bottom surface
+    auto detectLayerSurfaces = [&](int i){
+      if (layers[i].fill.empty()) return;
+      Paths above;
+      if (i+1<layerCount) above = layers[i+1].contour;
+      Paths below;
+      if (i-1>=0) below = layers[i-1].contour;
+      layers[i].topSurf = clip_paths(layers[i].fill, above, ctDifference);  // nothing above -> a top surface
+      layers[i].botSurf = clip_paths(layers[i].fill, below, ctDifference);  // nothing below -> a bottom surface
     };
 #ifdef __EMSCRIPTEN_PTHREADS__
-    { unsigned hw = std::thread::hardware_concurrency();
-      unsigned nt = std::max(1u, std::min<unsigned>(hw ? hw : 4, (unsigned)std::max(1, N)));
-      std::atomic<int> nextIdx{0};
-      auto workfn = [&]{ int i; while ((i = nextIdx.fetch_add(1)) < N) surfOne(i); };
-      std::vector<std::thread> ths; ths.reserve(nt-1);
-      for (unsigned t=1; t<nt; ++t) { try { ths.emplace_back(workfn); } catch (...) { break; } }
-      workfn();
-      for (auto& th : ths) th.join(); }
+    {
+      unsigned hardwareThreads = std::thread::hardware_concurrency();
+      if (hardwareThreads == 0) hardwareThreads = 4;
+      unsigned threadCount = std::max(1u, std::min<unsigned>(hardwareThreads, (unsigned)std::max(1, layerCount)));
+      std::atomic<int> nextLayer{0};
+      auto worker = [&]{
+        int i;
+        while ((i = nextLayer.fetch_add(1)) < layerCount) detectLayerSurfaces(i);
+      };
+      std::vector<std::thread> threads;
+      threads.reserve(threadCount-1);
+      for (unsigned threadIndex=1; threadIndex<threadCount; ++threadIndex) {
+        try { threads.emplace_back(worker); } catch (...) { break; }
+      }
+      worker();
+      for (auto& thread : threads) thread.join();
+    }
 #else
-    for (int i=0;i<N;++i) surfOne(i);
+    for (int i=0;i<layerCount;++i) detectLayerSurfaces(i);
 #endif
   }
 }
