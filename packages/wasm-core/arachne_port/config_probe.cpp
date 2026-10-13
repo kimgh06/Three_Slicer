@@ -12,8 +12,8 @@
 
 using namespace Slic3r;
 
-static const char* type_to_string(ConfigOptionType t) {
-    switch (t) {
+static const char* type_to_string(ConfigOptionType type) {
+    switch (type) {
         case coNone:               return "coNone";
         case coFloat:              return "coFloat";
         case coFloats:             return "coFloats";
@@ -38,8 +38,8 @@ static const char* type_to_string(ConfigOptionType t) {
     }
 }
 
-static const char* mode_to_string(ConfigOptionMode m) {
-    switch (m) {
+static const char* mode_to_string(ConfigOptionMode mode) {
+    switch (mode) {
         case comSimple:   return "simple";
         case comAdvanced: return "advanced";
         case comExpert:   return "expert";
@@ -48,75 +48,110 @@ static const char* mode_to_string(ConfigOptionMode m) {
     }
 }
 
-static void json_escape(std::ostream& o, const std::string& s) {
-    o << '"';
-    for (char c : s) {
-        switch (c) {
-            case '"':  o << "\\\""; break;
-            case '\\': o << "\\\\"; break;
-            case '\n': o << "\\n";  break;
-            case '\r': o << "\\r";  break;
-            case '\t': o << "\\t";  break;
+static void json_escape(std::ostream& out, const std::string& text) {
+    out << '"';
+    for (char character : text) {
+        switch (character) {
+            case '"':
+                out << "\\\"";
+                break;
+            case '\\':
+                out << "\\\\";
+                break;
+            case '\n':
+                out << "\\n";
+                break;
+            case '\r':
+                out << "\\r";
+                break;
+            case '\t':
+                out << "\\t";
+                break;
             default:
-                if ((unsigned char)c < 0x20) { char buf[8]; std::snprintf(buf, sizeof buf, "\\u%04x", c); o << buf; }
-                else o << c;
+                if ((unsigned char)character < 0x20) {
+                    char escaped[8];
+                    std::snprintf(escaped, sizeof escaped, "\\u%04x", character);
+                    out << escaped;
+                }
+                else out << character;
         }
     }
-    o << '"';
+    out << '"';
 }
 
-static void json_str_array(std::ostream& o, const std::vector<std::string>& v) {
-    o << '[';
-    for (size_t i = 0; i < v.size(); ++i) { if (i) o << ','; json_escape(o, v[i]); }
-    o << ']';
+static void json_str_array(std::ostream& out, const std::vector<std::string>& values) {
+    out << '[';
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i) out << ',';
+        json_escape(out, values[i]);
+    }
+    out << ']';
 }
 
 int option_count() { return (int)print_config_def.options.size(); }
 
-int full_print_config_keys() { FullPrintConfig fpc; return (int)fpc.keys().size(); }
+int full_print_config_keys() {
+    FullPrintConfig full_config;
+    return (int)full_config.keys().size();
+}
 
 std::string default_of(const std::string& key) {
-    auto d = print_config_def.get(key);
-    if (!d || !d->default_value) return std::string();
-    return d->default_value->serialize();
+    auto option_def = print_config_def.get(key);
+    if (!option_def || !option_def->default_value) return std::string();
+    return option_def->default_value->serialize();
 }
 
 int enum_count(const std::string& key) {
-    auto d = print_config_def.get(key);
-    return d ? (int)d->enum_values.size() : -1;
+    auto option_def = print_config_def.get(key);
+    if (!option_def) return -1;
+    return (int)option_def->enum_values.size();
 }
 
 std::string dump_schema_json() {
-    std::ostringstream o;
-    o << '{';
+    std::ostringstream out;
+    out << '{';
     bool first = true;
-    for (const auto& kv : print_config_def.options) {
-        const std::string& key = kv.first;
-        const ConfigOptionDef& def = kv.second;
-        if (!first) o << ',';
+    for (const auto& entry : print_config_def.options) {
+        const std::string& key = entry.first;
+        const ConfigOptionDef& option_def = entry.second;
+        if (!first) out << ',';
         first = false;
-        json_escape(o, key);
-        o << ":{";
-        o << "\"type\":\"" << type_to_string(def.type) << "\"";
-        o << ",\"mode\":\"" << mode_to_string(def.mode) << "\"";
-        o << ",\"nullable\":" << (def.nullable ? "true" : "false");
-        o << ",\"label\":"; json_escape(o, def.label);
-        o << ",\"full_label\":"; json_escape(o, def.full_label);
-        o << ",\"category\":"; json_escape(o, def.category);
-        o << ",\"tooltip\":"; json_escape(o, def.tooltip);
-        o << ",\"sidetext\":"; json_escape(o, def.sidetext);
-        o << ",\"ratio_over\":"; json_escape(o, def.ratio_over);
+        json_escape(out, key);
+        out << ":{";
+        out << "\"type\":\"" << type_to_string(option_def.type) << "\"";
+        out << ",\"mode\":\"" << mode_to_string(option_def.mode) << "\"";
+        const char* nullable_text = "false";
+        if (option_def.nullable) nullable_text = "true";
+        out << ",\"nullable\":" << nullable_text;
+        out << ",\"label\":";
+        json_escape(out, option_def.label);
+        out << ",\"full_label\":";
+        json_escape(out, option_def.full_label);
+        out << ",\"category\":";
+        json_escape(out, option_def.category);
+        out << ",\"tooltip\":";
+        json_escape(out, option_def.tooltip);
+        out << ",\"sidetext\":";
+        json_escape(out, option_def.sidetext);
+        out << ",\"ratio_over\":";
+        json_escape(out, option_def.ratio_over);
         // min/max only meaningful when set away from +/-FLT_MAX
-        if (def.min > -3.0e38f) o << ",\"min\":" << def.min;
-        if (def.max <  3.0e38f) o << ",\"max\":" << def.max;
-        o << ",\"enum_values\":"; json_str_array(o, def.enum_values);
-        o << ",\"enum_labels\":"; json_str_array(o, def.enum_labels);
-        if (def.default_value) { o << ",\"default\":"; json_escape(o, def.default_value->serialize()); }
-        else                   { o << ",\"default\":null"; }
-        o << '}';
+        if (option_def.min > -3.0e38f) out << ",\"min\":" << option_def.min;
+        if (option_def.max <  3.0e38f) out << ",\"max\":" << option_def.max;
+        out << ",\"enum_values\":";
+        json_str_array(out, option_def.enum_values);
+        out << ",\"enum_labels\":";
+        json_str_array(out, option_def.enum_labels);
+        if (option_def.default_value) {
+            out << ",\"default\":";
+            json_escape(out, option_def.default_value->serialize());
+        } else {
+            out << ",\"default\":null";
+        }
+        out << '}';
     }
-    o << '}';
-    return o.str();
+    out << '}';
+    return out.str();
 }
 
 EMSCRIPTEN_BINDINGS(config_probe) {

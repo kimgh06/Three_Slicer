@@ -8,34 +8,45 @@ import createConfigProbe from './config_probe.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 let fail = 0;
-const ok = (c, m) => { console.log(`  ${c ? 'ok' : 'FAIL'}: ${m}`); if (!c) fail++; };
+const ok = (condition, message) => {
+  if (condition) {
+    console.log(`  ok: ${message}`);
+    return;
+  }
+  console.log(`  FAIL: ${message}`);
+  fail++;
+};
 
-const M = await createConfigProbe();
+const probe = await createConfigProbe();
 
-const optCount = M.option_count();
-const fpcKeys  = M.full_print_config_keys();
+const optionCount = probe.option_count();
+const fullConfigKeys = probe.full_print_config_keys();
 console.log(`[stage11 config port]`);
-console.log(`  option_count (print_config_def) = ${optCount}`);
-console.log(`  full_print_config_keys          = ${fpcKeys}`);
-ok(optCount > 700, `print_config_def option count is substantial (${optCount})`);
-ok(fpcKeys  > 500, `FullPrintConfig instantiated with keys (${fpcKeys})`);
+console.log(`  option_count (print_config_def) = ${optionCount}`);
+console.log(`  full_print_config_keys          = ${fullConfigKeys}`);
+ok(optionCount > 700, `print_config_def option count is substantial (${optionCount})`);
+ok(fullConfigKeys > 500, `FullPrintConfig instantiated with keys (${fullConfigKeys})`);
 
 // Spot checks (task-specified expected values)
-ok(M.default_of('layer_height') === '0.2', `layer_height default == 0.2 (got '${M.default_of('layer_height')}')`);
-ok(M.default_of('seam_position') === 'aligned', `seam_position default == aligned (got '${M.default_of('seam_position')}')`);
-ok(M.enum_count('sparse_infill_pattern') === 26, `sparse_infill_pattern enum count == 26 (got ${M.enum_count('sparse_infill_pattern')})`);
+ok(probe.default_of('layer_height') === '0.2', `layer_height default == 0.2 (got '${probe.default_of('layer_height')}')`);
+ok(probe.default_of('seam_position') === 'aligned', `seam_position default == aligned (got '${probe.default_of('seam_position')}')`);
+ok(probe.enum_count('sparse_infill_pattern') === 26, `sparse_infill_pattern enum count == 26 (got ${probe.enum_count('sparse_infill_pattern')})`);
 
 // A few more sanity spot checks
-ok(M.default_of('wall_loops') !== '', `wall_loops has a default ('${M.default_of('wall_loops')}')`);
-ok(M.enum_count('seam_position') > 0, `seam_position is an enum (${M.enum_count('seam_position')} values)`);
+ok(probe.default_of('wall_loops') !== '', `wall_loops has a default ('${probe.default_of('wall_loops')}')`);
+ok(probe.enum_count('seam_position') > 0, `seam_position is an enum (${probe.enum_count('seam_position')} values)`);
 
 // Write the build-based schema dump
-const dump = M.dump_schema_json();
+const dump = probe.dump_schema_json();
 const parsed = JSON.parse(dump); // validates JSON
 const outPath = resolve(__dirname, '../../config-schema-builddump.json');
 writeFileSync(outPath, JSON.stringify(parsed, null, 1));
 console.log(`  wrote build dump: ${outPath} (${Object.keys(parsed).length} keys)`);
-ok(Object.keys(parsed).length === optCount, `dump key count == option_count (${Object.keys(parsed).length})`);
+ok(Object.keys(parsed).length === optionCount, `dump key count == option_count (${Object.keys(parsed).length})`);
 
-console.log(fail === 0 ? '\nCONFIG PROBE OK' : `\nCONFIG PROBE FAILED (${fail})`);
-process.exit(fail === 0 ? 0 : 1);
+if (fail === 0) {
+  console.log('\nCONFIG PROBE OK');
+  process.exit(0);
+}
+console.log(`\nCONFIG PROBE FAILED (${fail})`);
+process.exit(1);
