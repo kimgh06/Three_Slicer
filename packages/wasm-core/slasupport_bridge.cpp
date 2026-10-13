@@ -147,7 +147,7 @@ static void prepare_permanent_support_points_port(
       [](const Slic3r::sla::SupportPoint &p1, const Slic3r::sla::SupportPoint &p2) { return p1.pos.z() < p2.pos.z(); });
 }
 
-GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenConfig& point_config) {
+GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenerationConfig& point_config) {
   GeneratedPoints out;
   const ValidationResult checked = validate(job);
   if (!checked.ok) {

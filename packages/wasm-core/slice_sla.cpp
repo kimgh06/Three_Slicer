@@ -3,7 +3,7 @@
 //
 //  A resin slice is per-layer solid cross-sections, not toolpaths: no walls, no infill, no G-code. What it
 //  reuses from the FFF kernel is exactly the machinery that is technology-neutral — parse_stl, prepare_model
-//  (centre/seat/over-bed), tri_plane + chain_polys (facet-major, like pass1), Clipper, and the layer-sink
+//  (centre/seat/over-bed), intersect_triangle_with_plane + chain_polygons (facet-major, like pass1), Clipper, and the layer-sink
 //  streaming protocol — so the worker drives it with the same 'progress'/'layer'/'done' messages a kernel
 //  slice produces, and the viewer preview consumes the stream unmodified.
 //
@@ -48,11 +48,11 @@ namespace em = emscripten;
 using namespace ClipperLib;
 
 // ---- Local flat-JSON readers ---------------------------------------------------------------------------------
-//  NOT params.cpp's readers on purpose: the kernel parameter reference is GENERATED from the j*(j,"…") call
-//  sites in params.cpp, and every row must be classified. The SLA keys live in their own derive
+//  NOT params.cpp's readers on purpose: the kernel parameter reference is GENERATED from the
+//  json_*(params_json,"…") call sites in params.cpp, and every row must be classified. The SLA keys live in their own derive
 //  (deriveSlaParams) and their own entry point — adding them to params.cpp would put unclassified rows into the
 //  FFF table. The quote-prefixed search cannot suffix-collide (initial_layer_height never matches layer_height).
-static double sla_jd(const std::string& json, const char* key, double default_value) {
+static double sla_json_number(const std::string& json, const char* key, double default_value) {
   std::string pattern = std::string("\"") + key + "\":";
   size_t key_position = json.find(pattern);
   if (key_position == std::string::npos) return default_value;
@@ -62,7 +62,7 @@ static double sla_jd(const std::string& json, const char* key, double default_va
   if (end == value_start) return default_value;
   return value;
 }
-static bool sla_jb(const std::string& json, const char* key, bool default_value) {
+static bool sla_json_bool(const std::string& json, const char* key, bool default_value) {
   std::string pattern = std::string("\"") + key + "\":";
   size_t key_position = json.find(pattern);
   if (key_position == std::string::npos) return default_value;
@@ -73,7 +73,7 @@ static bool sla_jb(const std::string& json, const char* key, bool default_value)
   if (*value_start == '0') return false;
   return default_value;
 }
-static std::string sla_jstr(const std::string& json, const char* key, const char* default_value) {
+static std::string sla_json_string(const std::string& json, const char* key, const char* default_value) {
   std::string pattern = std::string("\"") + key + "\":\"";
   size_t key_position = json.find(pattern);
   if (key_position == std::string::npos) return default_value;
@@ -83,8 +83,8 @@ static std::string sla_jstr(const std::string& json, const char* key, const char
   return json.substr(value_start, value_end - value_start);
 }
 
-// Toolpath stream encoding — the same stride-8 contract emit.cpp's push_seg writes, tool fixed at 0.
-static inline void sla_push_seg(std::vector<float>& segments, std::vector<float>& widths,
+// Toolpath stream encoding — the same stride-8 contract emit.cpp's push_toolpath_segment writes, tool fixed at 0.
+static inline void sla_push_toolpath_segment(std::vector<float>& segments, std::vector<float>& widths,
                                 double x0, double y0, double x1, double y1, double z, float role) {
   segments.push_back((float)x0);
   segments.push_back((float)y0);
@@ -102,7 +102,7 @@ static void push_paths(std::vector<float>& segments, std::vector<float>& widths,
     for (size_t k = 0; k < path.size(); ++k) {
       const IntPoint& from = path[k];
       const IntPoint& to = path[(k + 1) % path.size()];
-      sla_push_seg(segments, widths, from.x() * INV, from.y() * INV, to.x() * INV, to.y() * INV, z, role);
+      sla_push_toolpath_segment(segments, widths, from.x() * INV, from.y() * INV, to.x() * INV, to.y() * INV, z, role);
     }
   }
 }
@@ -171,7 +171,7 @@ static void sla_for_each_layer(int layer_count, const Fn& run_layer, const Tick&
   }
 }
 
-static inline IntPoint ip(double x, double y) {
+static inline IntPoint scaled_int_point(double x, double y) {
   return IntPoint((cInt)std::llround(x * SCALE), (cInt)std::llround(y * SCALE));
 }
 
@@ -184,7 +184,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   // Capability gate: hollowing changes the printed geometry itself (inner walls, drain holes), so a request
   //  for it cannot be answered with a solid slice — that output would be mislabeled hollowed. Typed error,
   //  same code the JS request layer uses; the OpenVDB/MeshBoolean chain it needs is not ported.
-  if (sla_jb(params_json, "hollowing_enable", false)) {
+  if (sla_json_bool(params_json, "hollowing_enable", false)) {
     result.set("error", std::string("SLA_UNSUPPORTED_HOLLOWING: hollowing is not available in this kernel"));
     return result;
   }
@@ -194,7 +194,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   Params params = parse_params(params_json);
   double layer_height = 0.05;
   if (params.layer_height > 1e-4) layer_height = params.layer_height;
-  const double initial_layer_height_setting = sla_jd(params_json, "initial_layer_height", layer_height);
+  const double initial_layer_height_setting = sla_json_number(params_json, "initial_layer_height", layer_height);
   double initial_layer_height = layer_height;
   if (initial_layer_height_setting > 1e-4) initial_layer_height = initial_layer_height_setting;
   auto layer_thickness_at = [&](int layer_index) -> double {
@@ -212,7 +212,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   auto canceled = [cancel_flag] { return cancel_flag->load(std::memory_order_relaxed) != 0; };
 
   std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl_bytes);
-  std::vector<Tri> triangles = parse_stl(bytes);
+  std::vector<Triangle> triangles = parse_stl(bytes);
   if (triangles.empty()) {
     result.set("error", std::string("STL parse failed or 0 triangles"));
     return result;
@@ -239,7 +239,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   //      cleaned the way pass1 does it. Mid planes are ascending, so the lower_bound walk matches pass1's.
   std::vector<double> mids(model_layer_count);
   for (int i = 0; i < model_layer_count; ++i) mids[i] = top_z(i) - layer_thickness_at(i) / 2;
-  std::vector<std::vector<Seg>> layerSegs(model_layer_count);
+  std::vector<std::vector<SliceSegment>> layerSegs(model_layer_count);
   {
     // Facet -> segment sweep. Parallel in mt the way PASS1 is (pass1.cpp): contiguous facet ranges, one bucket set
     //  per range, concatenated in range order — so every layer's segment order is exactly the serial loop's and st
@@ -250,15 +250,15 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     //  goes; the other threads only count.
     const size_t triangle_count = triangles.size();
     std::atomic<size_t> swept{0};
-    auto sweep = [&](size_t range_begin, size_t range_end, std::vector<std::vector<Seg>>& out, bool reports_progress) {
-      Seg segment;
+    auto sweep = [&](size_t range_begin, size_t range_end, std::vector<std::vector<SliceSegment>>& out, bool reports_progress) {
+      SliceSegment segment;
       size_t local_count = 0;
       for (size_t k = range_begin; k < range_end; ++k) {
-        const Tri& triangle = triangles[k];
+        const Triangle& triangle = triangles[k];
         double zmin = std::min({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z});
         double zmax = std::max({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z});
         for (auto it = std::lower_bound(mids.begin(), mids.end(), zmin); it != mids.end() && *it < zmax; ++it)
-          if (tri_plane(triangle, *it, segment)) out[(size_t)(it - mids.begin())].push_back(segment);
+          if (intersect_triangle_with_plane(triangle, *it, segment)) out[(size_t)(it - mids.begin())].push_back(segment);
         if ((++local_count & 0x3FFF) == 0) {
           swept.fetch_add(0x4000, std::memory_order_relaxed);
           if (reports_progress) report((int)std::min<size_t>(29, swept.load(std::memory_order_relaxed) * 30 / std::max<size_t>(1, triangle_count)), 1000);
@@ -274,7 +274,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     }
 #endif
     if (thread_count > 1) {
-      std::vector<std::vector<std::vector<Seg>>> buckets(thread_count, std::vector<std::vector<Seg>>(model_layer_count));
+      std::vector<std::vector<std::vector<SliceSegment>>> buckets(thread_count, std::vector<std::vector<SliceSegment>>(model_layer_count));
       const size_t triangles_per_range = (triangle_count + thread_count - 1) / thread_count;
       std::vector<std::thread> workers;
       workers.reserve(thread_count - 1);
@@ -299,7 +299,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
         for (auto& bucket : buckets) {
           auto& source = bucket[(size_t)i];
           layerSegs[(size_t)i].insert(layerSegs[(size_t)i].end(), source.begin(), source.end());
-          std::vector<Seg>().swap(source);
+          std::vector<SliceSegment>().swap(source);
         }
       }
     } else {
@@ -308,11 +308,11 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   }
   // The generator no longer eats these contours — the bridge slices the mesh itself through the real
   // slicer (slice_mesh_ex + slice_closing_radius, upstream's own pipeline); this set is display/raster only.
-  const double closing_radius = std::max(0.0, sla_jd(params_json, "slice_closing_radius", 0.049));
+  const double closing_radius = std::max(0.0, sla_json_number(params_json, "slice_closing_radius", 0.049));
   std::vector<Paths> contours(model_layer_count);
   sla_for_each_layer(model_layer_count, [&](int i) {
     if (canceled()) return;   // cooperative bail; the boundary check below reports the cancel
-    Paths loops = chain_polys(layerSegs[i]);
+    Paths loops = chain_polygons(layerSegs[i]);
     contours[i] = SimplifyPolygons(loops, pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
     if (params.gcode_resolution > 1e-6) CleanPolygons(contours[i], SCALE * params.gcode_resolution);
     contours[i].erase(std::remove_if(contours[i].begin(), contours[i].end(),
@@ -328,28 +328,28 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
 
   time_contours_done = emscripten_get_now();
   // ---- Support parameters (upstream SupportTreeConfig names where one exists) --------------------------------
-  const bool supports_on = sla_jb(params_json, "supports_enable", false);
-  const bool pad_on      = sla_jb(params_json, "pad_enable", false);
-  const bool plate_only  = sla_jb(params_json, "support_buildplate_only", false);
-  const double pillar_radius  = std::max(0.1, sla_jd(params_json, "support_pillar_diameter", 1.0) / 2);
-  const double tip_radius     = std::max(0.05, sla_jd(params_json, "support_head_front_diameter", 0.4) / 2);
-  const double head_length    = std::max(layer_height, sla_jd(params_json, "support_head_width", 1.0));
-  const double head_penetration = std::max(0.0, sla_jd(params_json, "support_head_penetration", 0.2));
-  const double density   = sla_jd(params_json, "support_points_density_relative", 100.0);
-  const double bridge_length = std::max(1.0, sla_jd(params_json, "support_max_bridge_length", 15.0));
-  const double link_distance = std::max(1.0, sla_jd(params_json, "support_max_pillar_link_distance", 10.0));
-  const double base_radius = std::max(pillar_radius, sla_jd(params_json, "support_base_diameter", 4.0) / 2);
-  const double base_height = std::max(0.0, sla_jd(params_json, "support_base_height", 1.0));
+  const bool supports_on = sla_json_bool(params_json, "supports_enable", false);
+  const bool pad_on      = sla_json_bool(params_json, "pad_enable", false);
+  const bool plate_only  = sla_json_bool(params_json, "support_buildplate_only", false);
+  const double pillar_radius  = std::max(0.1, sla_json_number(params_json, "support_pillar_diameter", 1.0) / 2);
+  const double tip_radius     = std::max(0.05, sla_json_number(params_json, "support_head_front_diameter", 0.4) / 2);
+  const double head_length    = std::max(layer_height, sla_json_number(params_json, "support_head_width", 1.0));
+  const double head_penetration = std::max(0.0, sla_json_number(params_json, "support_head_penetration", 0.2));
+  const double density   = sla_json_number(params_json, "support_points_density_relative", 100.0);
+  const double bridge_length = std::max(1.0, sla_json_number(params_json, "support_max_bridge_length", 15.0));
+  const double link_distance = std::max(1.0, sla_json_number(params_json, "support_max_pillar_link_distance", 10.0));
+  const double base_radius = std::max(pillar_radius, sla_json_number(params_json, "support_base_diameter", 4.0) / 2);
+  const double base_height = std::max(0.0, sla_json_number(params_json, "support_base_height", 1.0));
   // The rest of upstream make_support_cfg (SLAPrint.cpp:50): the bridge slope IS the critical angle.
-  const double critical_angle_deg = sla_jd(params_json, "support_critical_angle", 45.0);
-  const double small_pillar_percent = sla_jd(params_json, "support_small_pillar_diameter_percent", 50.0);
-  const double widening  = std::max(0.0, sla_jd(params_json, "support_pillar_widening_factor", 0.0));
-  const double base_safety = std::max(0.0, sla_jd(params_json, "support_base_safety_distance", 1.0));
-  const double max_weight = sla_jd(params_json, "support_max_weight_on_model", 10.0);
-  const int max_bridges  = (int)sla_jd(params_json, "support_max_bridges_on_pillar", 3.0);
-  const double elevation_mm = std::max(0.0, sla_jd(params_json, "support_object_elevation", 0.0));
-  const std::string connection_mode = sla_jstr(params_json, "support_pillar_connection_mode", "dynamic");
-  const std::string support_strategy = sla_jstr(params_json, "support_tree_type", "default");
+  const double critical_angle_deg = sla_json_number(params_json, "support_critical_angle", 45.0);
+  const double small_pillar_percent = sla_json_number(params_json, "support_small_pillar_diameter_percent", 50.0);
+  const double widening  = std::max(0.0, sla_json_number(params_json, "support_pillar_widening_factor", 0.0));
+  const double base_safety = std::max(0.0, sla_json_number(params_json, "support_base_safety_distance", 1.0));
+  const double max_weight = sla_json_number(params_json, "support_max_weight_on_model", 10.0);
+  const int max_bridges  = (int)sla_json_number(params_json, "support_max_bridges_on_pillar", 3.0);
+  const double elevation_mm = std::max(0.0, sla_json_number(params_json, "support_object_elevation", 0.0));
+  const std::string connection_mode = sla_json_string(params_json, "support_pillar_connection_mode", "dynamic");
+  const std::string support_strategy = sla_json_string(params_json, "support_tree_type", "default");
   slasupport_bridge::SupportStrategy bridge_strategy = slasupport_bridge::SupportStrategy::default_tree;
   if (support_strategy == "branching") bridge_strategy = slasupport_bridge::SupportStrategy::branching;
   else if (support_strategy == "organic") bridge_strategy = slasupport_bridge::SupportStrategy::organic;
@@ -361,17 +361,17 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   //  and everything else — support feet included — stands on TOP of it, exactly upstream's rebase at slicing
   //  time. pad_around_object (embed) builds the pad AROUND the object's bottom band instead: the object is
   //  not elevated (upstream is_zero_elevation forces it to 0) and sits directly on the pad plate.
-  const double pad_wall_thickness = std::max(0.0, sla_jd(params_json, "pad_wall_thickness", 2.0));
-  const double pad_wall_height    = std::max(0.0, sla_jd(params_json, "pad_wall_height", 0.0));
-  const double pad_slope    = sla_jd(params_json, "pad_wall_slope", 90.0);
-  const double pad_merge    = sla_jd(params_json, "pad_max_merge_distance", 50.0);
-  const double pad_brim     = sla_jd(params_json, "pad_brim_size", 1.6);
-  const bool   pad_embed    = sla_jb(params_json, "pad_around_object", false);
-  const bool   pad_everywhere = sla_jb(params_json, "pad_around_object_everywhere", false);
-  const double pad_object_gap       = std::max(0.0, sla_jd(params_json, "pad_object_gap", 1.0));
-  const double pad_stick_width      = std::max(0.0, sla_jd(params_json, "pad_object_connector_width", 0.5));
-  const double pad_stick_stride     = std::max(0.0, sla_jd(params_json, "pad_object_connector_stride", 10.0));
-  const double pad_stick_penetration = std::max(0.0, sla_jd(params_json, "pad_object_connector_penetration", 0.3));
+  const double pad_wall_thickness = std::max(0.0, sla_json_number(params_json, "pad_wall_thickness", 2.0));
+  const double pad_wall_height    = std::max(0.0, sla_json_number(params_json, "pad_wall_height", 0.0));
+  const double pad_slope    = sla_json_number(params_json, "pad_wall_slope", 90.0);
+  const double pad_merge    = sla_json_number(params_json, "pad_max_merge_distance", 50.0);
+  const double pad_brim     = sla_json_number(params_json, "pad_brim_size", 1.6);
+  const bool   pad_embed    = sla_json_bool(params_json, "pad_around_object", false);
+  const bool   pad_everywhere = sla_json_bool(params_json, "pad_around_object_everywhere", false);
+  const double pad_object_gap       = std::max(0.0, sla_json_number(params_json, "pad_object_gap", 1.0));
+  const double pad_stick_width      = std::max(0.0, sla_json_number(params_json, "pad_object_connector_width", 0.5));
+  const double pad_stick_stride     = std::max(0.0, sla_json_number(params_json, "pad_object_connector_stride", 10.0));
+  const double pad_stick_penetration = std::max(0.0, sla_json_number(params_json, "pad_object_connector_penetration", 0.3));
   double pad_full_height = 0.0;
   if (pad_on) pad_full_height = pad_wall_thickness + pad_wall_height;
   // PLANNED pad zone. The definitive pad_lift_layers is fixed only after the pad geometry exists: an embed pad may
@@ -422,13 +422,13 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   if (supports_on && strategy_capability.status == slasupport_bridge::StrategyCapabilityStatus::supported && layer_count_planned > 0) {
     std::vector<float> model_soup;
     model_soup.reserve(triangles.size() * 9);
-    for (const Tri& triangle : triangles)
+    for (const Triangle& triangle : triangles)
       for (int corner = 0; corner < 3; ++corner) {
         model_soup.push_back(triangle.vertices[corner].x);
         model_soup.push_back(triangle.vertices[corner].y);
         model_soup.push_back(triangle.vertices[corner].z);
       }
-    prepared.support_enforcers_only = sla_jb(params_json, "support_enforcers_only", false);
+    prepared.support_enforcers_only = sla_json_bool(params_json, "support_enforcers_only", false);
     prepared.objects.push_back({"legacy-0", std::move(model_soup), {}});
     prepared.layers.reserve(layer_count_planned);
     for (int layer_index = 0; layer_index < layer_count_planned; ++layer_index) {
@@ -446,7 +446,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       }
       prepared.layers.push_back(std::move(layer));
     }
-    slasupport_bridge::PointGenConfig generator_config;
+    slasupport_bridge::PointGenerationConfig generator_config;
     generator_config.density_relative = density / 100.0;   // upstream SLAPrintSteps.cpp:717 (percents -> ratio)
     generator_config.head_diameter = tip_radius * 2;
     generator_config.slice_closing_radius = closing_radius;
@@ -537,7 +537,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     // mode — upstream create_pad samples the object's own bottom band for the ring the pad wraps around.
     if (!supports_on || pad_embed) {
       pad_model_soup.reserve(triangles.size() * 9);
-      for (const Tri& triangle : triangles)
+      for (const Triangle& triangle : triangles)
         for (int corner = 0; corner < 3; ++corner) {
           pad_model_soup.push_back(triangle.vertices[corner].x);
           pad_model_soup.push_back(triangle.vertices[corner].y);
@@ -599,7 +599,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
         for (const slasupport_bridge::Polygon& polygon : sliced.slices[layer_index]) {
           Path loop;
           loop.reserve(polygon.size());
-          for (const slasupport_bridge::Vec2& point : polygon) loop.push_back(ip(point.x, point.y));
+          for (const slasupport_bridge::Vec2& point : polygon) loop.push_back(scaled_int_point(point.x, point.y));
           loops.push_back(std::move(loop));
         }
         Paths merged = SimplifyPolygons(loops, pftNonZero);
@@ -630,7 +630,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
         for (const slasupport_bridge::Polygon& polygon : pad_sliced.slices[layer_index]) {
           Path loop;
           loop.reserve(polygon.size());
-          for (const slasupport_bridge::Vec2& point : polygon) loop.push_back(ip(point.x, point.y));
+          for (const slasupport_bridge::Vec2& point : polygon) loop.push_back(scaled_int_point(point.x, point.y));
           loops.push_back(std::move(loop));
         }
         Paths merged = SimplifyPolygons(loops, pftNonZero);
@@ -677,10 +677,10 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   }
 
   // ---- Stats: the resin figures + the exposure-fade time model (identical to the JS core it replaces). ----------
-  const double exposure = sla_jd(params_json, "exposure_time", 7.0);
-  const double exposure0 = sla_jd(params_json, "initial_exposure_time", 35.0);
-  const double faded = std::max(0.0, sla_jd(params_json, "faded_layers", 10.0));
-  const double overhead = std::max(0.0, sla_jd(params_json, "sla_layer_overhead", 6.0));
+  const double exposure = sla_json_number(params_json, "exposure_time", 7.0);
+  const double exposure0 = sla_json_number(params_json, "initial_exposure_time", 35.0);
+  const double faded = std::max(0.0, sla_json_number(params_json, "faded_layers", 10.0));
+  const double overhead = std::max(0.0, sla_json_number(params_json, "sla_layer_overhead", 6.0));
   double time_s = layer_count * overhead;
   for (int i = 0; i < layer_count; ++i) {
     double blend = 1.0;

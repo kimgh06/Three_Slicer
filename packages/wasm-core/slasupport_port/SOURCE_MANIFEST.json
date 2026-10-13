@@ -77,7 +77,7 @@
     {
       "localPath": "slasupport_bridge.cpp",
       "kind": "bridge",
-      "localSha256": "3d68e983ebc165fbb1d981d13138f5a34580203114e167e1e0da23d1e947e7e0",
+      "localSha256": "83ee23c988dcaacf60fbff3ef6676033cc3c483c250eecfa7cde107ae5cba819",
       "dependencyProbe": {
         "sourceOrder": 2,
         "includeUniverse": "Prusa SLA plus plain-data bridge",
