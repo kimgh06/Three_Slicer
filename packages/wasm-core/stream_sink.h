@@ -14,9 +14,9 @@
 namespace em = emscripten;
 
 em::val& layer_sink();
-void set_layer_sink(em::val cb);
+void set_layer_sink(em::val callback);
 void clear_layer_sink();
-void strip_pe_tags(std::string& g);
+void strip_pe_tags(std::string& gcode);
 
 #ifdef __EMSCRIPTEN_PTHREADS__
 // (mt) Time estimate overlap — the emitting thread (producer) queues chunks on '\n' boundaries and a single worker (consumer)
@@ -24,33 +24,52 @@ void strip_pe_tags(std::string& g);
 //  begin and feed; finish()'s join establishes happens-before, after which estimate_end() runs on the caller's thread.
 //  Chunk contents and order are unchanged -> identical estimates and no effect on G-code (golden-safe). Only wall-clock shrinks as emission and parsing overlap.
 struct TimeFeeder {
-  std::thread th; std::mutex mu; std::condition_variable cv;
-  std::deque<std::string> q; bool done = false;
+  std::thread th;
+  std::mutex mu;
+  std::condition_variable cv;
+  std::deque<std::string> q;
+  bool done = false;
   bool threaded = false;   // no thread could be had (the pthread pool was empty): the caller feeds the estimate itself
-  void begin(const gcodeproc_bridge::Limits& gl, const gcode_time::Limits* fallback) {
-    try { th = std::thread([this, gl, fallback]{
-      gcodeproc_bridge::estimate_begin(gl, fallback);
-      for (;;) {
-        std::string c;
-        { std::unique_lock<std::mutex> lk(mu);
-          cv.wait(lk, [&]{ return !q.empty() || done; });
-          if (q.empty()) break;                       // done && queue drained -> exit
-          c = std::move(q.front()); q.pop_front(); }
-        gcodeproc_bridge::estimate_feed(c);
-      }
-    }); threaded = true; }
-    catch (...) { gcodeproc_bridge::estimate_begin(gl, fallback); }
+  void begin(const gcodeproc_bridge::Limits& limits, const gcode_time::Limits* fallback) {
+    try {
+      th = std::thread([this, limits, fallback]{
+        gcodeproc_bridge::estimate_begin(limits, fallback);
+        for (;;) {
+          std::string chunk;
+          {
+            std::unique_lock<std::mutex> lock(mu);
+            cv.wait(lock, [&]{ return !q.empty() || done; });
+            if (q.empty()) break;                       // done && queue drained -> exit
+            chunk = std::move(q.front());
+            q.pop_front();
+          }
+          gcodeproc_bridge::estimate_feed(chunk);
+        }
+      });
+      threaded = true;
+    }
+    catch (...) { gcodeproc_bridge::estimate_begin(limits, fallback); }
   }
-  void feed(std::string c) {
-    if (c.empty()) return;
-    if (!threaded) { gcodeproc_bridge::estimate_feed(c); return; }
-    { std::lock_guard<std::mutex> lk(mu); q.push_back(std::move(c)); }
+  void feed(std::string chunk) {
+    if (chunk.empty()) return;
+    if (!threaded) {
+      gcodeproc_bridge::estimate_feed(chunk);
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      q.push_back(std::move(chunk));
+    }
     cv.notify_one();
   }
   gcodeproc_bridge::Result finish() {
     if (threaded) {
-      { std::lock_guard<std::mutex> lk(mu); done = true; }
-      cv.notify_one(); th.join();
+      {
+        std::lock_guard<std::mutex> lock(mu);
+        done = true;
+      }
+      cv.notify_one();
+      th.join();
     }
     return gcodeproc_bridge::estimate_end();
   }
