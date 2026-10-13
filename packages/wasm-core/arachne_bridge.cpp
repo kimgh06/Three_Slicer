@@ -15,7 +15,7 @@ namespace arachne_bridge {
 int cgal_planar_check_count() { return Slic3r::Geometry::g_cgal_planar_angle_calls; }
 
 static inline coord_t to_scaled(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
-static inline double  to_mm(coord_t c)     { return double(c) * SCALING_FACTOR; }
+static inline double  to_mm(coord_t coord) { return double(coord) * SCALING_FACTOR; }
 
 std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polys_mm,
                                   double line_width_mm, int wall_count, double layer_height_mm)
@@ -26,10 +26,10 @@ std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double
     Polygons outline;
     for (const auto& poly : polys_mm) {
         if (poly.size() < 3) continue;
-        Polygon p;
-        p.points.reserve(poly.size());
-        for (const auto& xy : poly) p.points.emplace_back(to_scaled(xy.first), to_scaled(xy.second));
-        outline.emplace_back(std::move(p));
+        Polygon polygon;
+        polygon.points.reserve(poly.size());
+        for (const auto& xy : poly) polygon.points.emplace_back(to_scaled(xy.first), to_scaled(xy.second));
+        outline.emplace_back(std::move(polygon));
     }
     if (outline.empty()) return out;
 
@@ -46,18 +46,20 @@ std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double
     params.is_top_or_bottom_layer           = false;
 
     const coord_t bead_width = to_scaled(line_width_mm);
-    WallToolPaths wtp(outline, bead_width, bead_width, (size_t) wall_count, /*wall_0_inset*/0,
-                      (coordf_t) layer_height_mm, params);
-    const std::vector<VariableWidthLines>& toolpaths = wtp.generate();
+    WallToolPaths wall_tool_paths(outline, bead_width, bead_width, (size_t) wall_count, /*wall_0_inset*/0,
+                                  (coordf_t) layer_height_mm, params);
+    const std::vector<VariableWidthLines>& toolpaths = wall_tool_paths.generate();
 
-    for (const VariableWidthLines& grp : toolpaths)
-        for (const ExtrusionLine& line : grp) {
+    for (const VariableWidthLines& inset_lines : toolpaths)
+        for (const ExtrusionLine& line : inset_lines) {
             if (line.junctions.size() < 2) continue;
-            WLine wl; wl.closed = line.is_closed; wl.inset_idx = (int) line.inset_idx;
-            wl.pts.reserve(line.junctions.size());
-            for (const ExtrusionJunction& j : line.junctions)
-                wl.pts.push_back({ to_mm(j.p.x()), to_mm(j.p.y()), to_mm(j.w) });
-            out.push_back(std::move(wl));
+            WLine wall_line;
+            wall_line.closed = line.is_closed;
+            wall_line.inset_idx = (int) line.inset_idx;
+            wall_line.pts.reserve(line.junctions.size());
+            for (const ExtrusionJunction& junction : line.junctions)
+                wall_line.pts.push_back({ to_mm(junction.p.x()), to_mm(junction.p.y()), to_mm(junction.w) });
+            out.push_back(std::move(wall_line));
         }
     return out;
 }
