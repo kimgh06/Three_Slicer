@@ -12,7 +12,7 @@
 //  parameter snapshot) as a second line of defense, refusing reuse on a mismatch. Keeping the cache resident is a memory trade-off (tens of MB after the simplification).
 struct StageCache {
   bool valid = false;
-  std::vector<Tri> triangles;
+  std::vector<Triangle> triangles;
   double height = 0, centerX = 0, centerY = 0;
   bool over_bed = false;
   int layerCount = 0;

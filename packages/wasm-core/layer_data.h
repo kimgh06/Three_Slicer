@@ -28,8 +28,8 @@ struct LayerData {
   std::vector<ClassicWall> classicWalls;
   std::vector<TreePath> classicGapFill;
   Paths island;                  // region travels stay inside (contour −w/2) — precomputed in PASS1 (parallel), moved at emission
-  std::vector<arachne_bridge::WLine> arachneWalls;  // stage 7: the real Arachne variable-width walls (arachne mode)
+  std::vector<arachne_bridge::WallLine> arachneWalls;  // stage 7: the real Arachne variable-width walls (arachne mode)
 };
 
-em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::val onProgress,
+em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, em::val onProgress,
                             double height, bool over_bed);
