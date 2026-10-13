@@ -249,7 +249,7 @@ struct GeneratedPoints {
   double t_move_ms = 0;      // move_on_mesh_surface
 };
 
-GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenConfig& cfg);
+GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenConfig& point_config);
 
 enum class SupportStrategy : std::uint8_t { default_tree = 0, branching = 1, organic = 2 };
 
@@ -320,7 +320,7 @@ struct Result {
   bool ok = false;
 };
 
-Result generate(const PreparedJob& job, const Config& cfg);
+Result generate(const PreparedJob& job, const Config& bridge_config);
 
 enum class SupportSlicerCapabilityStatus : std::uint8_t {
   supported = 0,
