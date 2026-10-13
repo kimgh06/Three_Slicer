@@ -364,7 +364,7 @@ export function deriveKernelParams(settings, opts) {
   }
 
   // Stage 21: per-feature widths — passed to the kernel verbatim (including strings like "120%"). Unedited keys are omitted -> the kernel derives auto(=line_width).
-  //  The 0=auto semantics are handled by the kernel's resolve_lw (upstream Flow formula). Defaults unchanged (no feature set -> line_width).
+  //  The 0=auto semantics are handled by the kernel's resolve_line_width (upstream Flow formula). Defaults unchanged (no feature set -> line_width).
   const widths = {}
   for (const k of ['outer_wall_line_width','inner_wall_line_width','top_surface_line_width',
                    'sparse_infill_line_width','internal_solid_infill_line_width','initial_layer_line_width']) {
@@ -450,9 +450,9 @@ export function deriveKernelParams(settings, opts) {
       passthrough[key] = (Array.isArray(raw) ? raw : [raw]).map(entry => String(entry ?? ''))
     }
     // support_line_width is coFloatOrPercent, but the kernel reads it with the plain number reader rather than the
-    //  percent-aware jwidth_raw the per-feature widths get. A "120%" would reach strtod as a quoted string and
+    //  percent-aware json_width_raw the per-feature widths get. A "120%" would reach strtod as a quoted string and
     //  parse to 0 == auto — the setting silently ignored. Resolved here against the nozzle, which is the same
-    //  thing jwidth_raw does for the widths that do get the percent-aware reader.
+    //  thing json_width_raw does for the widths that do get the percent-aware reader.
     if (present('support_line_width')) {
       const text = String(settingScalar(settings, 'support_line_width')).trim()
       const width = text.endsWith('%') ? (parseFloat(text) / 100) * num('nozzle_diameter') : Number(text)

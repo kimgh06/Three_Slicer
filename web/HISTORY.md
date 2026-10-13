@@ -464,7 +464,7 @@ package READMEs.
 
 **Stage 19** (picking off the remaining precision caveats — a priority ladder of 4):
 - **(1) Per-path support extrusion width**: the bridge passes `ExtrusionPath::width` along with the polyline, and the kernel applies `set_e_per_mm_width` (for E) and
-  `g_seg_w_cur` (the ribbon width) per path through `emit_lines_vw`. Check: changing the `support_line_width` config from
+  `g_seg_w_cur` (the ribbon width) per path through `emit_lines_variable_width`. Check: changing the `support_line_width` config from
   0.4 (default) to 0.6 makes the emitted support width follow exactly (0.4 -> 0.6), proving the per-path width reaches E and widths[].
   (Note: in this port `support_material_flow`/`interface_flow` share the width key -> the interface and body having the same width is a fact of the port model,
   not a wiring defect.)

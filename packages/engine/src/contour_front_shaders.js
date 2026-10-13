@@ -1,4 +1,4 @@
-// WGSL of the GPU front of PASS1 (contour_front_gpu.js): tri_plane -> chain_polys -> cancel_coincident ->
+// WGSL of the GPU front of PASS1 (contour_front_gpu.js): intersect_triangle_with_plane -> chain_polygons -> cancel_coincident ->
 //  build_gpu_input, every layer at once. Ported from the measured experiment (.omc/plans/gpu-work/fullport/gpu_slice.mjs,
 //  design report gpu-full-port-trial-2026-10-01.md section 3); edited only with a measurement beside it, as
 //  contour_gpu_shaders.js.

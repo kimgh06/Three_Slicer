@@ -3,11 +3,11 @@
 //  between the cut and the union.
 //
 // What runs here (WGSL: contour_front_shaders.js), every layer at once:
-//   cut      per triangle, the layers it spans (exact z compares), each crossing in double-float, oriented as tri_plane
+//   cut      per triangle, the layers it spans (exact z compares), each crossing in double-float, oriented as intersect_triangle_with_plane
 //   cancel   segments coinciding exactly in opposite directions removed in pairs (cancel_coincident), by a hash on place
-//   chain    each end continues into the smallest unused segment starting at its 1e-3 mm key (chain_polys' greedy rule)
+//   chain    each end continues into the smallest unused segment starting at its 1e-3 mm key (chain_polygons' greedy rule)
 //   loops    pointer jumping for each loop's head and each segment's rank; tails that lead into a cycle stay out
-//   layout   loops sorted by (layer, head), laid out as chain_polys' n + 1 points, write_polygon's duplicates dropped
+//   layout   loops sorted by (layer, head), laid out as chain_polygons' n + 1 points, write_polygon's duplicates dropped
 //   tables   layer origins and grids, polygon ranges, the cell-list size
 //
 // Measured (design report gpu-full-port-trial-2026-10-01.md section 3): 3.0M triangles, 420 layers in 30 ms (the kernel's
@@ -205,10 +205,10 @@ export async function makeContourFront(device) {
     clear(loopStart, (headCount + 1) * 4)
     run(LOOPS_SHADER, 'lengths', 'urrrrwwwwwr', bound(uniform([segmentCount, padded, layerCount, headCount])), headCount)
     scan(loopStart, headCount + 1)
-    const [slotCount] = await readWords(loopStart, 1, headCount)      // points of the closed loops, chain_polys' n + 1 each
+    const [slotCount] = await readWords(loopStart, 1, headCount)      // points of the closed loops, chain_polygons' n + 1 each
     run(LOOPS_SHADER, 'place', 'urrrrwwwwwr', bound(uniform([segmentCount, padded, layerCount, headCount])), segmentCount)
 
-    // the points write_polygon keeps, the polygons chain_polys keeps, the layer boxes
+    // the points write_polygon keeps, the polygons chain_polygons keeps, the layer boxes
     const kept = buffer('kept', (slotCount + 1) * 4), polygonKept = buffer('polygonKept', (headCount + 1) * 4)
     const layerBox = buffer('layerBox', layerCount * 32), slotPolygon = buffer('slotPolygon', slotCount * 4)
     const boxStart = new Int32Array(layerCount * 8)
