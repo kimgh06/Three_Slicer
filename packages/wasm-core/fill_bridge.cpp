@@ -14,8 +14,8 @@ using namespace Slic3r;
 
 namespace fill_bridge {
 
-static inline coord_t sc(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
-static inline double  um(coord_t coord) { return double(coord) * SCALING_FACTOR; }
+static inline coord_t scale_to_coord(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
+static inline double  unscale_to_mm(coord_t coord) { return double(coord) * SCALING_FACTOR; }
 
 static InfillPattern pat_from_name(const std::string& name) {
     if (name=="gyroid")       return ipGyroid;
@@ -26,18 +26,18 @@ static InfillPattern pat_from_name(const std::string& name) {
     return ipCount; // unknown
 }
 
-static Polygon to_polygon(const Poly& poly_mm) {
+static Polygon to_polygon(const MillimetrePath& poly_mm) {
     Polygon polygon;
     polygon.points.reserve(poly_mm.size());
-    for (const auto& xy : poly_mm) polygon.points.emplace_back(sc(xy.first), sc(xy.second));
+    for (const auto& xy : poly_mm) polygon.points.emplace_back(scale_to_coord(xy.first), scale_to_coord(xy.second));
     return polygon;
 }
 
-std::vector<Poly> generate_fill(const std::vector<Poly>& region_mm, const std::string& pattern,
+std::vector<MillimetrePath> generate_fill(const std::vector<MillimetrePath>& region_mm, const std::string& pattern,
                                 double density, double spacing_mm, double angle_deg,
                                 double z_mm, int layer_id)
 {
-    std::vector<Poly> out;
+    std::vector<MillimetrePath> out;
     InfillPattern infill_pattern = pat_from_name(pattern);
     if (infill_pattern == ipCount || region_mm.empty() || region_mm[0].size() < 3) return out;
 
@@ -69,9 +69,9 @@ std::vector<Poly> generate_fill(const std::vector<Poly>& region_mm, const std::s
     catch (...) { return out; }
 
     for (const Polyline& polyline : polylines) {
-        Poly poly;
+        MillimetrePath poly;
         poly.reserve(polyline.points.size());
-        for (const Point& point : polyline.points) poly.push_back({ um(point.x()), um(point.y()) });
+        for (const Point& point : polyline.points) poly.push_back({ unscale_to_mm(point.x()), unscale_to_mm(point.y()) });
         if (poly.size() >= 2) out.push_back(std::move(poly));
     }
     return out;
@@ -90,7 +90,7 @@ double chain_reorder_kept_length() {
     auto path_of_length = [](double length_mm) {
         ExtrusionPath path(erSupportMaterial, 0.1, 0.42f, 0.2f);
         Polyline line;
-        line.points = { Point(0, 0), Point(sc(length_mm), 0) };
+        line.points = { Point(0, 0), Point(scale_to_coord(length_mm), 0) };
         path.polyline = Polyline3(line);
         return path;
     };

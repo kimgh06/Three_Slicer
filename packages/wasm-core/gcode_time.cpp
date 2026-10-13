@@ -340,7 +340,7 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
 //  start of the line or after a space/tab, nothing past a ';'. Measured before this rewrite: the transcribed estimate of a
 //  58.6MB G-code took 3.2s serial after the last layer (mt), with the parser doing a substr per line and 5-7 scans per line.
 enum { PX=0, PY=1, PZ=2, PE=3, PF=4, PI=5, PJ=6, PN=7 };
-struct AxisVals { double values[PN]; bool has[PN]; };
+struct AxisValues { double values[PN]; bool has[PN]; };
 
 static const double kPow10[23] = { 1e0,1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,1e11,1e12,1e13,1e14,1e15,1e16,1e17,1e18,1e19,1e20,1e21,1e22 };
 
@@ -416,7 +416,7 @@ static int axis_index(char letter) {
     }
 }
 
-static void parse_axes(const char* line_begin, const char* line_end, AxisVals& out) {
+static void parse_axes(const char* line_begin, const char* line_end, AxisValues& out) {
     for (int k = 0; k < PN; ++k) out.has[k] = false;
     for (const char* cursor = line_begin; cursor < line_end; ++cursor) {
         char letter = *cursor;
@@ -490,7 +490,7 @@ struct Estimator::Impl {
         // G92 sets the position without moving: in absolute E mode the next E word counts from it (the kernel writes
         //  G92 E0 after every retraction and at every layer there).
         if (starts(text, len, "G92", 3)) {
-            AxisVals axes;
+            AxisValues axes;
             parse_axes(text, text_end, axes);
             if (axes.has[PE]) pos[AE] = axes.values[PE];
             return;
@@ -500,7 +500,7 @@ struct Estimator::Impl {
         bool counter_clockwise_arc = gword(text, len, '3');
         if (!(gword(text, len, '0') || gword(text, len, '1') || clockwise_arc || counter_clockwise_arc)) return;
 
-        AxisVals axes;
+        AxisValues axes;
         parse_axes(text, text_end, axes);
         if (axes.has[PF]) m_feedrate = axes.values[PF] / 60.0;   // mm/min -> mm/s
 

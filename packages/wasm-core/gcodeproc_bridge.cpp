@@ -126,7 +126,7 @@ namespace {
     double g_fil_total = 0.0, g_fil_e_abs = 0.0;
     bool g_fil_relative = false;
     // hand-over past the move cap: the text fed so far (kept only when a fallback was given — in batch mode the whole G-code is
-    //  resident in GW::gcode anyway, so this is at most one more copy of the part before the cap), and the transcribed estimator that
+    //  resident in GcodeWriter::gcode anyway, so this is at most one more copy of the part before the cap), and the transcribed estimator that
     //  takes over. Measured on a 774k-facet model (2.2M moves, 58.6MB): without the hand-over the feeder's work was discarded at
     //  the cap and the whole text was re-parsed serially after the last layer, 3.2-3.7s of a 6.8s mt slice.
     bool g_keep_text = false;

@@ -1,6 +1,6 @@
 // Stage-7 bridge implementation: converts kernel contours (mm) to Slic3r::Polygons, runs the
 // real ported Arachne WallToolPaths, and flattens the variable-width ExtrusionLines back to
-// plain WLine/WBead (mm). This is the ONLY translation unit where slicer_core meets Slic3r types.
+// plain WallLine/WallJunction (mm). This is the ONLY translation unit where slicer_core meets Slic3r types.
 #include "arachne_bridge.h"
 #include "arachne_port/libslic3r/Arachne/WallToolPaths.hpp"
 
@@ -17,10 +17,10 @@ int cgal_planar_check_count() { return Slic3r::Geometry::g_cgal_planar_angle_cal
 static inline coord_t to_scaled(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
 static inline double  to_mm(coord_t coord) { return double(coord) * SCALING_FACTOR; }
 
-std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polys_mm,
+std::vector<WallLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polys_mm,
                                   double line_width_mm, int wall_count, double layer_height_mm)
 {
-    std::vector<WLine> out;
+    std::vector<WallLine> out;
     if (polys_mm.empty() || wall_count <= 0) return out;
 
     Polygons outline;
@@ -53,7 +53,7 @@ std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double
     for (const VariableWidthLines& inset_lines : toolpaths)
         for (const ExtrusionLine& line : inset_lines) {
             if (line.junctions.size() < 2) continue;
-            WLine wall_line;
+            WallLine wall_line;
             wall_line.closed = line.is_closed;
             wall_line.inset_index = (int) line.inset_idx;
             wall_line.junctions.reserve(line.junctions.size());

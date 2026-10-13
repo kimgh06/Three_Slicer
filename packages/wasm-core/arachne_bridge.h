@@ -7,12 +7,12 @@
 
 namespace arachne_bridge {
 
-struct WBead { double x, y, width; };            // one junction: XY (mm) + extrusion width (mm)
-struct WLine { std::vector<WBead> junctions; bool closed; int inset_index; };
+struct WallJunction { double x, y, width; };            // one junction: XY (mm) + extrusion width (mm)
+struct WallLine { std::vector<WallJunction> junctions; bool closed; int inset_index; };
 
 // polys_mm[0] = outer contour, [1..] = holes (all in mm, kernel-centered coords).
 // Returns Arachne variable-width wall lines (outer→inner), each junction carrying its own width.
-std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polys_mm,
+std::vector<WallLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polys_mm,
                                   double line_width_mm, int wall_count, double layer_height_mm);
 
 // Stage-14: number of times the REAL CGAL planarity check (VoronoiUtilsCgal::is_voronoi_diagram_planar_angle)

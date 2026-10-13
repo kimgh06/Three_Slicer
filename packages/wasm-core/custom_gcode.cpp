@@ -38,9 +38,9 @@ void append_points(std::vector<double>& out, const Paths& paths, double offsetX,
     }
 }
 
-void append_bbox(std::vector<double>& out, const Paths& paths, double offsetX, double offsetY) {
+void append_bounding_box(std::vector<double>& out, const Paths& paths, double offsetX, double offsetY) {
   double minX, minY, maxX, maxY;
-  bbox_of(paths, minX, minY, maxX, maxY);
+  bounding_box_of(paths, minX, minY, maxX, maxY);
   if (maxX < minX)
     return;
   out.insert(out.end(), { minX + offsetX, minY + offsetY, maxX + offsetX, maxY + offsetY });
@@ -88,8 +88,8 @@ custom_gcode_bridge::Facts single_material_facts(const Params& params, const std
   for (const LayerData& layer : layers)
     for (const Path& path : layer.contour)
       everyLayer.push_back(path);
-  append_bbox(facts.object_bboxes, everyLayer, offsetX, offsetY);
-  append_bbox(facts.object_first_layer_bboxes, first.contour, offsetX, offsetY);
+  append_bounding_box(facts.object_bboxes, everyLayer, offsetX, offsetY);
+  append_bounding_box(facts.object_first_layer_bboxes, first.contour, offsetX, offsetY);
   facts.total_layer_count = layerCount;
   if (raft)
     facts.total_layer_count += raftLayers;
@@ -142,7 +142,7 @@ std::string custom_gcode_start(const Params& params, const custom_gcode_bridge::
   return std::string();
 }
 
-std::string custom_gcode_end(GW& writer, int layer_num, double layer_z, double max_layer_z, int current_extruder) {
+std::string custom_gcode_end(GcodeWriter& writer, int layer_num, double layer_z, double max_layer_z, int current_extruder) {
   writer.raw("M107");
   if (custom_gcode_bridge::is_bbl_printer())
     writer.raw("M981 S0 P20000 ; close spaghetti detector");

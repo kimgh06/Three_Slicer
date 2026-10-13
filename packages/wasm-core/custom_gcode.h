@@ -9,7 +9,7 @@
 #include <vector>
 
 struct Params;
-struct GW;
+struct GcodeWriter;
 struct LayerData;
 enum class Flavor;
 
@@ -36,7 +36,7 @@ std::string custom_gcode_start(const Params& params, const custom_gcode_bridge::
 
 // Writes the end block the way GCode::_do_export does (GCode.cpp:3881-3930): fan off, the Bambu Lab spaghetti
 // detector off, every filament's filament_end_gcode, then machine_end_gcode. Returns "" or the error.
-std::string custom_gcode_end(GW& writer, int layer_num, double layer_z, double max_layer_z, int current_extruder);
+std::string custom_gcode_end(GcodeWriter& writer, int layer_num, double layer_z, double max_layer_z, int current_extruder);
 
 // Whether the host's settings describe a Bambu Lab printer, read from placeholder_config without starting a session.
 bool custom_gcode_is_bbl(const Params& params);
@@ -47,7 +47,7 @@ std::string custom_gcode_error(const std::string& reason);
 // ---- Layer templates (GCode::process_layer :5407-5517) ----------------------------------------------------------
 // Whether the printer has any template expanded at a layer change: before_layer_change_gcode, layer_change_gcode, and
 //  on a printer other than Bambu Lab's (whose firmware handles both itself) time_lapse_gcode and the first
-//  filament's filament_start_gcode. The writers then leave slot lines around each layer's Z move (GW::layer_z).
+//  filament's filament_start_gcode. The writers then leave slot lines around each layer's Z move (GcodeWriter::layer_z).
 bool custom_gcode_layer_slots();
 // Starts the layer sequence (max_layer_z and the printed mass go back to zero).
 void custom_gcode_layers_begin();

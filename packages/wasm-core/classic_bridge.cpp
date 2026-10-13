@@ -387,17 +387,17 @@ void reorder_inner_outer_inner(ExtrusionEntityCollection& entities)
     }
 }
 
-IPath to_ipath(const Points& points)
+IntegerPath to_ipath(const Points& points)
 {
-    IPath out;
+    IntegerPath out;
     out.reserve(points.size());
     for (const Point& point : points) out.emplace_back(point.x(), point.y());
     return out;
 }
 
-IPath to_ipath(const Polyline3& polyline)
+IntegerPath to_ipath(const Polyline3& polyline)
 {
-    IPath out;
+    IntegerPath out;
     out.reserve(polyline.points.size());
     for (const Point3& point : polyline.points) out.emplace_back(point.x(), point.y());
     return out;
@@ -436,16 +436,16 @@ void flatten_gap_fill(const ExtrusionEntity* entity, std::vector<Extrusion>& out
 
 } // namespace
 
-Result generate(const std::vector<IPath>& contour, const Config& config)
+Result generate(const std::vector<IntegerPath>& contour, const Config& config)
 {
     Result result;
 
     Polygons slice_polygons;
-    for (const IPath& path : contour) {
+    for (const IntegerPath& path : contour) {
         if (path.size() < 3) continue;
         Polygon polygon;
         polygon.points.reserve(path.size());
-        for (const IPoint& point : path) polygon.points.emplace_back(coord_t(point.first), coord_t(point.second));
+        for (const IntegerPoint& point : path) polygon.points.emplace_back(coord_t(point.first), coord_t(point.second));
         slice_polygons.emplace_back(std::move(polygon));
     }
     ExPolygons slices = union_ex(slice_polygons);
