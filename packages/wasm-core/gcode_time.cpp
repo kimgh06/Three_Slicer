@@ -17,10 +17,12 @@ static inline float sqrf(float x){ return x*x; }
 
 // ---- helpers: GCodeProcessor.cpp L146-175 (verbatim) ----
 static float estimated_acceleration_distance(float initial_rate, float target_rate, float acceleration){
-    return (acceleration == 0.0f) ? 0.0f : (sqrf(target_rate) - sqrf(initial_rate)) / (2.0f * acceleration);
+    if (acceleration == 0.0f) return 0.0f;
+    return (sqrf(target_rate) - sqrf(initial_rate)) / (2.0f * acceleration);
 }
 static float intersection_distance(float initial_rate, float final_rate, float acceleration, float distance){
-    return (acceleration == 0.0f) ? 0.0f : (2.0f * acceleration * distance - sqrf(initial_rate) + sqrf(final_rate)) / (4.0f * acceleration);
+    if (acceleration == 0.0f) return 0.0f;
+    return (2.0f * acceleration * distance - sqrf(initial_rate) + sqrf(final_rate)) / (4.0f * acceleration);
 }
 static float speed_from_distance(float initial_feedrate, float distance, float acceleration){
     const float value = std::max(0.0f, sqrf(initial_feedrate) + 2.0f * acceleration * distance);
@@ -31,7 +33,8 @@ static float max_allowable_speed(float acceleration, float target_velocity, floa
     return std::sqrt(value);
 }
 static float acceleration_time_from_distance(float initial_feedrate, float distance, float acceleration){
-    return (acceleration != 0.0f) ? (speed_from_distance(initial_feedrate, distance, acceleration) - initial_feedrate) / acceleration : 0.0f;
+    if (acceleration != 0.0f) return (speed_from_distance(initial_feedrate, distance, acceleration) - initial_feedrate) / acceleration;
+    return 0.0f;
 }
 
 // ---- Trapezoid + TimeBlock: GCodeProcessor.hpp L565-620, .cpp L261-290 (verbatim) ----
@@ -44,7 +47,10 @@ struct Trapezoid {
     float acceleration_time(float entry_feedrate, float acceleration) const {
         return acceleration_time_from_distance(entry_feedrate, acceleration_distance(), acceleration);
     }
-    float cruise_time() const { return (cruise_feedrate != 0.0f) ? cruise_distance() / cruise_feedrate : 0.0f; }
+    float cruise_time() const {
+        if (cruise_feedrate != 0.0f) return cruise_distance() / cruise_feedrate;
+        return 0.0f;
+    }
     float deceleration_time(float distance, float acceleration) const {
         return acceleration_time_from_distance(cruise_feedrate, deceleration_distance(distance), -acceleration);
     }
@@ -55,7 +61,9 @@ struct TimeBlock {
     int   role=0;           // ExtrusionRole int (from ;_EXTRUSION_ROLE tag) else -1
     int   layer_id=0;
     float distance=0, acceleration=0, max_entry_speed=0, safe_feedrate=0;
-    Flags flags; FeedrateProfile feedrate_profile; Trapezoid trapezoid;
+    Flags flags;
+    FeedrateProfile feedrate_profile;
+    Trapezoid trapezoid;
     void calculate_trapezoid(){
         float accelerate_distance = std::max(0.0f, estimated_acceleration_distance(feedrate_profile.entry, feedrate_profile.cruise, acceleration));
         const float decelerate_distance = std::max(0.0f, estimated_acceleration_distance(feedrate_profile.cruise, feedrate_profile.exit, -acceleration));
@@ -88,8 +96,11 @@ static void planner_forward_pass_kernel(const TimeBlock& prev, TimeBlock& curr){
 static void planner_reverse_pass_kernel(TimeBlock& curr, const TimeBlock& next){
     const float max_entry_speed = curr.max_entry_speed;
     if (curr.feedrate_profile.entry != max_entry_speed || next.flags.recalculate) {
-        const float new_entry_speed = curr.flags.nominal_length ? max_entry_speed :
-            std::min(max_entry_speed, max_allowable_speed(-curr.acceleration, next.feedrate_profile.entry, curr.distance));
+        float new_entry_speed;
+        if (curr.flags.nominal_length)
+            new_entry_speed = max_entry_speed;
+        else
+            new_entry_speed = std::min(max_entry_speed, max_allowable_speed(-curr.acceleration, next.feedrate_profile.entry, curr.distance));
         if (curr.feedrate_profile.entry != new_entry_speed) {
             curr.feedrate_profile.entry = new_entry_speed;
             curr.flags.recalculate = true;
@@ -97,10 +108,12 @@ static void planner_reverse_pass_kernel(TimeBlock& curr, const TimeBlock& next){
     }
 }
 static void recalculate_trapezoids(std::vector<TimeBlock>& blocks){
-    TimeBlock* curr = nullptr; TimeBlock* next = nullptr;
+    TimeBlock* curr = nullptr;
+    TimeBlock* next = nullptr;
     for (size_t i = 0; i < blocks.size(); ++i) {
-        TimeBlock& b = blocks[i];
-        curr = next; next = &b;
+        TimeBlock& block = blocks[i];
+        curr = next;
+        next = &block;
         if (curr != nullptr) {
             if (curr->flags.recalculate || next->flags.recalculate) {
                 curr->feedrate_profile.exit = next->feedrate_profile.entry;
@@ -126,76 +139,119 @@ struct State {
 // ---- process_G1 block generation: GCodeProcessor.cpp L5007-5231 (verbatim, single Normal mode) ----
 // Appends a TimeBlock for one move. delta_pos[X,Y,Z,E], m_feedrate in mm/s.
 static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
-                     const float delta_pos[4], float m_feedrate, const Limits& lim,
+                     const float delta_pos[4], float m_feedrate, const Limits& limits,
                      int move_type, int role, int layer_id)
 {
-    auto is_extrusion_only_move = [](const float d[4]){ return d[AX]==0.f && d[AY]==0.f && d[AZ]==0.f && d[AE]!=0.f; };
+    auto is_extrusion_only_move = [](const float delta[4]){ return delta[AX]==0.f && delta[AY]==0.f && delta[AZ]==0.f && delta[AE]!=0.f; };
     float sq_xyz = sqrf(delta_pos[AX])+sqrf(delta_pos[AY])+sqrf(delta_pos[AZ]);
-    float distance = (sq_xyz > 0.0f) ? std::sqrt(sq_xyz) : std::abs(delta_pos[AE]);
+    float distance;
+    if (sq_xyz > 0.0f)
+        distance = std::sqrt(sq_xyz);
+    else
+        distance = std::abs(delta_pos[AE]);
     if (distance == 0.0f) return;
     float inv_distance = 1.0f / distance;
 
     // curr.feedrate = minimum_(travel_)feedrate(m_feedrate)
-    curr.feedrate = (delta_pos[AE] == 0.0f)
-        ? ((lim.min_travel_rate > 0.f) ? std::max(m_feedrate, lim.min_travel_rate) : m_feedrate)
-        : ((lim.min_extrude_rate > 0.f) ? std::max(m_feedrate, lim.min_extrude_rate) : m_feedrate);
+    float minimum_feedrate;
+    if (delta_pos[AE] == 0.0f) {
+        if (limits.min_travel_rate > 0.f)
+            minimum_feedrate = std::max(m_feedrate, limits.min_travel_rate);
+        else
+            minimum_feedrate = m_feedrate;
+    } else {
+        if (limits.min_extrude_rate > 0.f)
+            minimum_feedrate = std::max(m_feedrate, limits.min_extrude_rate);
+        else
+            minimum_feedrate = m_feedrate;
+    }
+    curr.feedrate = minimum_feedrate;
 
-    curr.enter_direction[0]=delta_pos[AX]; curr.enter_direction[1]=delta_pos[AY]; curr.enter_direction[2]=delta_pos[AZ];
+    curr.enter_direction[0]=delta_pos[AX];
+    curr.enter_direction[1]=delta_pos[AY];
+    curr.enter_direction[2]=delta_pos[AZ];
     float norm = std::sqrt(sqrf(curr.enter_direction[0])+sqrf(curr.enter_direction[1])+sqrf(curr.enter_direction[2]));
     if (!is_extrusion_only_move(delta_pos) && norm > 0.f) {
-        curr.enter_direction[0]/=norm; curr.enter_direction[1]/=norm; curr.enter_direction[2]/=norm;
+        curr.enter_direction[0]/=norm;
+        curr.enter_direction[1]/=norm;
+        curr.enter_direction[2]/=norm;
     }
-    curr.exit_direction[0]=curr.enter_direction[0]; curr.exit_direction[1]=curr.enter_direction[1]; curr.exit_direction[2]=curr.enter_direction[2];
+    curr.exit_direction[0]=curr.enter_direction[0];
+    curr.exit_direction[1]=curr.enter_direction[1];
+    curr.exit_direction[2]=curr.enter_direction[2];
 
-    TimeBlock block; block.move_type=move_type; block.role=role; block.distance=distance; block.layer_id=layer_id;
+    TimeBlock block;
+    block.move_type=move_type;
+    block.role=role;
+    block.distance=distance;
+    block.layer_id=layer_id;
 
     // centripetal accel limit on cruise (L5055-5079)
     if ((prev.exit_direction[0]!=0.f || prev.exit_direction[1]!=0.f) &&
         (curr.enter_direction[0]!=0.f || curr.enter_direction[1]!=0.f)) {
-        float v1[2]={prev.exit_direction[0],prev.exit_direction[1]}; float n1=std::sqrt(sqrf(v1[0])+sqrf(v1[1])); if(n1>0){v1[0]/=n1;v1[1]/=n1;}
-        float v2[2]={curr.enter_direction[0],curr.enter_direction[1]}; float n2=std::sqrt(sqrf(v2[0])+sqrf(v2[1])); if(n2>0){v2[0]/=n2;v2[1]/=n2;}
-        float norm_diff = std::sqrt(sqrf(v2[0]-v1[0])+sqrf(v2[1]-v1[1]));
+        float exit_xy[2]={prev.exit_direction[0],prev.exit_direction[1]};
+        float exit_norm=std::sqrt(sqrf(exit_xy[0])+sqrf(exit_xy[1]));
+        if(exit_norm>0){
+            exit_xy[0]/=exit_norm;
+            exit_xy[1]/=exit_norm;
+        }
+        float enter_xy[2]={curr.enter_direction[0],curr.enter_direction[1]};
+        float enter_norm=std::sqrt(sqrf(enter_xy[0])+sqrf(enter_xy[1]));
+        if(enter_norm>0){
+            enter_xy[0]/=enter_norm;
+            enter_xy[1]/=enter_norm;
+        }
+        float norm_diff = std::sqrt(sqrf(enter_xy[0]-exit_xy[0])+sqrf(enter_xy[1]-exit_xy[1]));
         if (norm_diff < 0.5f && norm_diff > 0.00001f) {
-            float dot=v1[0]*v2[0]+v1[1]*v2[1], cross=v1[0]*v2[1]-v1[1]*v2[0];
+            float dot=exit_xy[0]*enter_xy[0]+exit_xy[1]*enter_xy[1];
+            float cross=exit_xy[0]*enter_xy[1]-exit_xy[1]*enter_xy[0];
             float angle=(float)atan2((double)cross,(double)dot);
             float sin_theta_2=std::sqrt((1.0f-std::cos(angle))*0.5f);
             if (sin_theta_2 > 0.f) {
-                float r=std::sqrt(sqrf(delta_pos[AX])+sqrf(delta_pos[AY]))*0.5f/sin_theta_2;
-                curr.feedrate = std::min(curr.feedrate, std::sqrt(lim.accel_print * r));
+                float radius=std::sqrt(sqrf(delta_pos[AX])+sqrf(delta_pos[AY]))*0.5f/sin_theta_2;
+                curr.feedrate = std::min(curr.feedrate, std::sqrt(limits.accel_print * radius));
             }
         }
     }
 
     // cruise feedrate: clamp to per-axis max feedrate (L5081-5103)
     float min_feedrate_factor = 1.0f;
-    for (int a=AX; a<=AE; ++a) {
-        curr.axis_feedrate[a] = curr.feedrate * delta_pos[a] * inv_distance;
-        curr.abs_axis_feedrate[a] = std::abs(curr.axis_feedrate[a]);
-        if (curr.abs_axis_feedrate[a] != 0.0f) {
-            float axis_max = lim.max_speed[a];
-            if (axis_max != 0.0f) min_feedrate_factor = std::min(min_feedrate_factor, axis_max / curr.abs_axis_feedrate[a]);
+    for (int axis=AX; axis<=AE; ++axis) {
+        curr.axis_feedrate[axis] = curr.feedrate * delta_pos[axis] * inv_distance;
+        curr.abs_axis_feedrate[axis] = std::abs(curr.axis_feedrate[axis]);
+        if (curr.abs_axis_feedrate[axis] != 0.0f) {
+            float axis_max = limits.max_speed[axis];
+            if (axis_max != 0.0f) min_feedrate_factor = std::min(min_feedrate_factor, axis_max / curr.abs_axis_feedrate[axis]);
         }
     }
     curr.feedrate *= min_feedrate_factor;
     block.feedrate_profile.cruise = curr.feedrate;
     if (min_feedrate_factor < 1.0f)
-        for (int a=AX; a<=AE; ++a) { curr.axis_feedrate[a]*=min_feedrate_factor; curr.abs_axis_feedrate[a]*=min_feedrate_factor; }
+        for (int axis=AX; axis<=AE; ++axis) {
+            curr.axis_feedrate[axis]*=min_feedrate_factor;
+            curr.abs_axis_feedrate[axis]*=min_feedrate_factor;
+        }
 
     // acceleration (L5105-5119)
-    float acceleration = (move_type==2/*travel*/) ? lim.accel_travel
-        : (is_extrusion_only_move(delta_pos) ? lim.accel_retract : lim.accel_print);
-    for (int a=AX; a<=AE; ++a) {
-        float axis_max_acc = lim.max_accel[a];
-        if (axis_max_acc>0.f && acceleration * std::abs(delta_pos[a]) * inv_distance > axis_max_acc)
-            acceleration = axis_max_acc / (std::abs(delta_pos[a]) * inv_distance);
+    float acceleration;
+    if (move_type==2/*travel*/)
+        acceleration = limits.accel_travel;
+    else if (is_extrusion_only_move(delta_pos))
+        acceleration = limits.accel_retract;
+    else
+        acceleration = limits.accel_print;
+    for (int axis=AX; axis<=AE; ++axis) {
+        float axis_max_acc = limits.max_accel[axis];
+        if (axis_max_acc>0.f && acceleration * std::abs(delta_pos[axis]) * inv_distance > axis_max_acc)
+            acceleration = axis_max_acc / (std::abs(delta_pos[axis]) * inv_distance);
     }
     block.acceleration = acceleration;
 
     // safe (exit) feedrate from per-axis jerk (L5121-5130)
     curr.safe_feedrate = block.feedrate_profile.cruise;
-    for (int a=AX; a<=AE; ++a) {
-        float axis_max_jerk = lim.max_jerk[a];
-        if (curr.abs_axis_feedrate[a] > axis_max_jerk) curr.safe_feedrate = std::min(curr.safe_feedrate, axis_max_jerk);
+    for (int axis=AX; axis<=AE; ++axis) {
+        float axis_max_jerk = limits.max_jerk[axis];
+        if (curr.abs_axis_feedrate[axis] > axis_max_jerk) curr.safe_feedrate = std::min(curr.safe_feedrate, axis_max_jerk);
     }
     block.feedrate_profile.exit = curr.safe_feedrate;
 
@@ -204,33 +260,61 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
     float vmax_junction = curr.safe_feedrate;
     if (!blocks.empty() && prev.feedrate > PREV_THRESH) {
         bool prev_speed_larger = prev.feedrate > block.feedrate_profile.cruise;
-        float smaller_speed_factor = prev_speed_larger ? (block.feedrate_profile.cruise / prev.feedrate) : (prev.feedrate / block.feedrate_profile.cruise);
-        vmax_junction = prev_speed_larger ? block.feedrate_profile.cruise : prev.feedrate;
-        float v_factor = 1.0f; bool limited = false;
-        for (int a=AX; a<=AE; ++a) {
-            if (a == AX) {
+        float smaller_speed_factor;
+        if (prev_speed_larger) {
+            smaller_speed_factor = block.feedrate_profile.cruise / prev.feedrate;
+            vmax_junction = block.feedrate_profile.cruise;
+        } else {
+            smaller_speed_factor = prev.feedrate / block.feedrate_profile.cruise;
+            vmax_junction = prev.feedrate;
+        }
+        float v_factor = 1.0f;
+        bool limited = false;
+        for (int axis=AX; axis<=AE; ++axis) {
+            if (axis == AX) {
                 float exit_v[3]={prev.feedrate*prev.exit_direction[0], prev.feedrate*prev.exit_direction[1], prev.feedrate*prev.exit_direction[2]};
-                if (prev_speed_larger) { exit_v[0]*=smaller_speed_factor; exit_v[1]*=smaller_speed_factor; exit_v[2]*=smaller_speed_factor; }
+                if (prev_speed_larger) {
+                    exit_v[0]*=smaller_speed_factor;
+                    exit_v[1]*=smaller_speed_factor;
+                    exit_v[2]*=smaller_speed_factor;
+                }
                 float entry_v[3]={block.feedrate_profile.cruise*curr.enter_direction[0], block.feedrate_profile.cruise*curr.enter_direction[1], block.feedrate_profile.cruise*curr.enter_direction[2]};
                 float jerk_v[3]={std::abs(entry_v[0]-exit_v[0]), std::abs(entry_v[1]-exit_v[1]), std::abs(entry_v[2]-exit_v[2])};
-                float max_xyz_jerk_v[3]={lim.max_jerk[AX], lim.max_jerk[AY], lim.max_jerk[AZ]};
+                float max_xyz_jerk_v[3]={limits.max_jerk[AX], limits.max_jerk[AY], limits.max_jerk[AZ]};
                 for (int k=0;k<3;k++) if (jerk_v[k] > max_xyz_jerk_v[k]) {
                     v_factor *= max_xyz_jerk_v[k] / jerk_v[k];
-                    jerk_v[0]*=v_factor; jerk_v[1]*=v_factor; jerk_v[2]*=v_factor;
+                    jerk_v[0]*=v_factor;
+                    jerk_v[1]*=v_factor;
+                    jerk_v[2]*=v_factor;
                     limited = true;
                 }
-            } else if (a == AY || a == AZ) {
+            } else if (axis == AY || axis == AZ) {
                 continue;
             } else {
-                float v_exit = prev.axis_feedrate[a], v_entry = curr.axis_feedrate[a];
+                float v_exit = prev.axis_feedrate[axis];
+                float v_entry = curr.axis_feedrate[axis];
                 if (prev_speed_larger) v_exit *= smaller_speed_factor;
-                if (limited) { v_exit *= v_factor; v_entry *= v_factor; }
-                float jerk =
-                    (v_exit > v_entry) ?
-                    (((v_entry > 0.0f) || (v_exit < 0.0f)) ? (v_exit - v_entry) : std::max(v_exit, -v_entry)) :
-                    (((v_entry < 0.0f) || (v_exit > 0.0f)) ? (v_entry - v_exit) : std::max(-v_exit, v_entry));
-                float axis_max_jerk = lim.max_jerk[a];
-                if (jerk > axis_max_jerk) { v_factor *= axis_max_jerk / jerk; limited = true; }
+                if (limited) {
+                    v_exit *= v_factor;
+                    v_entry *= v_factor;
+                }
+                float jerk;
+                if (v_exit > v_entry) {
+                    if ((v_entry > 0.0f) || (v_exit < 0.0f))
+                        jerk = v_exit - v_entry;
+                    else
+                        jerk = std::max(v_exit, -v_entry);
+                } else {
+                    if ((v_entry < 0.0f) || (v_exit > 0.0f))
+                        jerk = v_entry - v_exit;
+                    else
+                        jerk = std::max(-v_exit, v_entry);
+                }
+                float axis_max_jerk = limits.max_jerk[axis];
+                if (jerk > axis_max_jerk) {
+                    v_factor *= axis_max_jerk / jerk;
+                    limited = true;
+                }
             }
         }
         if (limited) vmax_junction *= v_factor;
@@ -264,54 +348,93 @@ static const double kPow10[23] = { 1e0,1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,
 //  not followed by anything strtod would keep reading (a digit, '.', 'e', 'E', 'x', 'X'). An integer below 2^53 and a power of ten
 //  up to 1e22 are both exact doubles, and one IEEE division of two exact doubles is correctly rounded — the same value strtod returns
 //  (Clinger's fast path). Anything else — exponents, hex, inf/nan, leading spaces, more digits — takes strtod itself.
-static bool fast_decimal(const char* b, const char* e, double& out, const char*& end) {
-    const char* q = b; bool neg = false;
-    if (q < e && (*q == '+' || *q == '-')) { neg = (*q == '-'); ++q; }
-    unsigned long long mant = 0; int digits = 0, frac = 0; bool any = false;
-    while (q < e && *q >= '0' && *q <= '9') { if (digits < 15) { mant = mant * 10 + (unsigned)(*q - '0'); ++digits; } else return false; ++q; any = true; }
-    if (q < e && *q == '.') {
-        ++q;
-        while (q < e && *q >= '0' && *q <= '9') { if (digits < 15) { mant = mant * 10 + (unsigned)(*q - '0'); ++digits; ++frac; } else return false; ++q; any = true; }
+static bool fast_decimal(const char* text_begin, const char* text_end, double& out, const char*& end) {
+    const char* cursor = text_begin;
+    bool negative = false;
+    if (cursor < text_end && (*cursor == '+' || *cursor == '-')) {
+        negative = (*cursor == '-');
+        ++cursor;
     }
-    if (!any) return false;
-    if (q < e) { char c = *q; if (c == '.' || c == 'e' || c == 'E' || c == 'x' || c == 'X' || (c >= '0' && c <= '9')) return false; }
-    double v = (double)mant / kPow10[frac];
-    if (neg) v = -v;
-    out = v; end = q; return true;
+    unsigned long long mantissa = 0;
+    int digits = 0, fraction_digits = 0;
+    bool any_digit = false;
+    while (cursor < text_end && *cursor >= '0' && *cursor <= '9') {
+        if (digits < 15) {
+            mantissa = mantissa * 10 + (unsigned)(*cursor - '0');
+            ++digits;
+        } else return false;
+        ++cursor;
+        any_digit = true;
+    }
+    if (cursor < text_end && *cursor == '.') {
+        ++cursor;
+        while (cursor < text_end && *cursor >= '0' && *cursor <= '9') {
+            if (digits < 15) {
+                mantissa = mantissa * 10 + (unsigned)(*cursor - '0');
+                ++digits;
+                ++fraction_digits;
+            } else return false;
+            ++cursor;
+            any_digit = true;
+        }
+    }
+    if (!any_digit) return false;
+    if (cursor < text_end) {
+        char next_char = *cursor;
+        if (next_char == '.' || next_char == 'e' || next_char == 'E' || next_char == 'x' || next_char == 'X' || (next_char >= '0' && next_char <= '9')) return false;
+    }
+    double value = (double)mantissa / kPow10[fraction_digits];
+    if (negative) value = -value;
+    out = value;
+    end = cursor;
+    return true;
 }
 
-static bool parse_number(const char* b, const char* e, double& out) {
+static bool parse_number(const char* text_begin, const char* text_end, double& out) {
     const char* end = nullptr;
-    if (fast_decimal(b, e, out, end)) return true;
-    char tmp[64]; size_t n = (size_t)(e - b); if (n > sizeof tmp - 1) n = sizeof tmp - 1;   // strtod needs a terminator; a token is short
-    memcpy(tmp, b, n); tmp[n] = '\0';
-    char* stop = nullptr; out = std::strtod(tmp, &stop);
-    return stop != tmp;
+    if (fast_decimal(text_begin, text_end, out, end)) return true;
+    char terminated[64];
+    size_t length = (size_t)(text_end - text_begin);
+    if (length > sizeof terminated - 1) length = sizeof terminated - 1;   // strtod needs a terminator; a token is short
+    memcpy(terminated, text_begin, length);
+    terminated[length] = '\0';
+    char* stop = nullptr;
+    out = std::strtod(terminated, &stop);
+    return stop != terminated;
 }
 
-static int axis_index(char c) {
-    switch (c) {
-        case 'X': case 'x': return PX; case 'Y': case 'y': return PY; case 'Z': case 'z': return PZ; case 'E': case 'e': return PE;
-        case 'F': case 'f': return PF; case 'I': case 'i': return PI; case 'J': case 'j': return PJ; default: return -1;
+static int axis_index(char letter) {
+    switch (letter) {
+        case 'X': case 'x': return PX;
+        case 'Y': case 'y': return PY;
+        case 'Z': case 'z': return PZ;
+        case 'E': case 'e': return PE;
+        case 'F': case 'f': return PF;
+        case 'I': case 'i': return PI;
+        case 'J': case 'j': return PJ;
+        default: return -1;
     }
 }
 
-static void parse_axes(const char* b, const char* e, AxisVals& out) {
+static void parse_axes(const char* line_begin, const char* line_end, AxisVals& out) {
     for (int k = 0; k < PN; ++k) out.has[k] = false;
-    for (const char* q = b; q < e; ++q) {
-        char c = *q;
-        if (c == ';') break;
-        int k = axis_index(c);
-        if (k < 0 || out.has[k]) continue;
-        if (q != b && q[-1] != ' ' && q[-1] != '\t') continue;
-        double v;
-        if (parse_number(q + 1, e, v)) { out.v[k] = v; out.has[k] = true; }
+    for (const char* cursor = line_begin; cursor < line_end; ++cursor) {
+        char letter = *cursor;
+        if (letter == ';') break;
+        int axis = axis_index(letter);
+        if (axis < 0 || out.has[axis]) continue;
+        if (cursor != line_begin && cursor[-1] != ' ' && cursor[-1] != '\t') continue;
+        double value;
+        if (parse_number(cursor + 1, line_end, value)) {
+            out.v[axis] = value;
+            out.has[axis] = true;
+        }
     }
 }
 
-static inline bool starts(const char* b, size_t len, const char* lit, size_t n) { return len >= n && memcmp(b, lit, n) == 0; }
-static inline bool gword(const char* b, size_t len, char d) {   // "G<d>" not followed by an alphanumeric ("G1" but not "G10")
-    return len >= 2 && b[0] == 'G' && b[1] == d && (len < 3 || !std::isalnum((unsigned char)b[2]));
+static inline bool starts(const char* text, size_t length, const char* literal, size_t literal_length) { return length >= literal_length && memcmp(text, literal, literal_length) == 0; }
+static inline bool gword(const char* text, size_t length, char digit) {   // "G<digit>" not followed by an alphanumeric ("G1" but not "G10")
+    return length >= 2 && text[0] == 'G' && text[1] == digit && (length < 3 || !std::isalnum((unsigned char)text[2]));
 }
 
 struct Estimator::Impl {
@@ -327,119 +450,197 @@ struct Estimator::Impl {
     int  cur_role = -1;
     std::string carry;                  // a line split across feeds
 
-    explicit Impl(const Limits& l) : lim(l) {}
+    explicit Impl(const Limits& limits) : lim(limits) {}
 
-    void line(const char* b, size_t len) {
+    void line(const char* text, size_t len) {
         if (len == 0) return;
-        const char* e = b + len;
+        const char* text_end = text + len;
         // markers
-        if (starts(b, len, "; LAYER ", 8) || starts(b, len, "; LAYER\t", 8)) { ++layer_id; R.layer_s.push_back(0.0); return; }
-        if (starts(b, len, ";_EXTRUSION_ROLE:", 17)) { char tmp[32]; size_t n = len - 17; if (n > sizeof tmp - 1) n = sizeof tmp - 1; memcpy(tmp, b + 17, n); tmp[n] = '\0'; cur_role = std::atoi(tmp); return; }
+        if (starts(text, len, "; LAYER ", 8) || starts(text, len, "; LAYER\t", 8)) {
+            ++layer_id;
+            R.layer_s.push_back(0.0);
+            return;
+        }
+        if (starts(text, len, ";_EXTRUSION_ROLE:", 17)) {
+            char role_text[32];
+            size_t length = len - 17;
+            if (length > sizeof role_text - 1) length = sizeof role_text - 1;
+            memcpy(role_text, text + 17, length);
+            role_text[length] = '\0';
+            cur_role = std::atoi(role_text);
+            return;
+        }
         // mode changes
-        if (starts(b, len, "M83", 3)) { e_relative = true; return; }
-        if (starts(b, len, "M82", 3)) { e_relative = false; return; }
-        if (starts(b, len, "G91", 3)) { xyz_absolute = false; return; }
-        if (starts(b, len, "G90", 3)) { xyz_absolute = true; return; }
+        if (starts(text, len, "M83", 3)) {
+            e_relative = true;
+            return;
+        }
+        if (starts(text, len, "M82", 3)) {
+            e_relative = false;
+            return;
+        }
+        if (starts(text, len, "G91", 3)) {
+            xyz_absolute = false;
+            return;
+        }
+        if (starts(text, len, "G90", 3)) {
+            xyz_absolute = true;
+            return;
+        }
         // G92 sets the position without moving: in absolute E mode the next E word counts from it (the kernel writes
         //  G92 E0 after every retraction and at every layer there).
-        if (starts(b, len, "G92", 3)) { AxisVals a; parse_axes(b, e, a); if (a.has[PE]) pos[AE] = a.v[PE]; return; }
+        if (starts(text, len, "G92", 3)) {
+            AxisVals axes;
+            parse_axes(text, text_end, axes);
+            if (axes.has[PE]) pos[AE] = axes.v[PE];
+            return;
+        }
         // motion: G0 / G1 / G2 / G3
-        bool g2 = gword(b, len, '2'), g3 = gword(b, len, '3');
-        if (!(gword(b, len, '0') || gword(b, len, '1') || g2 || g3)) return;
+        bool clockwise_arc = gword(text, len, '2');
+        bool counter_clockwise_arc = gword(text, len, '3');
+        if (!(gword(text, len, '0') || gword(text, len, '1') || clockwise_arc || counter_clockwise_arc)) return;
 
-        AxisVals a; parse_axes(b, e, a);
-        if (a.has[PF]) m_feedrate = a.v[PF] / 60.0;   // mm/min -> mm/s
+        AxisVals axes;
+        parse_axes(text, text_end, axes);
+        if (axes.has[PF]) m_feedrate = axes.v[PF] / 60.0;   // mm/min -> mm/s
 
         // new absolute position
-        double nx = pos[AX], ny = pos[AY], nz = pos[AZ], de = 0.0;
-        if (a.has[PX]) { nx = a.v[PX]; if (!xyz_absolute) nx = pos[AX] + a.v[PX]; }
-        if (a.has[PY]) { ny = a.v[PY]; if (!xyz_absolute) ny = pos[AY] + a.v[PY]; }
-        if (a.has[PZ]) { nz = a.v[PZ]; if (!xyz_absolute) nz = pos[AZ] + a.v[PZ]; }
-        if (a.has[PE]) { de = a.v[PE]; if (!e_relative) de = a.v[PE] - pos[AE]; }
+        double new_x = pos[AX], new_y = pos[AY], new_z = pos[AZ], delta_e = 0.0;
+        if (axes.has[PX]) {
+            new_x = axes.v[PX];
+            if (!xyz_absolute) new_x = pos[AX] + axes.v[PX];
+        }
+        if (axes.has[PY]) {
+            new_y = axes.v[PY];
+            if (!xyz_absolute) new_y = pos[AY] + axes.v[PY];
+        }
+        if (axes.has[PZ]) {
+            new_z = axes.v[PZ];
+            if (!xyz_absolute) new_z = pos[AZ] + axes.v[PZ];
+        }
+        if (axes.has[PE]) {
+            delta_e = axes.v[PE];
+            if (!e_relative) delta_e = axes.v[PE] - pos[AE];
+        }
 
         float delta[4];
-        if (g2 || g3) {
+        if (clockwise_arc || counter_clockwise_arc) {
             // arc: distance = radius * swept angle (center from I/J relative to start)
-            double ci = 0.0, cj = 0.0; if (a.has[PI]) ci = a.v[PI]; if (a.has[PJ]) cj = a.v[PJ];
-            double cx = pos[AX] + ci, cy = pos[AY] + cj;
-            double r = std::hypot(pos[AX]-cx, pos[AY]-cy);
-            double a0 = std::atan2(pos[AY]-cy, pos[AX]-cx), a1 = std::atan2(ny-cy, nx-cx);
-            double sweep = a1 - a0;
-            if (g2) { if (sweep > 0) sweep -= 2*M_PI; } else { if (sweep < 0) sweep += 2*M_PI; }
-            double arc_len = std::abs(sweep) * r;
+            double center_offset_x = 0.0, center_offset_y = 0.0;
+            if (axes.has[PI]) center_offset_x = axes.v[PI];
+            if (axes.has[PJ]) center_offset_y = axes.v[PJ];
+            double center_x = pos[AX] + center_offset_x, center_y = pos[AY] + center_offset_y;
+            double radius = std::hypot(pos[AX]-center_x, pos[AY]-center_y);
+            double start_angle = std::atan2(pos[AY]-center_y, pos[AX]-center_x);
+            double end_angle = std::atan2(new_y-center_y, new_x-center_x);
+            double sweep = end_angle - start_angle;
+            if (clockwise_arc) {
+                if (sweep > 0) sweep -= 2*M_PI;
+            } else {
+                if (sweep < 0) sweep += 2*M_PI;
+            }
+            double arc_len = std::abs(sweep) * radius;
             // treat arc as a single planar move of arc length in X (direction chord); good enough for estimate
-            delta[AX] = (float)arc_len; delta[AY] = 0.f; delta[AZ] = 0.f; delta[AE] = (float)de;
+            delta[AX] = (float)arc_len;
+            delta[AY] = 0.f;
+            delta[AZ] = 0.f;
+            delta[AE] = (float)delta_e;
         } else {
-            delta[AX] = (float)(nx-pos[AX]); delta[AY] = (float)(ny-pos[AY]); delta[AZ] = (float)(nz-pos[AZ]); delta[AE] = (float)de;
+            delta[AX] = (float)(new_x-pos[AX]);
+            delta[AY] = (float)(new_y-pos[AY]);
+            delta[AZ] = (float)(new_z-pos[AZ]);
+            delta[AE] = (float)delta_e;
         }
 
         // move type (GCodeProcessor.cpp move_type lambda L4876-4891)
         const bool xyz_moved = delta[AX] != 0.f || delta[AY] != 0.f || delta[AZ] != 0.f;
-        int mt = 0;                                                     // noop
-        if (delta[AE] < 0.f) { mt = 3; if (xyz_moved) mt = 2; }         // retract / travel
-        else if (delta[AE] > 0.f) {
-            mt = 1;                                                     // extrude
-            if (delta[AX] == 0.f && delta[AY] == 0.f) { mt = 2; if (delta[AZ] == 0.f) mt = 4; }   // travel / unretract
-        } else if (xyz_moved) mt = 2;                                   // travel
+        int move_type = 0;                                              // noop
+        if (delta[AE] < 0.f) {                                          // retract / travel
+            move_type = 3;
+            if (xyz_moved) move_type = 2;
+        } else if (delta[AE] > 0.f) {
+            move_type = 1;                                              // extrude
+            if (delta[AX] == 0.f && delta[AY] == 0.f) {                 // travel / unretract
+                move_type = 2;
+                if (delta[AZ] == 0.f) move_type = 4;
+            }
+        } else if (xyz_moved) move_type = 2;                            // travel
 
         // filament = E of real extrusion moves only (exclude unretract re-prime), to match kernel gw.filament
-        if (mt == 1 && delta[AE] > 0.f) R.filament_mm += delta[AE];
+        if (move_type == 1 && delta[AE] > 0.f) R.filament_mm += delta[AE];
 
-        if (mt != 0) {
-            int role = -1; if (mt == 1) role = cur_role;
-            add_move(blocks, curr, prev, delta, (float)m_feedrate, lim, mt, role, std::max(0, layer_id));
+        if (move_type != 0) {
+            int role = -1;
+            if (move_type == 1) role = cur_role;
+            add_move(blocks, curr, prev, delta, (float)m_feedrate, lim, move_type, role, std::max(0, layer_id));
             ++R.moves;
         }
-        pos[AX] = nx; pos[AY] = ny; pos[AZ] = nz;
-        if (!e_relative && a.has[PE]) pos[AE] = a.v[PE];
+        pos[AX] = new_x;
+        pos[AY] = new_y;
+        pos[AZ] = new_z;
+        if (!e_relative && axes.has[PE]) pos[AE] = axes.v[PE];
     }
 
     void feed(const char* data, size_t len) {
-        const char* p = data; const char* end = data + len;
+        const char* cursor = data;
+        const char* end = data + len;
         if (!carry.empty()) {
-            const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
-            if (!nl) { carry.append(p, (size_t)(end - p)); return; }
-            carry.append(p, (size_t)(nl - p));
-            line(carry.data(), carry.size()); carry.clear();
-            p = nl + 1;
+            const char* newline = (const char*)memchr(cursor, '\n', (size_t)(end - cursor));
+            if (!newline) {
+                carry.append(cursor, (size_t)(end - cursor));
+                return;
+            }
+            carry.append(cursor, (size_t)(newline - cursor));
+            line(carry.data(), carry.size());
+            carry.clear();
+            cursor = newline + 1;
         }
-        while (p < end) {
-            const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
-            if (!nl) { carry.assign(p, (size_t)(end - p)); break; }
-            line(p, (size_t)(nl - p));
-            p = nl + 1;
+        while (cursor < end) {
+            const char* newline = (const char*)memchr(cursor, '\n', (size_t)(end - cursor));
+            if (!newline) {
+                carry.assign(cursor, (size_t)(end - cursor));
+                break;
+            }
+            line(cursor, (size_t)(newline - cursor));
+            cursor = newline + 1;
         }
     }
 
     Result finish() {
-        if (!carry.empty()) { line(carry.data(), carry.size()); carry.clear(); }
+        if (!carry.empty()) {
+            line(carry.data(), carry.size());
+            carry.clear();
+        }
         // planner over all blocks (full look-ahead; firmware uses a 64-block window — documented simplification)
         for (int k = (int)blocks.size()-1; k > 0; --k) planner_reverse_pass_kernel(blocks[k-1], blocks[k]);
         for (size_t k = 0; k+1 < blocks.size(); ++k) planner_forward_pass_kernel(blocks[k], blocks[k+1]);
         recalculate_trapezoids(blocks);
 
-        for (const TimeBlock& b : blocks) {
-            double t = b.time();
-            if (!(t==t) || t<0) t=0;   // guard NaN
-            R.total_s += t;
-            if (b.layer_id >= 0 && b.layer_id < (int)R.layer_s.size()) R.layer_s[b.layer_id] += t;
-            if (b.move_type == 1) R.extrude_s += t; else if (b.move_type == 2) R.travel_s += t;
-            if (b.role >= 0) R.role_s[b.role] += t;
+        for (const TimeBlock& block : blocks) {
+            double block_time = block.time();
+            if (!(block_time==block_time) || block_time<0) block_time=0;   // guard NaN
+            R.total_s += block_time;
+            if (block.layer_id >= 0 && block.layer_id < (int)R.layer_s.size()) R.layer_s[block.layer_id] += block_time;
+            if (block.move_type == 1)
+                R.extrude_s += block_time;
+            else if (block.move_type == 2)
+                R.travel_s += block_time;
+            if (block.role >= 0) R.role_s[block.role] += block_time;
         }
         if (!R.layer_s.empty()) R.first_layer_s = R.layer_s.front();
         return std::move(R);
     }
 };
 
-Estimator::Estimator(const Limits& lim) : impl_(new Impl(lim)) {}
+Estimator::Estimator(const Limits& limits) : impl_(new Impl(limits)) {}
 Estimator::~Estimator() { delete impl_; }
 void Estimator::feed(const char* data, size_t len) { impl_->feed(data, len); }
 Result Estimator::end() { return impl_->finish(); }
 
-Result estimate(const std::string& gcode, const Limits& lim) {
-    Estimator est(lim);
-    est.feed(gcode.data(), gcode.size());
-    return est.end();
+Result estimate(const std::string& gcode, const Limits& limits) {
+    Estimator estimator(limits);
+    estimator.feed(gcode.data(), gcode.size());
+    return estimator.end();
 }
 
 } // namespace gcode_time
