@@ -255,8 +255,8 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       size_t local_count = 0;
       for (size_t k = range_begin; k < range_end; ++k) {
         const Tri& triangle = triangles[k];
-        double zmin = std::min({triangle.v[0].z, triangle.v[1].z, triangle.v[2].z});
-        double zmax = std::max({triangle.v[0].z, triangle.v[1].z, triangle.v[2].z});
+        double zmin = std::min({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z});
+        double zmax = std::max({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z});
         for (auto it = std::lower_bound(mids.begin(), mids.end(), zmin); it != mids.end() && *it < zmax; ++it)
           if (tri_plane(triangle, *it, segment)) out[(size_t)(it - mids.begin())].push_back(segment);
         if ((++local_count & 0x3FFF) == 0) {
@@ -424,9 +424,9 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     model_soup.reserve(triangles.size() * 9);
     for (const Tri& triangle : triangles)
       for (int corner = 0; corner < 3; ++corner) {
-        model_soup.push_back(triangle.v[corner].x);
-        model_soup.push_back(triangle.v[corner].y);
-        model_soup.push_back(triangle.v[corner].z);
+        model_soup.push_back(triangle.vertices[corner].x);
+        model_soup.push_back(triangle.vertices[corner].y);
+        model_soup.push_back(triangle.vertices[corner].z);
       }
     prepared.support_enforcers_only = sla_jb(params_json, "support_enforcers_only", false);
     prepared.objects.push_back({"legacy-0", std::move(model_soup), {}});
@@ -539,9 +539,9 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       pad_model_soup.reserve(triangles.size() * 9);
       for (const Tri& triangle : triangles)
         for (int corner = 0; corner < 3; ++corner) {
-          pad_model_soup.push_back(triangle.v[corner].x);
-          pad_model_soup.push_back(triangle.v[corner].y);
-          pad_model_soup.push_back(triangle.v[corner].z);
+          pad_model_soup.push_back(triangle.vertices[corner].x);
+          pad_model_soup.push_back(triangle.vertices[corner].y);
+          pad_model_soup.push_back(triangle.vertices[corner].z);
         }
     }
     slasupport_bridge::PadResult pad_result =

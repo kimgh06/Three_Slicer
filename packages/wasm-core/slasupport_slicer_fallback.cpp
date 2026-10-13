@@ -16,10 +16,10 @@ namespace {
 
 constexpr double kTolerance = 1e-7;
 
-// A directed cross-section segment: a->b follows the slicing convention (solid on the LEFT, so outer
+// A directed cross-section segment: start->end follows the slicing convention (solid on the LEFT, so outer
 // boundaries chain CCW). `oriented` is false for near-horizontal triangles whose direction is unreliable —
 // they still chain geometrically but do not vote on the loop's winding.
-struct Segment { Vec2 a; Vec2 b; bool oriented = false; };
+struct Segment { Vec2 start; Vec2 end; bool oriented = false; };
 
 bool close(double first, double second) { return std::abs(first - second) <= kTolerance; }
 bool close(const Vec2& first, const Vec2& second) { return close(first.x, second.x) && close(first.y, second.y); }
@@ -82,12 +82,12 @@ bool intersect_triangle(const float* triangle, double height, Segment& segment) 
   const double normal_y = edge1_z * edge2_x - edge1_x * edge2_z;
   const double direction_x = -normal_y;                  // (0,0,1) x n
   const double direction_y = normal_x;
-  const double along = (segment.b.x - segment.a.x) * direction_x + (segment.b.y - segment.a.y) * direction_y;
+  const double along = (segment.end.x - segment.start.x) * direction_x + (segment.end.y - segment.start.y) * direction_y;
   const double squared_lengths = (direction_x * direction_x + direction_y * direction_y) *
-    ((segment.b.x - segment.a.x) * (segment.b.x - segment.a.x) +
-     (segment.b.y - segment.a.y) * (segment.b.y - segment.a.y));
+    ((segment.end.x - segment.start.x) * (segment.end.x - segment.start.x) +
+     (segment.end.y - segment.start.y) * (segment.end.y - segment.start.y));
   if (along * along > 1e-12 * squared_lengths) {         // direction is meaningful for this triangle
-    if (along < 0.0) std::swap(segment.a, segment.b);
+    if (along < 0.0) std::swap(segment.start, segment.end);
     segment.oriented = true;
   }
   return true;
@@ -127,8 +127,8 @@ std::vector<Polygon> chain_closed_loops(const std::vector<Segment>& segments, st
     slot_seg[slot] = segment_index;
   };
   for (std::uint32_t i = 0; i < segments.size(); ++i) {
-    insert(pack(cell(segments[i].a.x), cell(segments[i].a.y)), i);
-    insert(pack(cell(segments[i].b.x), cell(segments[i].b.y)), i);
+    insert(pack(cell(segments[i].start.x), cell(segments[i].start.y)), i);
+    insert(pack(cell(segments[i].end.x), cell(segments[i].end.y)), i);
   }
   std::vector<char> used(segments.size(), 0);
   const auto first_unused_match = [&](const Vec2& end) -> std::uint32_t {
@@ -142,7 +142,7 @@ std::vector<Polygon> chain_closed_loops(const std::vector<Segment>& segments, st
           if (slot_key[slot] != key) continue;
           const std::uint32_t i = slot_seg[slot];
           if (used[i] || i >= best) continue;
-          if (close(segments[i].a, end) || close(segments[i].b, end)) best = i;
+          if (close(segments[i].start, end) || close(segments[i].end, end)) best = i;
         }
       }
     return best;
@@ -153,7 +153,7 @@ std::vector<Polygon> chain_closed_loops(const std::vector<Segment>& segments, st
     if (seed_scan == 0) break;
     const std::uint32_t seed = (std::uint32_t)(seed_scan - 1);
     used[seed] = 1;
-    Polygon loop{segments[seed].a, segments[seed].b};
+    Polygon loop{segments[seed].start, segments[seed].end};
     long vote = 0;
     if (segments[seed].oriented) vote = 1;
     while (!close(loop.back(), loop.front())) {
@@ -163,13 +163,13 @@ std::vector<Polygon> chain_closed_loops(const std::vector<Segment>& segments, st
         return {};
       }
       used[next] = 1;
-      const bool forward = close(segments[next].a, loop.back());
+      const bool forward = close(segments[next].start, loop.back());
       if (segments[next].oriented) {
         if (forward) vote += 1;
         else vote += -1;
       }
-      if (forward) loop.push_back(segments[next].b);
-      else loop.push_back(segments[next].a);
+      if (forward) loop.push_back(segments[next].end);
+      else loop.push_back(segments[next].start);
     }
     loop.pop_back();
     if (loop.size() >= 3 && std::abs(signed_area(loop)) > kTolerance) {
