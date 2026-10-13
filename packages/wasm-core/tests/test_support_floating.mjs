@@ -34,7 +34,7 @@ function stlOf(tris){
   return buffer
 }
 // Note: the z boundaries deliberately overlap by 0.5mm. Making them exactly flush (plate 6~9, column 9~15) means
-//   tri_plane's [zmin, zmax) test catches no triangle at that plane, producing an **empty layer**,
+//   intersect_triangle_with_plane's [zmin, zmax) test catches no triangle at that plane, producing an **empty layer**,
 //   and all support above it is misjudged as "nothing below" (confirmed by measurement).
 const model = [
   ...box(-4,-4,0, 8,8,6.5),       // lower column, z 0~6.5

@@ -1966,7 +1966,7 @@ for (const tree_style of ['organic', 'slim', 'strong', 'hybrid']) {
 //  The viewer draws a slice from the toolpath stream, but an exported .gcode / .gcode.3mf comes back as text, and
 //  the multi-material path wrote no role marks at all: an opened painted model drew its object as prime tower (every
 //  extrusion after the tower's "; prime tower" comment inherited it until the next layer). With gcode_role_tags the
-//  writer tags each run from the same type push_seg records, so reading the text back must give the stream's
+//  writer tags each run from the same type push_toolpath_segment records, so reading the text back must give the stream's
 //  per-role extrusion length. Without the flag no tag is written — the default G-code is pinned by golden.mjs.
 console.log('\n[role tags]')
 const { parseGcode } = await import('../../../viewer-package/src/core/gcode_parse.js')

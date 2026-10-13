@@ -103,7 +103,7 @@ ok(counts(3)[0] + counts(4)[0] === 1, 'exactly one of the two states owns the fa
 console.log('\n[facet rebasing across a merge]')
 // What the viewer's buildMergedSTL relies on: merging N objects concatenates their triangles IN ORDER, so object
 // k's local facet i becomes facet (sum of the earlier objects' face counts) + i. That only holds if the kernel's
-// weld preserves triangle order — it does (bindings.cpp selector_prepare_impl), and this pins it, because a weld
+// weld preserves triangle order — it does (bindings.cpp prepare_selector), and this pins it, because a weld
 // that reordered would silently move every imported 3mf's paint onto the wrong faces.
 const twoCubes = boxTris(0, 0, 0, 20, 20, 20).concat(boxTris(40, 0, 0, 20, 20, 20))
 const twoCubeSTL = trisToSTL(twoCubes)
