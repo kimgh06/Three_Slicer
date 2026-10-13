@@ -5,28 +5,38 @@
 import { readFileSync } from 'node:fs'
 
 const split = (path) => {
-  const txt = readFileSync(path, 'utf8')
-  const out = {}
-  let name = '(prologue)', buf = []
-  for (const line of txt.split('\n')) {
-    if (line.startsWith('=== ')) { out[name] = buf.join('\n'); name = line.trim(); buf = [] }
-    else buf.push(line)
+  const text = readFileSync(path, 'utf8')
+  const sections = {}
+  let name = '(prologue)', sectionLines = []
+  for (const line of text.split('\n')) {
+    if (line.startsWith('=== ')) {
+      sections[name] = sectionLines.join('\n')
+      name = line.trim()
+      sectionLines = []
+    }
+    else sectionLines.push(line)
   }
-  out[name] = buf.join('\n')
-  return out
+  sections[name] = sectionLines.join('\n')
+  return sections
 }
 
-const [basePath, curPath] = process.argv.slice(2)
-if (!basePath || !curPath) { console.error('usage: node golden_split.mjs <baseline> <current>'); process.exit(2) }
-const base = split(basePath), cur = split(curPath)
+const [basePath, currentPath] = process.argv.slice(2)
+if (!basePath || !currentPath) {
+  console.error('usage: node golden_split.mjs <baseline> <current>')
+  process.exit(2)
+}
+const base = split(basePath)
+const current = split(currentPath)
 
 const isSupport = (name) => /support/i.test(name) && !/no support/i.test(name)
 let fail = 0
 for (const name of Object.keys(base)) {
   if (name === '(prologue)') continue
-  const same = base[name] === cur[name]
+  const same = base[name] === current[name]
   if (isSupport(name)) {
-    console.log(`${same ? '=  ' : '≠  '} ${name}  [support — change allowed]`)
+    let marker = '≠  '
+    if (same) marker = '=  '
+    console.log(`${marker} ${name}  [support — change allowed]`)
   } else if (same) {
     console.log(`OK  ${name}  [support-free — byte-identical]`)
   } else {
@@ -34,5 +44,9 @@ for (const name of Object.keys(base)) {
     fail++
   }
 }
-console.log(fail ? `\n${fail} support-free section(s) changed — suspected regression` : '\nAll support-free sections are byte-identical')
-process.exit(fail ? 1 : 0)
+if (fail) {
+  console.log(`\n${fail} support-free section(s) changed — suspected regression`)
+  process.exit(1)
+}
+console.log('\nAll support-free sections are byte-identical')
+process.exit(0)

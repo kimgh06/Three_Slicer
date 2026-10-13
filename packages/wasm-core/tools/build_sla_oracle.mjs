@@ -17,7 +17,7 @@ const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest(
 const stable = (value) => `${JSON.stringify(value, null, 2)}\n`
 
 const source = arg('--prusa-source')
-const out = arg('--out')
+const outputDirectory = arg('--out')
 const versionFile = join(source, 'version.inc')
 const versionText = readFileSync(versionFile, 'utf8')
 const version = /set\(SLIC3R_VERSION "([^"]+)"\)/.exec(versionText)?.[1]
@@ -33,7 +33,7 @@ try {
 const sourceFiles = ['version.inc', 'src/libslic3r/SLAPrintSteps.cpp', 'src/libslic3r/Format/SL1.cpp']
   .map((relative) => ({ relative, sha256: sha256(join(source, relative)) }))
 
-mkdirSync(out, { recursive: true })
+mkdirSync(outputDirectory, { recursive: true })
 const manifest = {
   schema: 'three-slicer.sla-native-oracle-manifest.v1',
   fixtureDirectory: join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures/sla'),
@@ -55,5 +55,5 @@ const manifest = {
     archiveMembers: 'member name plus uncompressed SHA-256; ZIP metadata/timestamps excluded',
   },
 }
-writeFileSync(join(out, 'manifest.json'), stable(manifest))
-console.log(join(out, 'manifest.json'))
+writeFileSync(join(outputDirectory, 'manifest.json'), stable(manifest))
+console.log(join(outputDirectory, 'manifest.json'))
