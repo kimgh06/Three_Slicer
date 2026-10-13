@@ -38,7 +38,7 @@ void cancel_coincident(Paths& layerLoops);
 void parallel(int count, void (*task)(int index, void* context), void* context);
 
 struct GpuInput {
-  double ms = 0;
+  double buildMs = 0;
   int layerCount = 0, segmentCount = 0, cellCount = 0, polygonCount = 0, cellEntryCount = 0;
   // one start point per kept segment (layer-relative), per-layer tables, per-polygon tables: see contour_gpu.js
   std::vector<int> points, layerMin, layerInfo;

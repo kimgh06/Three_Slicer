@@ -43,21 +43,21 @@ void parallel(int count, void (*task)(int index, void* context), void* context) 
 
 namespace {
 
-struct Edge { cInt ax, ay, bx, by; };
+struct Edge { cInt startX, startY, endX, endY; };
 
 // an edge's two ends in a fixed order, so both directions of one place sort together
-inline bool startIsLow(const Edge& edge) { return edge.ax < edge.bx || (edge.ax == edge.bx && edge.ay < edge.by); }
-struct Place { cInt lx, ly, hx, hy; };
+inline bool startIsLow(const Edge& edge) { return edge.startX < edge.endX || (edge.startX == edge.endX && edge.startY < edge.endY); }
+struct Place { cInt lowX, lowY, highX, highY; };
 inline Place placeOf(const Edge& edge) {
-  if (startIsLow(edge)) return { edge.ax, edge.ay, edge.bx, edge.by };
-  return { edge.bx, edge.by, edge.ax, edge.ay };
+  if (startIsLow(edge)) return { edge.startX, edge.startY, edge.endX, edge.endY };
+  return { edge.endX, edge.endY, edge.startX, edge.startY };
 }
-inline bool samePlace(const Place& left, const Place& right) { return left.lx == right.lx && left.ly == right.ly && left.hx == right.hx && left.hy == right.hy; }
+inline bool samePlace(const Place& left, const Place& right) { return left.lowX == right.lowX && left.lowY == right.lowY && left.highX == right.highX && left.highY == right.highY; }
 inline bool placeLess(const Place& left, const Place& right) {
-  if (left.lx != right.lx) return left.lx < right.lx;
-  if (left.ly != right.ly) return left.ly < right.ly;
-  if (left.hx != right.hx) return left.hx < right.hx;
-  return left.hy < right.hy;
+  if (left.lowX != right.lowX) return left.lowX < right.lowX;
+  if (left.lowY != right.lowY) return left.lowY < right.lowY;
+  if (left.highX != right.highX) return left.highX < right.highX;
+  return left.highY < right.highY;
 }
 
 }  // namespace
@@ -116,17 +116,17 @@ void cancel_coincident(Paths& layerLoops) {
   byStart.reserve(edgeCount - removed);
   for (int edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) if (!dead[edgeIndex]) byStart.push_back(edgeIndex);
   std::sort(byStart.begin(), byStart.end(), [&](int left, int right) {
-    if (edges[left].ax != edges[right].ax) return edges[left].ax < edges[right].ax;
-    if (edges[left].ay != edges[right].ay) return edges[left].ay < edges[right].ay;
+    if (edges[left].startX != edges[right].startX) return edges[left].startX < edges[right].startX;
+    if (edges[left].startY != edges[right].startY) return edges[left].startY < edges[right].startY;
     return left < right;
   });
   std::vector<char> used(edgeCount, 0);
   auto takeFrom = [&](cInt x, cInt y) {
     auto first = std::lower_bound(byStart.begin(), byStart.end(), 0, [&](int edgeIndex, int) {
-      if (edges[edgeIndex].ax != x) return edges[edgeIndex].ax < x;
-      return edges[edgeIndex].ay < y;
+      if (edges[edgeIndex].startX != x) return edges[edgeIndex].startX < x;
+      return edges[edgeIndex].startY < y;
     });
-    for (auto it = first; it != byStart.end() && edges[*it].ax == x && edges[*it].ay == y; ++it)
+    for (auto it = first; it != byStart.end() && edges[*it].startX == x && edges[*it].startY == y; ++it)
       if (!used[*it]) return *it;
     return -1;
   };
@@ -137,8 +137,8 @@ void cancel_coincident(Paths& layerLoops) {
     int edge = first;
     while (edge >= 0) {
       used[edge] = 1;
-      path.emplace_back(edges[edge].ax, edges[edge].ay);
-      edge = takeFrom(edges[edge].bx, edges[edge].by);
+      path.emplace_back(edges[edge].startX, edges[edge].startY);
+      edge = takeFrom(edges[edge].endX, edges[edge].endY);
     }
     if (path.size() >= 2) chained.push_back(std::move(path));
   }
@@ -301,7 +301,7 @@ void build_gpu_input() {
   input.cellCount = cells;
   input.polygonCount = polygonCount;
   input.cellEntryCount = (int)entries;
-  input.ms = emscripten_get_now() - started;
+  input.buildMs = emscripten_get_now() - started;
 }
 
 namespace {
@@ -309,7 +309,7 @@ namespace {
 struct WalkWork {
   size_t pieceCount = 0;
   int layerCount = 0;
-  std::vector<unsigned char> visited, bad;
+  std::vector<unsigned char> visited, layerUnclosed;
   std::vector<size_t> rangeStart;
 };
 
@@ -333,7 +333,7 @@ void walk(WalkWork& walkWork, size_t from, size_t to) {
       piece = (size_t)(unsigned)pieces[piece * 4 + 2];
     }
     if (!closed) {
-      walkWork.bad[layer] = 1;
+      walkWork.layerUnclosed[layer] = 1;
       continue;
     }
     if (length < 3) continue;
@@ -372,7 +372,7 @@ void mesh_layer_loops(int index, void* context) {
   Seg segment;
   for (size_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex) {
     const Tri& triangle = triangles[triangleIndex];
-    const double zmin = std::min({triangle.v[0].z, triangle.v[1].z, triangle.v[2].z}), zmax = std::max({triangle.v[0].z, triangle.v[1].z, triangle.v[2].z});
+    const double zmin = std::min({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z}), zmax = std::max({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z});
     if (zmin <= z && z < zmax && tri_plane(triangle, z, segment)) segments.push_back(segment);   // pass1's inclusion rule
   }
   loops[layer] = chain_polys(segments);
@@ -390,7 +390,7 @@ Assembled assemble() {
   work.layerCount = layerCount;
   contours.assign(layerCount, Paths());
   work.visited.assign(work.pieceCount, 0);
-  work.bad.assign(layerCount, 0);
+  work.layerUnclosed.assign(layerCount, 0);
   // the pipeline emits pieces in segment order, so a layer's pieces are one range and no loop leaves it
   work.rangeStart.assign(layerCount + 1, work.pieceCount);
   bool ordered = true;
@@ -412,11 +412,11 @@ Assembled assemble() {
   } else {
     // not the order the pipeline promises: nothing of it is trusted
     contours.assign(layerCount, Paths());
-    std::fill(work.bad.begin(), work.bad.end(), (unsigned char)1);
+    std::fill(work.layerUnclosed.begin(), work.layerUnclosed.end(), (unsigned char)1);
   }
   out.walkMs = emscripten_get_now() - walkStarted;
   const double fallbackStarted = emscripten_get_now();
-  for (int layer = 0; layer < layerCount; ++layer) if (work.bad[layer] || (layer < (int)open_layers.size() && open_layers[layer])) out.fallbackLayers.push_back(layer);
+  for (int layer = 0; layer < layerCount; ++layer) if (work.layerUnclosed[layer] || (layer < (int)open_layers.size() && open_layers[layer])) out.fallbackLayers.push_back(layer);
   if ((int)loops.size() != layerCount) {   // MESH: nothing captured; the fallback layers are cut from the mesh here
     if (!out.fallbackLayers.empty() && (mesh_tris.empty() || (int)mesh_planes.size() != layerCount)) {
       out.unavailable = true;

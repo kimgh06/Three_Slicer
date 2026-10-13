@@ -42,12 +42,12 @@ static bool selector_prepare_impl(em::val stl, bool keep_paint) {
   double maxy=-1e18;
   double maxz=-1e18;
   for (auto& triangle:tris) for (int k=0;k<3;++k){
-    minx=std::min(minx,(double)triangle.v[k].x);
-    maxx=std::max(maxx,(double)triangle.v[k].x);
-    miny=std::min(miny,(double)triangle.v[k].y);
-    maxy=std::max(maxy,(double)triangle.v[k].y);
-    minz=std::min(minz,(double)triangle.v[k].z);
-    maxz=std::max(maxz,(double)triangle.v[k].z);
+    minx=std::min(minx,(double)triangle.vertices[k].x);
+    maxx=std::max(maxx,(double)triangle.vertices[k].x);
+    miny=std::min(miny,(double)triangle.vertices[k].y);
+    maxy=std::max(maxy,(double)triangle.vertices[k].y);
+    minz=std::min(minz,(double)triangle.vertices[k].z);
+    maxz=std::max(maxz,(double)triangle.vertices[k].z);
   }
   // Stage 28 P2: matches the slicing default (auto_center=false) — no XY realignment, only Z seating (trusting the viewer coordinates).
   // weld: dedup vertices (quantized, EXACT tuple key — an XOR hash collides and destroys topology)
@@ -67,7 +67,7 @@ static bool selector_prepare_impl(em::val stl, bool keep_paint) {
     return vertexId;
   };
   for (auto& triangle:tris) for (int k=0;k<3;++k)
-    indices.push_back(addVertex(triangle.v[k].x, triangle.v[k].y, triangle.v[k].z-minz));   // stage 28: XY as-is (viewer coordinates), Z seated
+    indices.push_back(addVertex(triangle.vertices[k].x, triangle.vertices[k].y, triangle.vertices[k].z-minz));   // stage 28: XY as-is (viewer coordinates), Z seated
   if (keep_paint) return selector_bridge::reconstruct_keeping_paint(vertices, indices);
   selector_bridge::construct(vertices, indices);
   return false;
@@ -221,7 +221,7 @@ static em::val contour_gpu_input() {
   contour_phase::build_gpu_input();
   const contour_phase::GpuInput& input = contour_phase::input;
   em::val out = em::val::object();
-  out.set("ms", input.ms);
+  out.set("ms", input.buildMs);
   out.set("layerCount", input.layerCount);
   out.set("segmentCount", input.segmentCount);
   out.set("cellCount", input.cellCount);
