@@ -9,7 +9,7 @@
 #include <cmath>
 #include <vector>
 
-void support_run(SliceCtx& context) {
+void support_run(SliceContext& context) {
   const Params& params = *context.params;
   std::vector<LayerData>& layers = *context.layers;
   const int layerCount = context.layerCount;

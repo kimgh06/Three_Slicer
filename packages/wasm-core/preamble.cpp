@@ -1,7 +1,7 @@
 // preamble.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
-//  GW configuration + the G-code preamble text, and the machine-limit fill for the time estimate.
+//  GcodeWriter configuration + the G-code preamble text, and the machine-limit fill for the time estimate.
 //  The four emission flags the preamble computes (realPE/ironOn/scarfOn/seamMode) are handed back in EmitFlags
-//  because slice() keeps using them; `SeamCtx seamCtx;` stayed at the call site (the preamble never touches it).
+//  because slice() keeps using them; `SeamContext seamCtx;` stayed at the call site (the preamble never touches it).
 #include "slice_ctx.h"
 
 #include "clip_util.h"
@@ -44,16 +44,16 @@ std::string second_layer_temperatures(const Params& params, const std::vector<in
   return text;
 }
 
-void gw_setup_machine(GW& writer, const Params& params) {
+void gcode_writer_setup_machine(GcodeWriter& writer, const Params& params) {
   writer.flavor = flavor_of(params.gcode_flavor);
   writer.absolute_e = !params.use_relative_e_distances;
   writer.firmware_retraction = params.use_firmware_retraction;
   writer.z_offset = params.z_offset;
   writer.line_width = params.line_width;
-  gw_setup_motion(writer, params, custom_gcode_is_bbl(params));
+  gcode_writer_setup_motion(writer, params, custom_gcode_is_bbl(params));
 }
 
-void gw_write_modes(GW& writer, const Params& params, bool is_bbl) {
+void gcode_writer_write_modes(GcodeWriter& writer, const Params& params, bool is_bbl) {
   if (writer.flavor == Flavor::Unset && !writer.absolute_e) {
     // The kernel's own modes, for a host that sent no flavor (every caller before gcode_flavor was mapped).
     writer.raw("G21 ; mm");
@@ -76,8 +76,8 @@ void gw_write_modes(GW& writer, const Params& params, bool is_bbl) {
     writer.raw_lines(machine_set_pressure_advance(params.pressure_advance, writer.flavor, is_bbl));
 }
 
-EmitFlags gw_setup_preamble(GW& writer, const Params& params, int treeSupLayers, double treeZMaxResid, const CustomStart* start) {
-  gw_setup_machine(writer, params);
+EmitFlags gcode_writer_setup_preamble(GcodeWriter& writer, const Params& params, int treeSupLayers, double treeZMaxResid, const CustomStart* start) {
+  gcode_writer_setup_machine(writer, params);
   writer.retract_length = params.retract_length;
   writer.retract_min_travel = params.retraction_minimum_travel;
   writer.retract_feed    = (int)std::llround(params.retract_speed * 60);
@@ -166,7 +166,7 @@ EmitFlags gw_setup_preamble(GW& writer, const Params& params, int treeSupLayers,
     if (start) bedSet = start->bed_set;
     writer.second_layer_text = second_layer_temperatures(params, { params.single_tool }, false, bedSet);
   }
-  auto writeModes = [&]{ gw_write_modes(writer, params, custom_gcode_is_bbl(params)); };
+  auto writeModes = [&]{ gcode_writer_write_modes(writer, params, custom_gcode_is_bbl(params)); };
   if (start) {
     // Upstream's order (GCode.cpp:3511-3593): temperatures, the start G-code, the Bambu Lab M109s. The writer's own
     //  modes come after it, as upstream's GCodeWriter::preamble does at the first layer, so a start G-code that

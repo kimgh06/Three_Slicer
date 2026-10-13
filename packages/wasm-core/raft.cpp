@@ -10,10 +10,10 @@
 #include <vector>
 
 // A raft is support material upstream, so its lines take the support flow ratio (emit.cpp role_flow_ratio).
-static void raft_support_flow(GW& writer, const Params& params) { writer.set_role_flow(role_flow_ratio(params, FlowRole::Support, writer.on_first_layer)); }
+static void raft_support_flow(GcodeWriter& writer, const Params& params) { writer.set_role_flow(role_flow_ratio(params, FlowRole::Support, writer.on_first_layer)); }
 
-double raft_emit(GW& writer, const Params& params, std::vector<LayerData>& layers, double lineWidth, int raftLayerCount,
-                 int travelFeed, int firstLayerFeed, SeamCtx& seamCtx, const FlushFn& flush_layer) {
+double raft_emit(GcodeWriter& writer, const Params& params, std::vector<LayerData>& layers, double lineWidth, int raftLayerCount,
+                 int travelFeed, int firstLayerFeed, SeamContext& seamCtx, const LayerFlushCallback& flush_layer) {
   double zShift = 0.0;
   if (raftLayerCount > 0 && !layers.empty() && !layers[0].contour.empty()) {
     const double raftFirstLayerHeight = params.raft_first_layer_height;   // stage 33: the 0.30 constant -> a parameter

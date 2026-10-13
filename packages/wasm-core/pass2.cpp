@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-EmitPre compute_pre_layer(const SliceCtx& context, int i) {
+EmitPrecompute precompute_layer_emit(const SliceContext& context, int i) {
   const Params& params = *context.params;
   std::vector<LayerData>& layers = *context.layers;
   const int layerCount = context.layerCount;
@@ -22,10 +22,10 @@ EmitPre compute_pre_layer(const SliceCtx& context, int i) {
   const double solid_spacing = context.solid_spacing;
   const double support_spacing = context.support_spacing;
   const bool ironOn = context.ironOn;
-    EmitPre emitPre;
+    EmitPrecompute emitPre;
     LayerData& layer = layers[i];
     const double layerZ = layer.z + zShift;
-    // The overhang fan's region: the layer below offset by w*(0.5 - threshold) (GW::overhang_area). Not on the first
+    // The overhang fan's region: the layer below offset by w*(0.5 - threshold) (GcodeWriter::overhang_area). Not on the first
     //  object layer, which upstream skips too (on_first_layer / object_layer_over_raft).
     if (context.overhangOverlap >= 0 && i > 0 && !layers[i-1].contour.empty())
       emitPre.overhangArea = offset_paths(layers[i-1].contour, lineWidth * (0.5 - context.overhangOverlap));
@@ -150,11 +150,11 @@ EmitPre compute_pre_layer(const SliceCtx& context, int i) {
     }
 
     double classicLen = 0;   // the classic generator's thin walls and gap fill (its loops are in layer.walls)
-    for (const ClassicWall& wall : layer.classicWalls) if (!wall.loop) classicLen += paths_len(Paths{wall.path}, false);
-    for (const TreePath& gapPath : layer.classicGapFill) classicLen += paths_len(Paths{gapPath.path}, false);
-    double layerLen = vwalls_len(layer.walls) + paths_len(emitPre.solidLines,false) + paths_len(emitPre.sparseLines,false)
-                    + paths_len(emitPre.supI,false) + paths_len(emitPre.supB,false) + paths_len(emitPre.flExtra,true)
-                    + paths_len(emitPre.gapLines,false) + paths_len(emitPre.bridgeLines,false) + classicLen;
+    for (const ClassicWall& wall : layer.classicWalls) if (!wall.loop) classicLen += paths_length(Paths{wall.path}, false);
+    for (const TreePath& gapPath : layer.classicGapFill) classicLen += paths_length(Paths{gapPath.path}, false);
+    double layerLen = walls_length(layer.walls) + paths_length(emitPre.solidLines,false) + paths_length(emitPre.sparseLines,false)
+                    + paths_length(emitPre.supI,false) + paths_length(emitPre.supB,false) + paths_length(emitPre.flExtra,true)
+                    + paths_length(emitPre.gapLines,false) + paths_length(emitPre.bridgeLines,false) + classicLen;
     double baseSpeed;
     if (i==0 && raftLayers==0) baseSpeed = params.first_layer_speed;
     else baseSpeed = params.print_speed;

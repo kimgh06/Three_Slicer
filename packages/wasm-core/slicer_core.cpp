@@ -46,7 +46,7 @@
 // The sections that used to live here were extracted verbatim into their own files (pure code moves).
 // Each carries its original section comment at the top of the file it moved to:
 //   params · stl_parse · slice_planes · clip_util · geom_helpers   — parameters, STL, plane cuts, clipper helpers
-//   gcode_writer · emit · emit_layer                               — the GW writer and the toolpath emit helpers
+//   gcode_writer · emit · emit_layer                               — the GcodeWriter writer and the toolpath emit helpers
 //   layer_data · slice_mm · stream_sink · stage_cache              — layer data, multi-material, streaming sink, cache
 //   pass1 · surfaces · support · preamble · raft · pass2 · finish  — the slice() phases (slice_ctx.h is the shared context)
 //   bindings                                                      — the embind block (declares slice() via slice_api.h)
@@ -104,12 +104,12 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   const std::string layerKey = make_layer_key(params);
   const bool reuseGeom = params.reuse_stages >= 1 && g_scache.valid && params.extruder_count < 2;
   const bool reuseSup  = params.reuse_stages >= 2 && g_scache.valid && g_scache.layerKey == layerKey && params.extruder_count < 2;
-  std::vector<Tri> trisOwn;
+  std::vector<Triangle> trisOwn;
   if (!reuseGeom) {
     std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl_bytes);
     trisOwn = parse_stl(bytes);
   }
-  std::vector<Tri>& tris = [&]() -> std::vector<Tri>& {
+  std::vector<Triangle>& tris = [&]() -> std::vector<Triangle>& {
     if (reuseGeom) return g_scache.triangles;
     return trisOwn;
   }();
@@ -202,7 +202,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     return layersOwn;
   }();
   // Phase context: exactly the slice()-scope state the moved phase bodies used to capture.
-  SliceCtx context;
+  SliceContext context;
   context.params=&params;
   context.triangles=&tris;
   context.layers=&layers;
@@ -270,13 +270,13 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     startBlock = &customStart;
   }
 
-  GW writer;
+  GcodeWriter writer;
   writer.gcode.reserve(1<<17);
-  EmitFlags emitFlags = gw_setup_preamble(writer, params, treeSupLayers, treeZMaxResid, startBlock);
+  EmitFlags emitFlags = gcode_writer_setup_preamble(writer, params, treeSupLayers, treeZMaxResid, startBlock);
   writer.current_tool = singleTool;                      // loaded by the start template, so a support T change returns to it
   bool realPE = emitFlags.realPE, ironOn = emitFlags.ironOn, scarfOn = emitFlags.scarfOn;
   int  seamMode = emitFlags.seamMode;
-  SeamCtx seamCtx;
+  SeamContext seamCtx;
   // Upstream's cooling filter (cooling_bridge.h) runs with the printer's settings: it then owns the fan and the
   //  layer-time slowdown, and every layer passes through it in print order (flush_layer, flushJob). Not with the PE
   //  tags on: the PE post-process reads the ;_EXTRUDE_SET_SPEED markers the filter removes (ponytail: both together
@@ -361,9 +361,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   double filamentFlushed = 0.0;                  // writer.filament as of the last flush: what every earlier layer extruded
   auto flush_layer = [&](double z, int layerIndex, std::vector<float>& toolpath, std::vector<float>& widths) {
     double flushStart = emscripten_get_now();
-    struct TF {
+    struct FlushTimer {
       double& total, start;
-      ~TF(){ total += emscripten_get_now() - start; }
+      ~FlushTimer(){ total += emscripten_get_now() - start; }
     } flushTimer{timeFlush, flushStart};
     if (cooling || layerSlots) {
       std::string layerText = writer.gcode.substr(coolStart);
@@ -423,14 +423,14 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   // ---- PASS 2 precomputation: per-layer geometry separation and infill line generation (split out of the emission loop below) ----
   //  A verbatim move of the computation block from inside the old emission loop — formulas and call order unchanged (verified byte-identical against golden).
-  auto compute_pre = [&](int i) -> EmitPre { return compute_pre_layer(context, i); };
+  auto compute_pre = [&](int i) -> EmitPrecompute { return precompute_layer_emit(context, i); };
 
 #ifdef __EMSCRIPTEN_PTHREADS__
   // (mt) The PASS2 computation runs in parallel — workers precompute up to PRE_WINDOW layers ahead of the consumer (emission).
   //  Safety: while the consumer is on i, in-flight workers are always on k>i (they complete in the order they were claimed), and
   //  the L[j] a worker reads satisfies j >= k−bottom_shell+1 > the early-release point old=i−max(bsl,1)−1 -> no conflict with the release.
   //  The window bounds resident memory (W layers' worth of lines) — keeping the early-release OOM mitigation.
-  std::vector<EmitPre> preBuf(layerCount);
+  std::vector<EmitPrecompute> preBuf(layerCount);
   std::vector<uint8_t> preDone(layerCount, 0);
   std::mutex preMutex;
   std::condition_variable cv_done, cv_room;
@@ -439,7 +439,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   if (!preHardwareThreads) preHardwareThreads = 4;
   const bool parallelEmit = !params.spiral_mode && !scarfOn && writer.pe_slope <= 0.0 && !writer.emit_pe_tags
                        && !realPE;   // conditions under which G003 parallel emission is possible (otherwise serial fallback)
-  //  Arachne walls emit through the writer's own GW and the thread_local width state like every other role, so arachne is
+  //  Arachne walls emit through the writer's own GcodeWriter and the thread_local width state like every other role, so arachne is
   //  not among them: it was, and a 1.13M-facet hybrid plate with arachne walls emitted on one thread (emit 3.2 -> 1.7 s
   //  threaded; G-code, toolpaths and widths byte-identical to st on it and on a 3M-facet arachne model).
   unsigned preThreadWanted;
@@ -456,7 +456,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         if (preNext >= layerCount) break;
         k = preNext++;
       }
-      EmitPre emitPre = compute_pre(k);
+      EmitPrecompute emitPre = compute_pre(k);
       {
         std::lock_guard<std::mutex> lock(preMutex);
         preBuf[k] = std::move(emitPre);
@@ -482,10 +482,10 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       int currentFeed, lastFan;
       unsigned lastAccel, lastTravelAccel;
       double lastJerk;
-      SeamCtx seam;
+      SeamContext seam;
     };
     struct EmitJob {
-      EmitPre precomputed;
+      EmitPrecompute precomputed;
       Cursor entry;
       Paths island;
       std::string gcode;
@@ -499,7 +499,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     std::mutex emitMutex;
     std::condition_variable emitCondition;
     int nextWriterJob = 0, dispatched = 0;
-    GW base = writer;   // the template GW for writers
+    GcodeWriter base = writer;   // the template GcodeWriter for writers
     base.gcode.clear();
     base.island.clear();
     base.dry_run = false;
@@ -521,7 +521,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
           k = nextWriterJob++;
         }
         EmitJob& job = *jobs[k];
-        GW layerWriter = base;
+        GcodeWriter layerWriter = base;
         g_seg_tool = singleTool;   // thread_local: a pool thread keeps the tool the previous slice left on it
         layerWriter.position_x = job.entry.positionX;
         layerWriter.position_y = job.entry.positionY;
@@ -531,7 +531,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         layerWriter.last_travel_accel = job.entry.lastTravelAccel;
         layerWriter.last_jerk = job.entry.lastJerk;
         layerWriter.island = std::move(job.island);
-        SeamCtx seam = job.entry.seam;
+        SeamContext seam = job.entry.seam;
         LayerData& jobLayer = layers[k];
         emit_layer_any(layerWriter, job.toolpath, job.widths, k, jobLayer, job.precomputed, params, jobLayer.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seam);
         job.gcode.swap(layerWriter.gcode);
@@ -552,7 +552,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     auto flushJob = [&](int k){
       EmitJob& job = *jobs[k];
       if (writerThreads.empty()) {   // fallback when no writer could be spawned (pool exhausted): the main thread generates it itself
-        GW layerWriter = base;
+        GcodeWriter layerWriter = base;
         layerWriter.position_x=job.entry.positionX;
         layerWriter.position_y=job.entry.positionY;
         layerWriter.current_feed=job.entry.currentFeed;
@@ -561,7 +561,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         layerWriter.last_travel_accel=job.entry.lastTravelAccel;
         layerWriter.last_jerk=job.entry.lastJerk;
         layerWriter.island = std::move(job.island);
-        SeamCtx seam = job.entry.seam;
+        SeamContext seam = job.entry.seam;
         LayerData& jobLayer = layers[k];
         emit_layer_any(layerWriter, job.toolpath, job.widths, k, jobLayer, job.precomputed, params, jobLayer.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seam);
         job.gcode.swap(layerWriter.gcode);
@@ -610,7 +610,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       job.gcode = std::string();
       job.toolpath = {};
       job.widths = {};
-      job.precomputed = EmitPre{};
+      job.precomputed = EmitPrecompute{};
       if (!keepStages) {
         int releaseLayer = k - std::max(params.bottom_shell_layers, 1) - 1 - flushWindow;   // release only outside the writer/dry reference window
         if (releaseLayer >= 0) layers[releaseLayer] = LayerData{};
@@ -625,7 +625,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         dispatchCanceled = true;
         break;
       }
-      EmitPre pre;
+      EmitPrecompute pre;
       {
         std::unique_lock<std::mutex> lock(preMutex);
         cv_done.wait(lock, [&]{ return preDone[i] != 0; });
@@ -671,7 +671,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       int releaseLayer = i - std::max(params.bottom_shell_layers, 1) - 1;
       if (releaseLayer >= 0) layers[releaseLayer] = LayerData{};
     }
-    EmitPre pre;
+    EmitPrecompute pre;
 #ifdef __EMSCRIPTEN_PTHREADS__
     {
       std::unique_lock<std::mutex> lock(preMutex);

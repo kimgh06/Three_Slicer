@@ -28,9 +28,9 @@ static std::string config_option_default(const std::string& key) { return config
 // ---- Stage 20: kernel wiring for manual support painting (TriangleSelector) ----
 // The selector is built from a welded mesh under the same transform as slice() (XY bbox centered, minZ=0) -> facet indices and
 // coordinates match the slices. The viewer calls selector_prepare(stl) once on load -> selector_paint per drag -> slice().
-static bool selector_prepare_impl(em::val stl, bool keep_paint) {
+static bool prepare_selector(em::val stl, bool keep_paint) {
   std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl);
-  std::vector<Tri> tris = parse_stl(bytes);
+  std::vector<Triangle> tris = parse_stl(bytes);
   if (tris.empty()) {
     selector_bridge::construct({}, {});
     return false;
@@ -72,9 +72,9 @@ static bool selector_prepare_impl(em::val stl, bool keep_paint) {
   selector_bridge::construct(vertices, indices);
   return false;
 }
-static void selector_prepare(em::val stl) { selector_prepare_impl(stl, false); }
+static void selector_prepare(em::val stl) { prepare_selector(stl, false); }
 // The same registration, except the marks survive it — for the case where the model did not change, only where it is.
-static bool selector_reprepare(em::val stl) { return selector_prepare_impl(stl, true); }
+static bool selector_reprepare(em::val stl) { return prepare_selector(stl, true); }
 // The bridge is addressed by EnforcerBlockerType state (1..16) now that MMU extruders can be painted too, but the
 // existing JS API is boolean (enforcer=true / blocker=false). embind coerces a JS boolean to an int as 1/0, so
 // keeping the bool wrappers is what makes the old calls mean the same thing — false must stay BLOCKER (2), not

@@ -23,7 +23,7 @@
 #include <vector>
 
 // Model preparation — the bbox pass, the auto_center/Z-seat transform and the over_bed verdict.
-ModelPrep prepare_model(std::vector<Tri>& tris, const Params& params, bool reuseGeom) {
+ModelPrep prepare_model(std::vector<Triangle>& tris, const Params& params, bool reuseGeom) {
   // Move the model so XY is centered on the origin and minZ=0 (with reuseGeom the cached copy is already normalized)
   double minx=1e18,miny=1e18,minz=1e18,maxx=-1e18,maxy=-1e18,maxz=-1e18;
   if (reuseGeom) {
@@ -108,20 +108,20 @@ static void classic_walls(LayerData& layer, const Params& params, int i, int lay
   config.top_bottom_infill_wall_overlap = params.top_bottom_infill_wall_overlap;
   config.is_top_layer              = (i == layerCount - 1);
 
-  std::vector<classic_bridge::IPath> contour;
+  std::vector<classic_bridge::IntegerPath> contour;
   contour.reserve(layer.contour.size());
   for (const Path& path : layer.contour) {
-    classic_bridge::IPath points;
+    classic_bridge::IntegerPath points;
     points.reserve(path.size());
     for (const IntPoint& point : path) points.emplace_back(point.x(), point.y());
     contour.push_back(std::move(points));
   }
   classic_bridge::Result result = classic_bridge::generate(contour, config);
 
-  auto to_path = [](const classic_bridge::IPath& points) {
+  auto to_path = [](const classic_bridge::IntegerPath& points) {
     Path path;
     path.reserve(points.size());
-    for (const classic_bridge::IPoint& point : points) path.push_back(IntPoint((cInt)point.first, (cInt)point.second));
+    for (const classic_bridge::IntegerPoint& point : points) path.push_back(IntPoint((cInt)point.first, (cInt)point.second));
     return path;
   };
   for (const classic_bridge::Extrusion& extrusion : result.walls) {
@@ -132,12 +132,12 @@ static void classic_walls(LayerData& layer, const Params& params, int i, int lay
   }
   for (const classic_bridge::Extrusion& extrusion : result.gap_fill)
     layer.classicGapFill.push_back({ to_path(extrusion.points), (float)extrusion.width, 0, (float)layer.thickness, 0.0f });
-  for (const classic_bridge::IPath& points : result.fill) layer.fill.push_back(to_path(points));
+  for (const classic_bridge::IntegerPath& points : result.fill) layer.fill.push_back(to_path(points));
 }
 
-bool pass1_run(SliceCtx& context) {
+bool pass1_run(SliceContext& context) {
   const Params& params = *context.params;
-  std::vector<Tri>& tris = *context.triangles;
+  std::vector<Triangle>& tris = *context.triangles;
   std::vector<LayerData>& layers = *context.layers;
   auto& isCanceled = context.isCanceled;
   auto& report = context.report;
@@ -149,31 +149,31 @@ bool pass1_run(SliceCtx& context) {
     const std::vector<double>& planes = layerPlan.plane;   // the cutting planes; a layer's print z is layerPlan.top
     // [facet-major segment collection — matching upstream] Like the upstream slice_facet_at_zs (TriangleMeshSlicer.cpp:476),
     //  each triangle binary-searches and visits "only the layers it spans" (work = the number of real intersections). The old layer x full-scan was 657 x 775k
-    //  ≈ 500M visits. The inclusion condition is unchanged (zmin<=z<zmax -> lower_bound + *it<zmax) and the tri_plane
+    //  ≈ 500M visits. The inclusion condition is unchanged (zmin<=z<zmax -> lower_bound + *it<zmax) and the intersect_triangle_with_plane
     //  input is identical -> segment values are unchanged. Per-thread 'contiguous triangle ranges' merged in range order keep the in-layer segment
-    //  order in ascending triangle index (same as the old full scan) -> the chain_polys input is unchanged = byte-identical.
+    //  order in ascending triangle index (same as the old full scan) -> the chain_polygons input is unchanged = byte-identical.
     // MESH (contour_phase.h): the GPU cuts and chains the layers; hand it the triangles as seated and the planes as cut
     if (contour_phase::mode == contour_phase::MESH) {
-      static_assert(sizeof(Tri) == 9 * sizeof(float), "mesh_tris copies Tri as 9 packed floats");
+      static_assert(sizeof(Triangle) == 9 * sizeof(float), "mesh_tris copies Triangle as 9 packed floats");
       contour_phase::mesh_planes = planes;
       contour_phase::mesh_tris.resize(tris.size() * 9);
-      if (!tris.empty()) std::memcpy(contour_phase::mesh_tris.data(), tris.data(), tris.size() * sizeof(Tri));
+      if (!tris.empty()) std::memcpy(contour_phase::mesh_tris.data(), tris.data(), tris.size() * sizeof(Triangle));
       contour_phase::captured = true;
       return false;
     }
-    std::vector<std::vector<Seg>> layerSegs(layerCount);
+    std::vector<std::vector<SliceSegment>> layerSegs(layerCount);
     // The union done outside the kernel (contour_phase.h). OFF leaves every line below as it was.
     const bool captureLoops = contour_phase::mode == contour_phase::CAPTURE;
     const bool injectContours = contour_phase::mode == contour_phase::INJECT && (int)contour_phase::contours.size() == layerCount;
     if (captureLoops) contour_phase::loops.assign(layerCount, Paths());
     if (layerCount > 0 && !injectContours) {
-      auto collect = [&](size_t firstTriangle, size_t endTriangle, std::vector<std::vector<Seg>>& out){
-        Seg segment;
+      auto collect = [&](size_t firstTriangle, size_t endTriangle, std::vector<std::vector<SliceSegment>>& out){
+        SliceSegment segment;
         for (size_t triangleIndex = firstTriangle; triangleIndex < endTriangle; ++triangleIndex) {
-          const Tri& triangle = tris[triangleIndex];
+          const Triangle& triangle = tris[triangleIndex];
           double zmin=std::min({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z}), zmax=std::max({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z});
           for (auto it = std::lower_bound(planes.begin(), planes.end(), zmin); it != planes.end() && *it < zmax; ++it)
-            if (tri_plane(triangle, *it, segment)) out[(size_t)(it - planes.begin())].push_back(segment);
+            if (intersect_triangle_with_plane(triangle, *it, segment)) out[(size_t)(it - planes.begin())].push_back(segment);
         }
       };
 #ifdef __EMSCRIPTEN_PTHREADS__
@@ -181,7 +181,7 @@ bool pass1_run(SliceCtx& context) {
       if (!hardwareThreads) hardwareThreads = 4;
       unsigned threadCount = (unsigned)std::min<size_t>(hardwareThreads, std::max<size_t>(1, tris.size() / 4096));
       if (threadCount > 1) {
-        std::vector<std::vector<std::vector<Seg>>> threadBuckets(threadCount, std::vector<std::vector<Seg>>(layerCount));
+        std::vector<std::vector<std::vector<SliceSegment>>> threadBuckets(threadCount, std::vector<std::vector<SliceSegment>>(layerCount));
         size_t chunkSize = (tris.size() + threadCount - 1) / threadCount;
         std::vector<std::thread> threads;
         threads.reserve(threadCount);
@@ -202,7 +202,7 @@ bool pass1_run(SliceCtx& context) {
           layerSegs[layerIndex].reserve(segmentTotal);
           for (auto& bucket : threadBuckets) {
             layerSegs[layerIndex].insert(layerSegs[layerIndex].end(), bucket[layerIndex].begin(), bucket[layerIndex].end());
-            std::vector<Seg>().swap(bucket[layerIndex]);
+            std::vector<SliceSegment>().swap(bucket[layerIndex]);
           }
         }
       } else
@@ -216,16 +216,16 @@ bool pass1_run(SliceCtx& context) {
       layer.index=i;
       if (i==0) layer.thickness=params.first_layer_height;
       else layer.thickness=params.layer_height;
-      std::vector<Seg> segments;
+      std::vector<SliceSegment> segments;
       segments.swap(layerSegs[i]);
       if (captureLoops) {
-        contour_phase::loops[i] = chain_polys(segments);
+        contour_phase::loops[i] = chain_polygons(segments);
         contour_phase::cancel_coincident(contour_phase::loops[i]);
         return;
       }
       if (injectContours) layer.contour = contour_phase::contours[i];
       else {
-      Paths loops = chain_polys(segments);
+      Paths loops = chain_polygons(segments);
       layer.contour = SimplifyPolygons(loops, pftNonZero);
       }   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
       // [early simplification — matching upstream] Upstream simplifies every contour to resolution right after slicing the mesh

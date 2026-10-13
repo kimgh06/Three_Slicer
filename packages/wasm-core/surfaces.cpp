@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 
-void surfaces_run(SliceCtx& context) {
+void surfaces_run(SliceContext& context) {
   std::vector<LayerData>& layers = *context.layers;
   const int layerCount = context.layerCount;
   // ---- PASS 1.5: surface detection (this layer's fill − the neighboring contour) ----

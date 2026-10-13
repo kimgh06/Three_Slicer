@@ -361,21 +361,21 @@ void set_layer_count(int layerCount) {
 
 namespace {
 
-// MESH: one layer's loops as pass1 would capture them (tri_plane over every triangle, chain_polys, cancel_coincident)
+// MESH: one layer's loops as pass1 would capture them (intersect_triangle_with_plane over every triangle, chain_polygons, cancel_coincident)
 struct MeshWork { const std::vector<int>* layers; };
 void mesh_layer_loops(int index, void* context) {
   const int layer = (*((MeshWork*)context)->layers)[index];
-  const Tri* triangles = reinterpret_cast<const Tri*>(mesh_tris.data());
+  const Triangle* triangles = reinterpret_cast<const Triangle*>(mesh_tris.data());
   const size_t triangleCount = mesh_tris.size() / 9;
   const double z = mesh_planes[layer];
-  std::vector<Seg> segments;
-  Seg segment;
+  std::vector<SliceSegment> segments;
+  SliceSegment segment;
   for (size_t triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex) {
-    const Tri& triangle = triangles[triangleIndex];
+    const Triangle& triangle = triangles[triangleIndex];
     const double zmin = std::min({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z}), zmax = std::max({triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z});
-    if (zmin <= z && z < zmax && tri_plane(triangle, z, segment)) segments.push_back(segment);   // pass1's inclusion rule
+    if (zmin <= z && z < zmax && intersect_triangle_with_plane(triangle, z, segment)) segments.push_back(segment);   // pass1's inclusion rule
   }
-  loops[layer] = chain_polys(segments);
+  loops[layer] = chain_polygons(segments);
   cancel_coincident(loops[layer]);
 }
 
