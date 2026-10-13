@@ -31,24 +31,45 @@ static std::string config_option_default(const std::string& key) { return config
 static bool selector_prepare_impl(em::val stl, bool keep_paint) {
   std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl);
   std::vector<Tri> tris = parse_stl(bytes);
-  if (tris.empty()) { selector_bridge::construct({}, {}); return false; }
-  double minx=1e18,miny=1e18,minz=1e18,maxx=-1e18,maxy=-1e18,maxz=-1e18;
-  for (auto& t:tris) for (int k=0;k<3;++k){
-    minx=std::min(minx,(double)t.v[k].x);maxx=std::max(maxx,(double)t.v[k].x);
-    miny=std::min(miny,(double)t.v[k].y);maxy=std::max(maxy,(double)t.v[k].y);
-    minz=std::min(minz,(double)t.v[k].z);maxz=std::max(maxz,(double)t.v[k].z); }
+  if (tris.empty()) {
+    selector_bridge::construct({}, {});
+    return false;
+  }
+  double minx=1e18;
+  double miny=1e18;
+  double minz=1e18;
+  double maxx=-1e18;
+  double maxy=-1e18;
+  double maxz=-1e18;
+  for (auto& triangle:tris) for (int k=0;k<3;++k){
+    minx=std::min(minx,(double)triangle.v[k].x);
+    maxx=std::max(maxx,(double)triangle.v[k].x);
+    miny=std::min(miny,(double)triangle.v[k].y);
+    maxy=std::max(maxy,(double)triangle.v[k].y);
+    minz=std::min(minz,(double)triangle.v[k].z);
+    maxz=std::max(maxz,(double)triangle.v[k].z);
+  }
   // Stage 28 P2: matches the slicing default (auto_center=false) — no XY realignment, only Z seating (trusting the viewer coordinates).
   // weld: dedup vertices (quantized, EXACT tuple key — an XOR hash collides and destroys topology)
   //  preserving triangle order → facet i == parse order i (viewer raycast face index match).
-  std::vector<float> verts; std::vector<int> idx; std::map<std::array<long long,3>,int> vmap;
-  auto add=[&](double x,double y,double z)->int{
-    std::array<long long,3> k{ (long long)std::llround(x*1e4), (long long)std::llround(y*1e4), (long long)std::llround(z*1e4) };
-    auto it=vmap.find(k); if(it!=vmap.end()) return it->second;
-    int id=(int)(verts.size()/3); verts.push_back((float)x);verts.push_back((float)y);verts.push_back((float)z); vmap[k]=id; return id; };
-  for (auto& t:tris) for (int k=0;k<3;++k)
-    idx.push_back(add(t.v[k].x, t.v[k].y, t.v[k].z-minz));   // stage 28: XY as-is (viewer coordinates), Z seated
-  if (keep_paint) return selector_bridge::reconstruct_keeping_paint(verts, idx);
-  selector_bridge::construct(verts, idx);
+  std::vector<float> vertices;
+  std::vector<int> indices;
+  std::map<std::array<long long,3>,int> vertexIdByKey;
+  auto addVertex=[&](double x,double y,double z)->int{
+    std::array<long long,3> key{ (long long)std::llround(x*1e4), (long long)std::llround(y*1e4), (long long)std::llround(z*1e4) };
+    auto it=vertexIdByKey.find(key);
+    if(it!=vertexIdByKey.end()) return it->second;
+    int vertexId=(int)(vertices.size()/3);
+    vertices.push_back((float)x);
+    vertices.push_back((float)y);
+    vertices.push_back((float)z);
+    vertexIdByKey[key]=vertexId;
+    return vertexId;
+  };
+  for (auto& triangle:tris) for (int k=0;k<3;++k)
+    indices.push_back(addVertex(triangle.v[k].x, triangle.v[k].y, triangle.v[k].z-minz));   // stage 28: XY as-is (viewer coordinates), Z seated
+  if (keep_paint) return selector_bridge::reconstruct_keeping_paint(vertices, indices);
+  selector_bridge::construct(vertices, indices);
   return false;
 }
 static void selector_prepare(em::val stl) { selector_prepare_impl(stl, false); }
@@ -59,58 +80,59 @@ static bool selector_reprepare(em::val stl) { return selector_prepare_impl(stl, 
 // keeping the bool wrappers is what makes the old calls mean the same thing — false must stay BLOCKER (2), not
 // NONE (0). The *_state twins below are the way to reach Extruder3..16.
 static int selector_state_of(bool enforcer) {
-  return enforcer ? selector_bridge::STATE_ENFORCER : selector_bridge::STATE_BLOCKER;
+  if (enforcer) return selector_bridge::STATE_ENFORCER;
+  return selector_bridge::STATE_BLOCKER;
 }
-static void selector_paint_shape(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, int state, int cursor) {
+static void selector_paint_shape(int facet, float hitX,float hitY,float hitZ, float cameraX,float cameraY,float cameraZ, float radius, int state, int cursor) {
   // The bridge accepts STATE_NONE (it is the eraser), but this entry point deliberately does not pass it through:
   // a JS `false` arrives here as the int 0, so a boolean that leaked into the state argument would ERASE the brushed
   // facets instead of doing nothing. Erasing goes through selector_erase below, whose signature has no state at all.
   if (state == selector_bridge::STATE_NONE) return;
-  selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, state, cursor);
+  selector_bridge::paint(facet, hitX,hitY,hitZ, cameraX,cameraY,cameraZ, radius, state, cursor);
 }
-// The capsule swept between the previous stroke sample (a*) and this one (b*) — same NONE rule as the brush above,
+// The capsule swept between the previous stroke sample (previous*) and this one (current*) — same NONE rule as the brush above,
 // and the same erase twin below, because a shift+drag has to be continuous for exactly the reason a paint drag does.
-static void selector_paint_stroke(int facet, float ax,float ay,float az, float bx,float by,float bz,
-                                  float cx,float cy,float cz, float radius, int state, int cursor) {
+static void selector_paint_stroke(int facet, float previousX,float previousY,float previousZ, float currentX,float currentY,float currentZ,
+                                  float cameraX,float cameraY,float cameraZ, float radius, int state, int cursor) {
   if (state == selector_bridge::STATE_NONE) return;
-  selector_bridge::paint_stroke(facet, ax,ay,az, bx,by,bz, cx,cy,cz, radius, state, cursor);
+  selector_bridge::paint_stroke(facet, previousX,previousY,previousZ, currentX,currentY,currentZ, cameraX,cameraY,cameraZ, radius, state, cursor);
 }
-static void selector_erase_stroke(int facet, float ax,float ay,float az, float bx,float by,float bz,
-                                  float cx,float cy,float cz, float radius, int cursor) {
-  selector_bridge::paint_stroke(facet, ax,ay,az, bx,by,bz, cx,cy,cz, radius, selector_bridge::STATE_NONE, cursor);
+static void selector_erase_stroke(int facet, float previousX,float previousY,float previousZ, float currentX,float currentY,float currentZ,
+                                  float cameraX,float cameraY,float cameraZ, float radius, int cursor) {
+  selector_bridge::paint_stroke(facet, previousX,previousY,previousZ, currentX,currentY,currentZ, cameraX,cameraY,cameraZ, radius, selector_bridge::STATE_NONE, cursor);
 }
-static void selector_paint_state(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, int state) {
-  selector_paint_shape(facet, hx,hy,hz, cx,cy,cz, radius, state, selector_bridge::CURSOR_SPHERE);
+static void selector_paint_state(int facet, float hitX,float hitY,float hitZ, float cameraX,float cameraY,float cameraZ, float radius, int state) {
+  selector_paint_shape(facet, hitX,hitY,hitZ, cameraX,cameraY,cameraZ, radius, state, selector_bridge::CURSOR_SPHERE);
 }
 // Erase = paint STATE_NONE, returning the brushed facets to the default extruder (upstream's shift+drag eraser).
 // It is a separate function rather than "paint with state 0" precisely because of the coercion above: with no state
 // parameter there is nothing for a stray boolean to turn into NONE, so the erase can only be reached on purpose.
-static void selector_erase(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius) {
-  selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, selector_bridge::STATE_NONE, selector_bridge::CURSOR_SPHERE);
+static void selector_erase(int facet, float hitX,float hitY,float hitZ, float cameraX,float cameraY,float cameraZ, float radius) {
+  selector_bridge::paint(facet, hitX,hitY,hitZ, cameraX,cameraY,cameraZ, radius, selector_bridge::STATE_NONE, selector_bridge::CURSOR_SPHERE);
 }
 // The erase twin of selector_paint_shape: the cursor shape has to reach the eraser too, or shift+drag with the
 // circle brush would rub out the far side of a wall the paint brush never touched.
-static void selector_erase_shape(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, int cursor) {
-  selector_bridge::paint(facet, hx,hy,hz, cx,cy,cz, radius, selector_bridge::STATE_NONE, cursor);
+static void selector_erase_shape(int facet, float hitX,float hitY,float hitZ, float cameraX,float cameraY,float cameraZ, float radius, int cursor) {
+  selector_bridge::paint(facet, hitX,hitY,hitZ, cameraX,cameraY,cameraZ, radius, selector_bridge::STATE_NONE, cursor);
 }
-static void selector_paint(int facet, float hx,float hy,float hz, float cx,float cy,float cz, float radius, bool enforcer) {
-  selector_paint_state(facet, hx,hy,hz, cx,cy,cz, radius, selector_state_of(enforcer));
+static void selector_paint(int facet, float hitX,float hitY,float hitZ, float cameraX,float cameraY,float cameraZ, float radius, bool enforcer) {
+  selector_paint_state(facet, hitX,hitY,hitZ, cameraX,cameraY,cameraZ, radius, selector_state_of(enforcer));
 }
 // The fill tools. Same NONE rule as the brush: the painting entry point refuses state 0 and each has its own erase
 // twin with no state argument, so the eraser keeps working with every tool instead of silently doing nothing.
-static void selector_seed_fill(int facet, float hx,float hy,float hz, float angle_deg, int state) {
+static void selector_seed_fill(int facet, float hitX,float hitY,float hitZ, float angle_deg, int state) {
   if (state == selector_bridge::STATE_NONE) return;
-  selector_bridge::seed_fill(facet, hx,hy,hz, angle_deg, state);
+  selector_bridge::seed_fill(facet, hitX,hitY,hitZ, angle_deg, state);
 }
-static void selector_seed_fill_erase(int facet, float hx,float hy,float hz, float angle_deg) {
-  selector_bridge::seed_fill(facet, hx,hy,hz, angle_deg, selector_bridge::STATE_NONE);
+static void selector_seed_fill_erase(int facet, float hitX,float hitY,float hitZ, float angle_deg) {
+  selector_bridge::seed_fill(facet, hitX,hitY,hitZ, angle_deg, selector_bridge::STATE_NONE);
 }
-static void selector_bucket_fill(int facet, float hx,float hy,float hz, float angle_deg, bool propagate, int state) {
+static void selector_bucket_fill(int facet, float hitX,float hitY,float hitZ, float angle_deg, bool propagate, int state) {
   if (state == selector_bridge::STATE_NONE) return;
-  selector_bridge::bucket_fill(facet, hx,hy,hz, angle_deg, propagate, state);
+  selector_bridge::bucket_fill(facet, hitX,hitY,hitZ, angle_deg, propagate, state);
 }
-static void selector_bucket_fill_erase(int facet, float hx,float hy,float hz, float angle_deg, bool propagate) {
-  selector_bridge::bucket_fill(facet, hx,hy,hz, angle_deg, propagate, selector_bridge::STATE_NONE);
+static void selector_bucket_fill_erase(int facet, float hitX,float hitY,float hitZ, float angle_deg, bool propagate) {
+  selector_bridge::bucket_fill(facet, hitX,hitY,hitZ, angle_deg, propagate, selector_bridge::STATE_NONE);
 }
 // 3mf painting import. The hex strings arrive as ONE newline-joined blob rather than an array of strings on
 // purpose: embind cannot pass a std::vector<std::string> without registering a vector type, and the JS side already
@@ -123,7 +145,10 @@ static int selector_import_paint(em::val facets_val, std::string hex_joined) {
   hex.reserve(facets.size());
   for (size_t start = 0; start <= hex_joined.size(); ) {
     const size_t end = hex_joined.find('\n', start);
-    if (end == std::string::npos) { hex.push_back(hex_joined.substr(start)); break; }
+    if (end == std::string::npos) {
+      hex.push_back(hex_joined.substr(start));
+      break;
+    }
     hex.push_back(hex_joined.substr(start, end - start));
     start = end + 1;
   }
@@ -149,15 +174,15 @@ static em::val selector_export_paint() {
   return out;
 }
 // Brush-wide modes, set once rather than carried on every stroke — upstream keeps both on the gizmo for the same
-// reason. `deg` 0 turns the overhang restriction off; `enabled` false makes the section plane clip nothing.
-static void selector_set_overhang_limit(float deg) { selector_bridge::set_overhang_limit(deg); }
-static void selector_set_clip_plane(float nx, float ny, float nz, float offset, bool enabled) {
-  selector_bridge::set_clip_plane(nx, ny, nz, offset, enabled);
+// reason. `overhangLimitDeg` 0 turns the overhang restriction off; `enabled` false makes the section plane clip nothing.
+static void selector_set_overhang_limit(float overhangLimitDeg) { selector_bridge::set_overhang_limit(overhangLimitDeg); }
+static void selector_set_clip_plane(float normalX, float normalY, float normalZ, float offset, bool enabled) {
+  selector_bridge::set_clip_plane(normalX, normalY, normalZ, offset, enabled);
 }
 // What a fill WOULD select, without applying it (upstream draws this on hover in a lighter shade). No state
 // argument at all: a preview marks nothing, so there is no NONE for a stray boolean to become.
-static em::val selector_fill_preview(int facet, float hx,float hy,float hz, float angle_deg, int mode) {
-  return to_f32(selector_bridge::fill_preview(facet, hx,hy,hz, angle_deg, mode));
+static em::val selector_fill_preview(int facet, float hitX,float hitY,float hitZ, float angle_deg, int mode) {
+  return to_f32(selector_bridge::fill_preview(facet, hitX,hitY,hitZ, angle_deg, mode));
 }
 static void selector_fill_preview_clear() { selector_bridge::fill_preview_clear(); }
 static void selector_clear() { selector_bridge::clear(); }
@@ -166,22 +191,30 @@ static int  selector_painted_count_state(int state) { return selector_bridge::pa
 static int  selector_painted_count(bool enforcer) { return selector_painted_count_state(selector_state_of(enforcer)); }
 static em::val selector_overlay_state(int state) { return to_f32(selector_bridge::overlay(state)); }
 static em::val selector_overlay(bool enforcer) { return selector_overlay_state(selector_state_of(enforcer)); }
-static em::val selector_project_counts_state(em::val zsVal, int state) {   // debug: #polys per z
-  std::vector<double> zs = em::convertJSArrayToNumberVector<double>(zsVal);
-  auto pl = selector_bridge::project_layers(zs, state);
-  std::vector<float> counts; counts.reserve(pl.size());
-  for (auto& layer : pl) counts.push_back((float)layer.size());
+static em::val selector_project_counts_state(em::val planeHeightsValue, int state) {   // debug: #polys per z
+  std::vector<double> planeHeights = em::convertJSArrayToNumberVector<double>(planeHeightsValue);
+  auto projectedLayers = selector_bridge::project_layers(planeHeights, state);
+  std::vector<float> counts;
+  counts.reserve(projectedLayers.size());
+  for (auto& layer : projectedLayers) counts.push_back((float)layer.size());
   return to_f32(counts);
 }
-static em::val selector_project_counts(em::val zsVal, bool enforcer) {
-  return selector_project_counts_state(zsVal, selector_state_of(enforcer));
+static em::val selector_project_counts(em::val planeHeightsValue, bool enforcer) {
+  return selector_project_counts_state(planeHeightsValue, selector_state_of(enforcer));
 }
 
 // ---- PASS1's union outside the kernel (contour_phase.h); the worker drives these around two slice() calls
 static void contour_phase_mode(int mode) {
   contour_phase::mode = mode;
-  if (mode == contour_phase::OFF) { contour_phase::loops.clear(); contour_phase::contours.clear(); contour_phase::result.clear(); contour_phase::input = contour_phase::GpuInput();
-    std::vector<float>().swap(contour_phase::mesh_tris); std::vector<double>().swap(contour_phase::mesh_planes); contour_phase::open_layers.clear(); }
+  if (mode == contour_phase::OFF) {
+    contour_phase::loops.clear();
+    contour_phase::contours.clear();
+    contour_phase::result.clear();
+    contour_phase::input = contour_phase::GpuInput();
+    std::vector<float>().swap(contour_phase::mesh_tris);
+    std::vector<double>().swap(contour_phase::mesh_planes);
+    contour_phase::open_layers.clear();
+  }
 }
 // views into the kernel's heap (no copy): valid until the next contour_phase call
 static em::val contour_gpu_input() {
@@ -189,8 +222,11 @@ static em::val contour_gpu_input() {
   const contour_phase::GpuInput& input = contour_phase::input;
   em::val out = em::val::object();
   out.set("ms", input.ms);
-  out.set("layerCount", input.layerCount); out.set("segmentCount", input.segmentCount); out.set("cellCount", input.cellCount);
-  out.set("polygonCount", input.polygonCount); out.set("cellEntryCount", input.cellEntryCount);
+  out.set("layerCount", input.layerCount);
+  out.set("segmentCount", input.segmentCount);
+  out.set("cellCount", input.cellCount);
+  out.set("polygonCount", input.polygonCount);
+  out.set("cellEntryCount", input.cellEntryCount);
   out.set("points", em::val(em::typed_memory_view(input.points.size(), input.points.data())));
   out.set("layerInfo", em::val(em::typed_memory_view(input.layerInfo.size(), input.layerInfo.data())));
   out.set("layerStart", em::val(em::typed_memory_view(input.layerStart.size(), input.layerStart.data())));
@@ -222,7 +258,8 @@ static em::val contour_assemble() {
   const contour_phase::Assembled assembled = contour_phase::assemble();
   contour_phase::mode = contour_phase::INJECT;
   em::val out = em::val::object();
-  out.set("walkMs", assembled.walkMs); out.set("fallbackMs", assembled.fallbackMs);
+  out.set("walkMs", assembled.walkMs);
+  out.set("fallbackMs", assembled.fallbackMs);
   out.set("fallbackLayers", (int)assembled.fallbackLayers.size());
   out.set("unavailable", assembled.unavailable);
   return out;
