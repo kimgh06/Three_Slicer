@@ -33,7 +33,13 @@ void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float typ
                 int seamMode, SeamCtx& sc, bool updateSeam=false);
 void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, float type, int fPrint, int fTravel);
 // Stage 19 -> WP3: one real tree support toolpath — per-path width plus the upstream ExtrusionPath's role/height/mm3_per_mm.
-struct TreePath { Path pl; float w; int role; float h; float mm3; };
+struct TreePath {
+  Path pl;
+  float w;
+  int role;
+  float h;
+  float mm3;
+};
 // The upstream path roles its flow multipliers key on (GCode.cpp:7350-7382), as the kernel's features map onto
 //  them. Thin walls are OuterWall (upstream prints them as erExternalPerimeter, PerimeterGenerator.cpp:232); a raft
 //  is Support. Upstream's internal bridge and overhang wall have no kernel feature, so internal_bridge_flow and
