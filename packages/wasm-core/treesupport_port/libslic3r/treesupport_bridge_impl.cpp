@@ -64,14 +64,14 @@ void flatten_entity(const ExtrusionEntity *entity, std::vector<treesupport_bridg
         line.role       = int(path->role());        // WP3: preserves the base(14)/interface(15)/ironing(8) distinction
         line.height     = double(path->height);     // WP3: upstream extrusion height (differs from the layer height on bridging contact layers, etc.)
         line.mm3_per_mm = path->mm3_per_mm;         // WP3: upstream volumetric flow -> lets the kernel reproduce E exactly as upstream
-        line.pts.reserve(path->polyline.points.size());
+        line.points.reserve(path->polyline.points.size());
         // ExtrusionPath::polyline is a Polyline3 (points carry Z); take X/Y only.
         for (const auto &point : path->polyline.points) {
             const coord_t point_x = point.x();
             const coord_t point_y = point.y();
-            line.pts.emplace_back(unscale<double>(point_x), unscale<double>(point_y));
+            line.points.emplace_back(unscale<double>(point_x), unscale<double>(point_y));
         }
-        if (line.pts.size() >= 2) out.push_back(std::move(line));
+        if (line.points.size() >= 2) out.push_back(std::move(line));
         return;
     }
 }

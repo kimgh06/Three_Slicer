@@ -7,8 +7,8 @@
 
 namespace arachne_bridge {
 
-struct WBead { double x, y, w; };            // one junction: XY (mm) + extrusion width (mm)
-struct WLine { std::vector<WBead> pts; bool closed; int inset_idx; };
+struct WBead { double x, y, width; };            // one junction: XY (mm) + extrusion width (mm)
+struct WLine { std::vector<WBead> junctions; bool closed; int inset_index; };
 
 // polys_mm[0] = outer contour, [1..] = holes (all in mm, kernel-centered coords).
 // Returns Arachne variable-width wall lines (outer→inner), each junction carrying its own width.

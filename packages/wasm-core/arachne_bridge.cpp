@@ -55,10 +55,10 @@ std::vector<WLine> generate_walls(const std::vector<std::vector<std::pair<double
             if (line.junctions.size() < 2) continue;
             WLine wall_line;
             wall_line.closed = line.is_closed;
-            wall_line.inset_idx = (int) line.inset_idx;
-            wall_line.pts.reserve(line.junctions.size());
+            wall_line.inset_index = (int) line.inset_idx;
+            wall_line.junctions.reserve(line.junctions.size());
             for (const ExtrusionJunction& junction : line.junctions)
-                wall_line.pts.push_back({ to_mm(junction.p.x()), to_mm(junction.p.y()), to_mm(junction.w) });
+                wall_line.junctions.push_back({ to_mm(junction.p.x()), to_mm(junction.p.y()), to_mm(junction.w) });
             out.push_back(std::move(wall_line));
         }
     return out;

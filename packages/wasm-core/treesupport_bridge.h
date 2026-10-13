@@ -17,7 +17,7 @@ using Ring = std::vector<std::pair<double,double>>;
 //  the base/interface distinction and the basis for the upstream E calculation. role is the raw ExtrusionRole integer
 //  (erSupportMaterial=14, erSupportMaterialInterface=15, erIroning=8, …).
 struct Line {
-    std::vector<std::pair<double,double>> pts;
+    std::vector<std::pair<double,double>> points;
     double width       = 0.0;
     int    role        = 14;   // erSupportMaterial
     double height      = 0.0;  // layer height (mm, ExtrusionPath::height)
