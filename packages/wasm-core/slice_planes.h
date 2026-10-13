@@ -1,5 +1,5 @@
 // slice_planes.h — extracted from slicer_core.cpp; the static helpers became `inline`. Segments are oriented
-//  (tri_plane) so the loops can be filled NonZero, as upstream's Regular slicing mode does.
+//  (intersect_triangle_with_plane) so the loops can be filled NonZero, as upstream's Regular slicing mode does.
 #pragma once
 #include "clip_util.h"
 #include "stl_parse.h"
@@ -15,7 +15,7 @@ static constexpr double CHAIN_KEY_QUANTUM_MM = 1e-3;
 static constexpr long long CHAIN_KEY_Y_MASK = 0xffffffffLL;
 
 // ---- Triangle-plane intersection -> segments ------------------------------------
-struct Seg { double x0, y0, x1, y1; };
+struct SliceSegment { double x0, y0, x1, y1; };
 // The object's layers, upstream's generate_object_layers for a fixed layer height (Slicing.cpp:807): a layer exists
 //  while its middle is below the object's top, and it is cut at that middle (Layer::slice_z). The kernel used to cut
 //  at each layer's top and keep only tops below the object's height, so the top face's plane cut nothing and the
@@ -32,13 +32,13 @@ inline LayerPlan plan_layers(double first_layer_height, double layer_height, dou
   return plan;
 }
 
-inline bool tri_plane(const Tri& triangle, double z, Seg& out) {
+inline bool intersect_triangle_with_plane(const Triangle& triangle, double z, SliceSegment& out) {
   double crossingX[3];
   double crossingY[3];
   int crossingCount = 0;
   for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex) {
-    const V3& edgeStart = triangle.vertices[edgeIndex];
-    const V3& edgeEnd = triangle.vertices[(edgeIndex + 1) % 3];
+    const Vertex& edgeStart = triangle.vertices[edgeIndex];
+    const Vertex& edgeEnd = triangle.vertices[(edgeIndex + 1) % 3];
     const bool edgeCrossesPlane = (edgeStart.z < z && edgeEnd.z >= z) || (edgeEnd.z < z && edgeStart.z >= z);
     if (edgeCrossesPlane) {
       const double crossingFraction = (z - edgeStart.z) / (edgeEnd.z - edgeStart.z);
@@ -79,13 +79,13 @@ inline long long qkey(double x, double y) {
   const long long quantisedY = (long long)std::llround(y/CHAIN_KEY_QUANTUM_MM);
   return (quantisedX << 32) ^ (quantisedY & CHAIN_KEY_Y_MASK);
 }
-// Segments arrive oriented (tri_plane), and a loop keeps the direction of its first segment: at each point the
+// Segments arrive oriented (intersect_triangle_with_plane), and a loop keeps the direction of its first segment: at each point the
 //  continuation that STARTS there is preferred, so where two shells touch or coincide (four segments meeting) the
 //  walk does not turn back along an incoming one. A loop assembled mostly against its segments' own direction — a
 //  shell with flipped facets — is reversed, so it still winds the way its majority of facets says. With a
 //  consistently oriented manifold mesh there is exactly one unused continuation and it always starts at the point,
 //  so the chain visits what it did before; only the direction of a loop can differ.
-inline Paths chain_polys(std::vector<Seg>& segments) {
+inline Paths chain_polygons(std::vector<SliceSegment>& segments) {
   const int segmentCount = (int)segments.size();
   std::vector<char> used(segmentCount,0);
   // Endpoint key -> references to the segment ends there, encoded as segment*2 + end (0 = its start, 1 = its end).

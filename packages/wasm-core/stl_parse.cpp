@@ -12,8 +12,8 @@ static bool is_binary_stl(const std::vector<uint8_t>& bytes) {
   std::memcpy(&triangleCount, &bytes[80], 4);
   return bytes.size() == (size_t)84 + (size_t)triangleCount * 50;   // an exact match means binary
 }
-static std::vector<Tri> parse_binary(const std::vector<uint8_t>& bytes) {
-  std::vector<Tri> triangles;
+static std::vector<Triangle> parse_binary(const std::vector<uint8_t>& bytes) {
+  std::vector<Triangle> triangles;
   uint32_t triangleCount;
   std::memcpy(&triangleCount, &bytes[80], 4);
   size_t requiredSize = 84 + (size_t)triangleCount * 50;
@@ -21,7 +21,7 @@ static std::vector<Tri> parse_binary(const std::vector<uint8_t>& bytes) {
   triangles.reserve(triangleCount);
   size_t offset = 84;
   for (uint32_t i = 0; i < triangleCount; ++i) {
-    Tri triangle;
+    Triangle triangle;
     offset += 12;
     for (int k = 0; k < 3; ++k) {
       float xyz[3];
@@ -35,10 +35,10 @@ static std::vector<Tri> parse_binary(const std::vector<uint8_t>& bytes) {
   return triangles;
 }
 // ASCII: collect "vertex x y z" in order, three at a time into a triangle (facet/loop/normal ignored)
-static std::vector<Tri> parse_ascii(const std::vector<uint8_t>& bytes) {
-  std::vector<Tri> triangles;
+static std::vector<Triangle> parse_ascii(const std::vector<uint8_t>& bytes) {
+  std::vector<Triangle> triangles;
   std::string text((const char*)bytes.data(), bytes.size());
-  std::vector<V3> vertices;
+  std::vector<Vertex> vertices;
   size_t position = 0;
   while ((position = text.find("vertex", position)) != std::string::npos) {
     position += 6;
@@ -53,7 +53,7 @@ static std::vector<Tri> parse_ascii(const std::vector<uint8_t>& bytes) {
     vertices.push_back({(float)x,(float)y,(float)z});
   }
   for (size_t i = 0; i + 2 < vertices.size(); i += 3) {
-    Tri triangle;
+    Triangle triangle;
     triangle.vertices[0]=vertices[i];
     triangle.vertices[1]=vertices[i+1];
     triangle.vertices[2]=vertices[i+2];
@@ -61,7 +61,7 @@ static std::vector<Tri> parse_ascii(const std::vector<uint8_t>& bytes) {
   }
   return triangles;
 }
-std::vector<Tri> parse_stl(const std::vector<uint8_t>& bytes) {
+std::vector<Triangle> parse_stl(const std::vector<uint8_t>& bytes) {
   if (bytes.size() < 15) return {};
   if (is_binary_stl(bytes)) return parse_binary(bytes);
   return parse_ascii(bytes);
