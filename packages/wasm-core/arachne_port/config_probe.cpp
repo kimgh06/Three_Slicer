@@ -79,7 +79,7 @@ static void json_escape(std::ostream& out, const std::string& text) {
     out << '"';
 }
 
-static void json_str_array(std::ostream& out, const std::vector<std::string>& values) {
+static void write_json_string_array(std::ostream& out, const std::vector<std::string>& values) {
     out << '[';
     for (size_t i = 0; i < values.size(); ++i) {
         if (i) out << ',';
@@ -139,9 +139,9 @@ std::string dump_schema_json() {
         if (option_def.min > -3.0e38f) out << ",\"min\":" << option_def.min;
         if (option_def.max <  3.0e38f) out << ",\"max\":" << option_def.max;
         out << ",\"enum_values\":";
-        json_str_array(out, option_def.enum_values);
+        write_json_string_array(out, option_def.enum_values);
         out << ",\"enum_labels\":";
-        json_str_array(out, option_def.enum_labels);
+        write_json_string_array(out, option_def.enum_labels);
         if (option_def.default_value) {
             out << ",\"default\":";
             json_escape(out, option_def.default_value->serialize());

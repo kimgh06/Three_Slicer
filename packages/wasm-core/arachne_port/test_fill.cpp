@@ -5,7 +5,7 @@
 using namespace fill_bridge;
 
 int main() {
-    std::vector<Poly> region = {{{0,0},{20,0},{20,20},{0,20}}};
+    std::vector<MillimetrePath> region = {{{0,0},{20,0},{20,20},{0,20}}};
     for (const char* pattern : {"gyroid","honeycomb","3dhoneycomb","crosshatch","concentric"}) {
         auto polylines = generate_fill(region, pattern, 0.2, 0.42, 0.0, 1.0, 5);
         long segments = 0;
@@ -15,7 +15,7 @@ int main() {
     // Gyroid TPMS: point set differs between z layers (phase shift along z)
     auto gyroid_low = generate_fill(region, "gyroid", 0.2, 0.42, 0.0, 1.0, 5);
     auto gyroid_high = generate_fill(region, "gyroid", 0.2, 0.42, 0.0, 5.4, 27);
-    auto first_point = [](const std::vector<Poly>& polylines) -> std::pair<double,double> {
+    auto first_point = [](const std::vector<MillimetrePath>& polylines) -> std::pair<double,double> {
         if (polylines.empty()||polylines[0].empty()) return std::pair<double,double>{0,0};
         return polylines[0][0];
     };

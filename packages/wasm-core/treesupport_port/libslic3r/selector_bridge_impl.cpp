@@ -387,7 +387,7 @@ namespace {
             }
         return out;
     }
-    std::vector<float> to_float_zs(const std::vector<double>& slice_zs_mm) {
+    std::vector<float> to_float_heights(const std::vector<double>& slice_zs_mm) {
         std::vector<float> zs;
         zs.reserve(slice_zs_mm.size());
         for (double z : slice_zs_mm) zs.push_back(float(z));
@@ -400,7 +400,7 @@ project_layers(const std::vector<double>& slice_zs_mm, int state) {
     const indexed_triangle_set& painted = facets_of(state);
     if (painted.indices.empty() || slice_zs_mm.empty())
         return std::vector<std::vector<std::vector<std::pair<double,double>>>>(slice_zs_mm.size());
-    const std::vector<float> zs = to_float_zs(slice_zs_mm);
+    const std::vector<float> zs = to_float_heights(slice_zs_mm);
     return to_mm_rings(project_custom_facets_footprint(painted, zs), slice_zs_mm.size());   // XY footprint per layer
 }
 
@@ -451,7 +451,7 @@ bool segment_prepare(const std::vector<double>& slice_zs_mm, const selector_brid
     std::vector<ExPolygons> layer_slices(layer_count);
     for (size_t i = 0; i < layer_count; ++i) layer_slices[i] = rings_to_expolygons(layer_rings[i]);
 
-    std::vector<float> zs = to_float_zs(slice_zs_mm);
+    std::vector<float> zs = to_float_heights(slice_zs_mm);
     zs.resize(layer_count);
 
     SegmentationShellParams shell;

@@ -77,7 +77,7 @@ void flatten_entity(const ExtrusionEntity *entity, std::vector<treesupport_bridg
 }
 
 // List of mm rings -> scaled Polygons (rings with fewer than 3 points are ignored)
-Polygons rings_to_polys(const std::vector<treesupport_bridge::Ring> &rings)
+Polygons rings_to_polygons(const std::vector<treesupport_bridge::Ring> &rings)
 {
     Polygons polygons;
     for (const treesupport_bridge::Ring &ring : rings) {
@@ -250,7 +250,7 @@ void build_facade(Print &facade_print, PrintRegion &facade_region, PrintObject &
         //  threshold offset from the outer wall flow of lower_layer.regions(). Previously regions was empty, giving 0/0=NaN.
         //  This is a single-region kernel, so one shared PrintRegion is equivalent to upstream (the outer wall width comes from the line_width fallback).
         layer->add_region(&facade_region);
-        Polygons polygons = rings_to_polys(object_slices_mm[i]);
+        Polygons polygons = rings_to_polygons(object_slices_mm[i]);
         for (const Polygon &polygon : polygons)
             for (const Point &point : polygon.points) {
                 if (!bbox_init) {
@@ -368,8 +368,8 @@ std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& obje
         ExPolygons top;
         ExPolygons bottom;
         if (i < surfs.size()) {
-            top = union_ex(rings_to_polys(surfs[i].top));
-            bottom = union_ex(rings_to_polys(surfs[i].bottom));
+            top = union_ex(rings_to_polygons(surfs[i].top));
+            bottom = union_ex(rings_to_polygons(surfs[i].bottom));
         }
         Polygons top_and_bottom = to_polygons(top);
         polygons_append(top_and_bottom, to_polygons(bottom));
