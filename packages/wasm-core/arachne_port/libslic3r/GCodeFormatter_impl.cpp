@@ -6,22 +6,26 @@
 #include <cstring>
 #include <cmath>
 namespace Slic3r {
-void GCodeFormatter::emit_axis(const char axis, const double v, size_t digits) {
+void GCodeFormatter::emit_axis(const char axis, const double value, size_t digits) {
     assert(digits <= 9);
     static constexpr const std::array<int, 10> pow_10{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000};
-    *ptr_err.ptr++ = ' '; *ptr_err.ptr++ = axis;
+    *ptr_err.ptr++ = ' ';
+    *ptr_err.ptr++ = axis;
 
     char *base_ptr = this->ptr_err.ptr;
-    auto  v_int    = int64_t(std::round(v * pow_10[digits]));
+    auto  scaled_value = int64_t(std::round(value * pow_10[digits]));
     // Older stdlib on macOS doesn't support std::from_chars at all, so it is used boost::spirit::karma::generate instead of it.
     // That is a little bit slower than std::to_chars but not much.
 #ifdef __APPLE__
-    boost::spirit::karma::generate(this->ptr_err.ptr, boost::spirit::karma::int_generator<int64_t>(), v_int);
+    boost::spirit::karma::generate(this->ptr_err.ptr, boost::spirit::karma::int_generator<int64_t>(), scaled_value);
 #else
     // this->buf_end minus 1 because we need space for adding the extra decimal point.
-    this->ptr_err = std::to_chars(this->ptr_err.ptr, this->buf_end - 1, v_int);
+    this->ptr_err = std::to_chars(this->ptr_err.ptr, this->buf_end - 1, scaled_value);
 #endif
-    size_t writen_digits = (this->ptr_err.ptr - base_ptr) - (v_int < 0 ? 1 : 0);
+    int sign_length = 0;
+    if (scaled_value < 0)
+        sign_length = 1;
+    size_t writen_digits = (this->ptr_err.ptr - base_ptr) - sign_length;
     if (writen_digits < digits) {
         // Number is smaller than 10^digits, so that we will pad it with zeros.
         size_t remaining_digits = digits - writen_digits;
@@ -52,15 +56,15 @@ void GCodeFormatter::emit_axis(const char axis, const double v, size_t digits) {
 #if 0 // #ifndef NDEBUG
     {
         // Verify that the optimized formatter produces the same result as the standard sprintf().
-        double v1 = atof(std::string(base_ptr, this->ptr_err.ptr).c_str());
-        char buf[2048];
-        sprintf(buf, "%.*lf", int(digits), v);
-        double v2 = atof(buf);
+        double formatted_value = atof(std::string(base_ptr, this->ptr_err.ptr).c_str());
+        char sprintf_buffer[2048];
+        sprintf(sprintf_buffer, "%.*lf", int(digits), value);
+        double sprintf_value = atof(sprintf_buffer);
         // Numbers may differ when rounding at exactly or very close to 0.5 due to numerical issues when scaling the double to an integer.
         // Thus the complex assert.
-//        assert(v1 == v2);
-        assert(std::abs(v1 - v) * pow_10[digits] < 0.50001);
-        assert(std::abs(v2 - v) * pow_10[digits] < 0.50001);
+//        assert(formatted_value == sprintf_value);
+        assert(std::abs(formatted_value - value) * pow_10[digits] < 0.50001);
+        assert(std::abs(sprintf_value - value) * pow_10[digits] < 0.50001);
     }
 #endif // NDEBUG
 }
