@@ -20,17 +20,17 @@
 namespace em = emscripten;
 
 // The slice()-scope state shared by the phases. Pointers (not references) so slice() can fill it field by
-// field, in the order the values become available — nraft/zShift/ironOn are only known after the raft phase.
+// field, in the order the values become available — raftLayerCount/zShift/ironOn are only known after the raft phase.
 struct SliceCtx {
-  const Params* p = nullptr;
-  std::vector<Tri>* tris = nullptr;
-  std::vector<LayerData>* L = nullptr;
+  const Params* params = nullptr;
+  std::vector<Tri>* triangles = nullptr;
+  std::vector<LayerData>* layers = nullptr;
   double* treeZMaxResid = nullptr;   // support_run writes slice()'s own diagnostics locals
   int*    treeSupLayers = nullptr;
-  std::function<bool()> CX;                 // G002 cancel poll
+  std::function<bool()> isCanceled;         // G002 cancel poll
   std::function<void(int,int)> report;      // worker progress callback
-  int N = 0, total = 0, nraft = 0;
-  double height = 0, w = 0, cx = 0, cy = 0;
+  int layerCount = 0, total = 0, raftLayerCount = 0;
+  double height = 0, lineWidth = 0, centerX = 0, centerY = 0;
   double sparse_spacing = 0, solid_spacing = 0, support_spacing = 0;
   double zShift = 0;
   bool ironOn = false;
@@ -47,7 +47,7 @@ struct SliceCtx {
 using FlushFn = std::function<void(double, int, std::vector<float>&, std::vector<float>&)>;
 
 // ---- Model preparation + PASS 1 -> pass1.cpp -----------------------------------
-struct ModelPrep { double cx, cy, height; bool over_bed; };
+struct ModelPrep { double centerX, centerY, height; bool over_bed; };
 ModelPrep prepare_model(std::vector<Tri>& tris, const Params& params, bool reuseGeom);
 bool pass1_run(SliceCtx& context);              // false = canceled (G002)
 

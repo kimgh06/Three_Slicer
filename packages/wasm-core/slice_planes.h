@@ -37,8 +37,8 @@ inline bool tri_plane(const Tri& triangle, double z, Seg& out) {
   double crossingY[3];
   int crossingCount = 0;
   for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex) {
-    const V3& edgeStart = triangle.v[edgeIndex];
-    const V3& edgeEnd = triangle.v[(edgeIndex + 1) % 3];
+    const V3& edgeStart = triangle.vertices[edgeIndex];
+    const V3& edgeEnd = triangle.vertices[(edgeIndex + 1) % 3];
     const bool edgeCrossesPlane = (edgeStart.z < z && edgeEnd.z >= z) || (edgeEnd.z < z && edgeStart.z >= z);
     if (edgeCrossesPlane) {
       const double crossingFraction = (z - edgeStart.z) / (edgeEnd.z - edgeStart.z);
@@ -55,12 +55,12 @@ inline bool tri_plane(const Tri& triangle, double z, Seg& out) {
   //  segment is flipped when that normal's XY part points to its left. Without this every segment's direction was
   //  whichever edge the loop above met first, so only an even-odd fill could make sense of the loops — and even-odd
   //  counts two coincident shells as "inside twice" = outside: two objects on the same spot sliced to nothing.
-  const double firstEdgeX = triangle.v[1].x - triangle.v[0].x;
-  const double firstEdgeY = triangle.v[1].y - triangle.v[0].y;
-  const double firstEdgeZ = triangle.v[1].z - triangle.v[0].z;
-  const double secondEdgeX = triangle.v[2].x - triangle.v[0].x;
-  const double secondEdgeY = triangle.v[2].y - triangle.v[0].y;
-  const double secondEdgeZ = triangle.v[2].z - triangle.v[0].z;
+  const double firstEdgeX = triangle.vertices[1].x - triangle.vertices[0].x;
+  const double firstEdgeY = triangle.vertices[1].y - triangle.vertices[0].y;
+  const double firstEdgeZ = triangle.vertices[1].z - triangle.vertices[0].z;
+  const double secondEdgeX = triangle.vertices[2].x - triangle.vertices[0].x;
+  const double secondEdgeY = triangle.vertices[2].y - triangle.vertices[0].y;
+  const double secondEdgeZ = triangle.vertices[2].z - triangle.vertices[0].z;
   // The XY part of the facet normal (firstEdge x secondEdge); its z part plays no role in a horizontal cut.
   const double normalX = firstEdgeY * secondEdgeZ - firstEdgeZ * secondEdgeY;
   const double normalY = firstEdgeZ * secondEdgeX - firstEdgeX * secondEdgeZ;

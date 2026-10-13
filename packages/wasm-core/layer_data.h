@@ -11,11 +11,11 @@
 #include <vector>
 
 // One extrusion of the classic wall generator (classic_bridge.cpp): a perimeter loop, or an open thin-wall path.
-struct ClassicWall { Path pl; bool loop; int inset; float w; };
+struct ClassicWall { Path path; bool loop; int inset; float width; };
 
 // Layer data (2-pass)
 struct LayerData {
-  double z=0; int idx=0; double h=0;
+  double z=0; int index=0; double thickness=0;
   Paths contour;                 // outer contour (holes included)
   std::vector<Paths> walls;      // wall loops (outermost to innermost)
   Paths fill;                    // infill region (innermost wall -w/2)

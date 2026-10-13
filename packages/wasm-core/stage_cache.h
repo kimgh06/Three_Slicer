@@ -12,14 +12,14 @@
 //  parameter snapshot) as a second line of defense, refusing reuse on a mismatch. Keeping the cache resident is a memory trade-off (tens of MB after the simplification).
 struct StageCache {
   bool valid = false;
-  std::vector<Tri> tris;
-  double height = 0, cx = 0, cy = 0;
+  std::vector<Tri> triangles;
+  double height = 0, centerX = 0, centerY = 0;
   bool over_bed = false;
-  int N = 0;
+  int layerCount = 0;
   std::string layerKey;
   int treeSupLayers = 0;
   double treeZMaxResid = -1.0;   // for reproducing the preamble diagnostic lines
-  std::vector<LayerData> L;
+  std::vector<LayerData> layers;
 };
 extern StageCache g_scache;
 std::string make_layer_key(const Params& params);
