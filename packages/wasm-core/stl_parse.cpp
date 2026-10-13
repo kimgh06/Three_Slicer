@@ -27,7 +27,7 @@ static std::vector<Tri> parse_binary(const std::vector<uint8_t>& bytes) {
       float xyz[3];
       std::memcpy(xyz, &bytes[offset], 12);
       offset += 12;
-      triangle.v[k]={xyz[0],xyz[1],xyz[2]};
+      triangle.vertices[k]={xyz[0],xyz[1],xyz[2]};
     }
     offset += 2;
     triangles.push_back(triangle);
@@ -54,9 +54,9 @@ static std::vector<Tri> parse_ascii(const std::vector<uint8_t>& bytes) {
   }
   for (size_t i = 0; i + 2 < vertices.size(); i += 3) {
     Tri triangle;
-    triangle.v[0]=vertices[i];
-    triangle.v[1]=vertices[i+1];
-    triangle.v[2]=vertices[i+2];
+    triangle.vertices[0]=vertices[i];
+    triangle.vertices[1]=vertices[i+1];
+    triangle.vertices[2]=vertices[i+2];
     triangles.push_back(triangle);
   }
   return triangles;
