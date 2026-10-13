@@ -34,11 +34,11 @@ void emit_loops(GW& gw, std::vector<float>& tp, Paths loops, double z, float typ
 void emit_lines(GW& gw, std::vector<float>& tp, const Paths& lines, double z, float type, int fPrint, int fTravel);
 // Stage 19 -> WP3: one real tree support toolpath — per-path width plus the upstream ExtrusionPath's role/height/mm3_per_mm.
 struct TreePath {
-  Path pl;
-  float w;
+  Path path;
+  float width;
   int role;
-  float h;
-  float mm3;
+  float height;
+  float mm3_per_mm;
 };
 // The upstream path roles its flow multipliers key on (GCode.cpp:7350-7382), as the kernel's features map onto
 //  them. Thin walls are OuterWall (upstream prints them as erExternalPerimeter, PerimeterGenerator.cpp:232); a raft
@@ -53,8 +53,8 @@ constexpr int FLOW_ROLE_COUNT = (int)FlowRole::Other + 1;
 //  kernel used before they were mapped, so its G-code is unchanged. `capSpeed` > 0 is the layer-time slowdown's cap
 //  (pass2.cpp) applied to every role but the bridge, as the legacy feed already carries it.
 struct RoleFeeds {
-  int f[FLOW_ROLE_COUNT] = {};
-  int of(FlowRole role) const { return f[(int)role]; }
+  int feedByRole[FLOW_ROLE_COUNT] = {};
+  int of(FlowRole role) const { return feedByRole[(int)role]; }
 };
 RoleFeeds role_feeds(const Params& p, bool firstLayer, int printedLayer, int nraft, int legacy, int legacyBridge, double capSpeed);
 // Resolves the writer's per-role acceleration and jerk tables from the profile (GW::apply_motion).

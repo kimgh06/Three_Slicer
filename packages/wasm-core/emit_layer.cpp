@@ -57,7 +57,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
 
     // Stage 21: helper that applies a feature width — set_e_per_mm_width (E) and g_seg_w_cur (the ribbon) together. With the default (0.42) the values are unchanged.
     auto setWidth = [&](double width){
-      writer.set_e_per_mm_width(width, layerData.h, params);
+      writer.set_e_per_mm_width(width, layerData.thickness, params);
       g_seg_w_cur = (float)width;
     };
   // Upstream's role flow ratio for the feature about to be emitted (emit.cpp role_flow_ratio), on the current width,
@@ -89,7 +89,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
       use_tool(writer, supportTool);                                       // branches are one body: the base filament covers them
       writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_vw sets each branch's own section
       writer.set_feature((int)FlowRole::Support);
-      emit_lines_vw(writer, toolpath, layerData.supTree, layerZ, layerData.h, params, 5.0f, feeds.of(FlowRole::Support), travelFeed);
+      emit_lines_vw(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, feeds.of(FlowRole::Support), travelFeed);
       use_tool(writer, params.single_tool);
     }
     if (!skirtBrimLoops.empty()) {
@@ -105,9 +105,9 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
     }
     if (params.wall_generator=="arachne" && !layerData.arachneWalls.empty()) {
       writer.raw("; walls (Arachne — real ported WallToolPaths, variable width)");
-      emit_arachne_walls(writer, toolpath, layerData.arachneWalls, layerZ, layerData.h, params, feeds, travelFeed);
+      emit_arachne_walls(writer, toolpath, layerData.arachneWalls, layerZ, layerData.thickness, params, feeds, travelFeed);
       writer.role_flow = 1.0;
-      writer.set_e_per_mm(layerData.h, params);   // restore the default width/flow (for the infill that follows)
+      writer.set_e_per_mm(layerData.thickness, params);   // restore the default width/flow (for the infill that follows)
       g_seg_w_cur=(float)defaultWidth;
     } else if (params.wall_generator != "arachne") {
       // The classic generator's walls in upstream's print order (classic_bridge.cpp): each loop at the width upstream
@@ -119,12 +119,12 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
         writer.set_feature((int)wallRole);
         const int wallFeed = feeds.of(wallRole);
         if (!wall.loop) {
-          emit_lines_vw(writer, toolpath, std::vector<TreePath>{ { wall.pl, wall.w, 0, (float)layerData.h, 0.0f } }, layerZ, layerData.h, params, 8.0f, wallFeed, travelFeed);
+          emit_lines_vw(writer, toolpath, std::vector<TreePath>{ { wall.path, wall.width, 0, (float)layerData.thickness, 0.0f } }, layerZ, layerData.thickness, params, 8.0f, wallFeed, travelFeed);
           continue;
         }
-        setWidth(wall.w);
-        if (wall.inset == 0 && scarfOn) emit_scarf_loop(writer, toolpath, wall.pl, layerZ, layerData.h, wallFeed, travelFeed, seamMode, seamCtx);
-        else emit_loops(writer, toolpath, Paths{wall.pl}, layerZ, 1.0f, wallFeed, travelFeed, seamMode, seamCtx, wall.inset == 0);  // record the seam only for the outer wall
+        setWidth(wall.width);
+        if (wall.inset == 0 && scarfOn) emit_scarf_loop(writer, toolpath, wall.path, layerZ, layerData.thickness, wallFeed, travelFeed, seamMode, seamCtx);
+        else emit_loops(writer, toolpath, Paths{wall.path}, layerZ, 1.0f, wallFeed, travelFeed, seamMode, seamCtx, wall.inset == 0);  // record the seam only for the outer wall
       }
     } else {
       for (size_t wallIndex=0; wallIndex<layerData.walls.size(); ++wallIndex) {
@@ -137,7 +137,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
         if (wallIndex==0) wallWidth = outerWidth;
         setWidth(wallWidth);   // stage 21: outer wall (wallIndex==0) = outer_wall_line_width, inner walls = inner_wall_line_width
         if (wallIndex==0 && scarfOn) {
-          for (Path wallPath : layerData.walls[wallIndex]) emit_scarf_loop(writer, toolpath, wallPath, layerZ, layerData.h, wallFeed, travelFeed, seamMode, seamCtx);
+          for (Path wallPath : layerData.walls[wallIndex]) emit_scarf_loop(writer, toolpath, wallPath, layerZ, layerData.thickness, wallFeed, travelFeed, seamMode, seamCtx);
         }
         else emit_loops(writer, toolpath, layerData.walls[wallIndex], layerZ, 1.0f, wallFeed, travelFeed, seamMode, seamCtx, wallIndex==0);  // record the seam only for the outer wall (wallIndex==0)
       }
@@ -146,7 +146,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
     writer.set_feature((int)FlowRole::GapFill);
     if (!layerData.classicGapFill.empty()) {
       writer.raw("; gap-fill");
-      emit_lines_vw(writer, toolpath, layerData.classicGapFill, layerZ, layerData.h, params, 7.0f, feeds.of(FlowRole::GapFill), travelFeed);
+      emit_lines_vw(writer, toolpath, layerData.classicGapFill, layerZ, layerData.thickness, params, 7.0f, feeds.of(FlowRole::GapFill), travelFeed);
     }
     double defaultLineWidth = params.line_width;
     if (firstLayer) defaultLineWidth = params.initial_layer_line_width;
@@ -225,20 +225,20 @@ void emit_layer_any(GW& writer, std::vector<float>& toolpath, std::vector<float>
                            int seamMode, bool scarfOn, bool ironOn, SeamCtx& seamCtx) {
   writer.role_flow = 1.0;                              // no role ratio leaks across a layer boundary
   writer.on_first_layer = (layerIndex == 0 && raftLayers == 0);      // with a raft the first layer is the raft's (raft.cpp)
-  writer.set_e_per_mm(layerData.h, params);
+  writer.set_e_per_mm(layerData.thickness, params);
   writer.z = layerZ;
   writer.pe_reset();
-  if (!writer.dry) {   // G003: copy when the cache is kept
+  if (!writer.dry_run) {   // G003: copy when the cache is kept
     if (g_keep_island) writer.island = layerData.island;
     else writer.island = std::move(layerData.island);
   }
-  if (!writer.dry) {
+  if (!writer.dry_run) {
     writer.overhang_area = std::move(pre.overhangArea);
     writer.internal_area = std::move(pre.internalArea);
   }
-  seamCtx.rng = 2654435761u * (uint32_t)(layerIndex+1);
+  seamCtx.randomState = 2654435761u * (uint32_t)(layerIndex+1);
   std::vector<float>* segmentWidths = &widths;
-  if (writer.dry) segmentWidths = nullptr;
+  if (writer.dry_run) segmentWidths = nullptr;
   g_seg_w = segmentWidths;
   g_seg_w_cur = (float)defaultWidth;
   char comment[72];
@@ -249,7 +249,7 @@ void emit_layer_any(GW& writer, std::vector<float>& toolpath, std::vector<float>
     writer.layer_z(layerZ, travelFeed);
     if (layerIndex + raftLayers == 1) writer.second_layer_begin();
     writer.z = layerZ;
-    writer.set_e_per_mm(layerData.h, params);
+    writer.set_e_per_mm(layerData.thickness, params);
     writer.pe_reset();
     writer.set_fan(fan_S(layerIndex, params));
     Paths& supportInterfaceLines = pre.supI;
@@ -279,7 +279,7 @@ void emit_layer_any(GW& writer, std::vector<float>& toolpath, std::vector<float>
       use_tool(writer, supportTool);
       writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_vw sets each branch's section
       writer.set_feature((int)FlowRole::Support);
-      emit_lines_vw(writer, toolpath, layerData.supTree, layerZ, layerData.h, params, 5.0f, pre.feeds.of(FlowRole::Support), travelFeed);
+      emit_lines_vw(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, pre.feeds.of(FlowRole::Support), travelFeed);
       use_tool(writer, params.single_tool);
     }
     return;
