@@ -72,36 +72,36 @@ static inline char* fmt_i(char* out, int value) {
 }
 
 struct GW {
-  bool dry=false;   // G003 E1 dry run: skips strings/toolpaths and only updates position, curF, fan and seam state (to chain the entry state)
-  std::string s;
-  double px=0, py=0, z=0;
+  bool dry_run=false;   // G003 E1 dry run: skips strings/toolpaths and only updates position, current_feed, fan and seam state (to chain the entry state)
+  std::string gcode;   // the G-code text written so far
+  double position_x=0, position_y=0, z=0;
   double e_per_mm=0, filament=0;
   long   segments=0;
-  // Extent of everything actually EXTRUDED, in model coordinates (the G-code adds offX/offY on the way out).
+  // Extent of everything actually EXTRUDED, in model coordinates (the G-code adds offset_x/offset_y on the way out).
   //  The model's own bbox cannot answer "does this print fit on the bed": support, skirt, brim and the raft are
   //  generated during slicing and reach past it. Upstream asks the same question of the finished G-code
   //  (BuildVolume::all_paths_inside over GCodeProcessorResult::moves), which is what makes it indifferent to
   //  WHICH feature produced a path. Travels are excluded there and here — only extrusions have to stay on the bed.
-  double exMinX=1e18, exMaxX=-1e18, exMinY=1e18, exMaxY=-1e18, exMaxZ=-1e18;
+  double extruded_min_x=1e18, extruded_max_x=-1e18, extruded_min_y=1e18, extruded_max_y=-1e18, extruded_max_z=-1e18;
   inline void note_xy(double x, double y) {
-    if (x < exMinX) exMinX = x;
-    if (x > exMaxX) exMaxX = x;
-    if (y < exMinY) exMinY = y;
-    if (y > exMaxY) exMaxY = y;
-    if (z > exMaxZ) exMaxZ = z;   // the layer z this extrusion is being written at
+    if (x < extruded_min_x) extruded_min_x = x;
+    if (x > extruded_max_x) extruded_max_x = x;
+    if (y < extruded_min_y) extruded_min_y = y;
+    if (y > extruded_max_y) extruded_max_y = y;
+    if (z > extruded_max_z) extruded_max_z = z;   // the layer z this extrusion is being written at
   }
-  bool extruded_anything() const { return exMaxX >= exMinX; }
-  int    curF=-1;
-  double retract_len=0.8;                    // mm
-  int    retractF=1800;                      // mm/min
+  bool extruded_anything() const { return extruded_max_x >= extruded_min_x; }
+  int    current_feed=-1;
+  double retract_length=0.8;                    // mm
+  int    retract_feed=1800;                      // mm/min
   double retract_min_travel=2.0;             // stage 33: retraction_minimum_travel (formerly the TRAVEL_RETRACT_MIN constant)
   double z_hop=0.0;
-  double offX=128.0, offY=128.0;   // G-code XY offset = the bed centre in printer coordinates (Params::bed_center_x/y)
+  double offset_x=128.0, offset_y=128.0;   // G-code XY offset = the bed centre in printer coordinates (Params::bed_center_x/y)
   // Upstream's E modes and firmware retraction (GCodeWriter.cpp _retract/unretract/reset_e). The defaults are the
   //  kernel's own relative E with E-move retractions, which every caller before these keys got.
   Flavor flavor=Flavor::Unset;
   bool   absolute_e=false;          // M82: every E word is the running position, reset by G92 E0 after a retraction
-  double e_pos=0.0;                 // the running E position in absolute mode
+  double extruder_position=0.0;          // the extruder axis (E) position the firmware holds; tracked in absolute E mode only
   bool   firmware_retraction=false; // G10/G11 instead of E moves
   double z_offset=0.0;              // added to every Z written (upstream's z_offset)
   // Upstream's per-role acceleration and jerk (GCode::_extrude :7289-7342, travel_to :8285-8333): what each role and
@@ -183,8 +183,8 @@ struct GW {
   // The E word of an extrusion of dE: dE itself in relative mode, the position after it in absolute mode.
   double e_word(double deltaE) {
     if (!absolute_e) return deltaE;
-    e_pos += deltaE;
-    return e_pos;
+    extruder_position += deltaE;
+    return extruder_position;
   }
   // The Z move that starts a layer. In absolute mode the layer also starts from E0 (G92 E0) — upstream resets after
   //  every retraction instead, which leaves the machine in the same state; resetting here as well lets each layer
@@ -197,7 +197,7 @@ struct GW {
     raw(line);
     if (absolute_e) {
       raw("G92 E0");
-      e_pos = 0.0;
+      extruder_position = 0.0;
     }
     if (layer_slots) {
       raw(AFTER_LAYER_SLOT);
@@ -214,7 +214,7 @@ struct GW {
   int    lastFan=-1;               // current cooling fan value (M106 only on change)
   bool   arc_fitting=false;        // G2/G3 arc fitting
   double arc_resolution=0.01;     // the print's `resolution` (mm): the arc fitting tolerance outside sparse infill and support
-  double scarf_len=10.0;           // length of the scarf seam ramp (mm)
+  double scarf_length=10.0;           // length of the scarf seam ramp (mm)
   // Stage 6: PE-lite (limit on the volumetric flow change rate between adjacent extrusions)
   double pe_slope=0.0;             // mm³/s² (0=off)
   double filament_area=2.405;      // π·d²/4 (set in the preamble)
@@ -226,15 +226,15 @@ struct GW {
   // Currently loaded tool, so support_filament can print support with a different extruder. tool<0 means "keep the
   //  current one" (the upstream 0 = Default), and a T is written only on an actual change — with the defaults
   //  nothing is ever emitted and the single-material G-code is byte-identical to before.
-  int    cur_tool=0;
+  int    current_tool=0;
   void set_tool(int tool){
-    if (tool < 0 || tool == cur_tool) return;
-    cur_tool = tool;
+    if (tool < 0 || tool == current_tool) return;
+    current_tool = tool;
     char command[16];
     std::snprintf(command, sizeof command, "T%d", tool);
     raw(command);
   }
-  double last_vol_flow=-1.0;       // previous extrusion volumetric flow in mm³/s (reset at layer start, not reset by travels)
+  double last_volumetric_flow=-1.0;       // previous extrusion volumetric flow in mm³/s (reset at layer start, not reset by travels)
   static constexpr int MIN_FEED=60;  // mm/min: the slowest feed pe_feed and capped_feed write (1 mm/s)
   // Upstream's flow multipliers on top of the filament's own (GCode.cpp:7343-7390): print_flow_ratio for every path,
   //  the role's ratio set by the emitter before each feature (role_flow_ratio, emit.cpp), and scarf_joint_flow_ratio
@@ -250,16 +250,16 @@ struct GW {
     role_flow = next;
   }
   // The loaded filament's filament_max_volumetric_speed (mm³/s); 0 = no cap, the value when the host sends none.
-  double max_vol_speed=0.0;
+  double max_volumetric_speed=0.0;
   // Upstream's volumetric cap (GCode.cpp:7492): speed = min(speed, filament_max_volumetric_speed / mm3_per_mm), with
   //  mm3_per_mm the flow-scaled cross-section — here e_per_mm * filament_area, which already carries the flow ratio.
   //  Rounded down so the written F never exceeds the cap. Every extrusion entry point calls it, the dry run included,
-  //  so curF chains to the value a real emit leaves.
+  //  so current_feed chains to the value a real emit leaves.
   int capped_feed(int fPrint) const {
-    if (max_vol_speed <= 0.0) return fPrint;
+    if (max_volumetric_speed <= 0.0) return fPrint;
     const double crossSection = e_per_mm * filament_area;
     if (crossSection <= 1e-9) return fPrint;
-    int fMax = (int)std::floor(max_vol_speed / crossSection * 60.0);
+    int fMax = (int)std::floor(max_volumetric_speed / crossSection * 60.0);
     if (fMax < MIN_FEED) fMax = MIN_FEED;
     return std::min(fPrint, fMax);
   }
@@ -280,14 +280,14 @@ struct GW {
   bool   emit_role_tags=false;
   int    tag_type=-1;
   void role_tag(int type){
-    if (!emit_role_tags || dry || type <= 0 || type == tag_type) return;
+    if (!emit_role_tags || dry_run || type <= 0 || type == tag_type) return;
     static const char* const NAMES[] = { "", "Outer wall", "Sparse infill", "Internal solid infill", "Skirt", "Support",
       "Raft", "Gap infill", "Thin wall", "Bridge", "Ironing", "Prime tower" };
     if (type >= (int)(sizeof NAMES / sizeof NAMES[0])) return;
     tag_type = type;
-    s += ";TYPE:";
-    s += NAMES[type];
-    s += '\n';
+    gcode += ";TYPE:";
+    gcode += NAMES[type];
+    gcode += '\n';
   }
   void role_tag_unknown(){ tag_type = -1; }
   // The temperature switch of the second printed layer (second_layer_temperatures, preamble.cpp), set once the
@@ -301,22 +301,22 @@ struct GW {
   }
   // Stage 9: emitting the real PE tags (OrcaSlicer format)
   bool   emit_pe_tags=false;
-  int    pe_cur_role=-1;
-  char   buf[200];
-  void pe_reset(){ last_vol_flow=-1.0; }
+  int    pe_current_role=-1;
+  char   line_buffer[200];
+  void pe_reset(){ last_volumetric_flow=-1.0; }
   // Start an extrusion run: ;_EXTRUSION_ROLE on a role change, then G1 F<v> ;_EXTRUDE_SET_SPEED (opening the block)
-  //  curF is set to f so later extrusion G1s omit F (inheriting the SET_SPEED speed) — PE adjusts the flow within the block.
+  //  current_feed is set to f so later extrusion G1s omit F (inheriting the SET_SPEED speed) — PE adjusts the flow within the block.
   void pe_begin_run(int role, int feed){
     if (!emit_pe_tags) return;
-    if (role != pe_cur_role) {
-      std::snprintf(buf,sizeof buf,";_EXTRUSION_ROLE:%d",role);
-      raw(buf);
-      pe_cur_role=role;
+    if (role != pe_current_role) {
+      std::snprintf(line_buffer,sizeof line_buffer,";_EXTRUSION_ROLE:%d",role);
+      raw(line_buffer);
+      pe_current_role=role;
     }
     feed = capped_feed(feed);
-    std::snprintf(buf,sizeof buf,"G1 F%d ;_EXTRUDE_SET_SPEED",feed);
-    raw(buf);
-    curF=feed;
+    std::snprintf(line_buffer,sizeof line_buffer,"G1 F%d ;_EXTRUDE_SET_SPEED",feed);
+    raw(line_buffer);
+    current_feed=feed;
   }
   void pe_end_run(){ if (emit_pe_tags) raw(";_EXTRUDE_END"); }
   // PE-lite: limits the volumetric flow change rate (mm³/s²) between adjacent extrusions. With segment time Δt=d/v_n and v_n=Fn/A,
@@ -327,11 +327,11 @@ struct GW {
     double crossSection=e_per_mm*filament_area;
     double requestedSpeed=requestedFeed/60.0;
     double desiredFlow=crossSection*requestedSpeed;
-    if (pe_slope<=0.0 || last_vol_flow<0.0 || distance<1e-6 || crossSection<=1e-9) {
-      last_vol_flow=desiredFlow;
+    if (pe_slope<=0.0 || last_volumetric_flow<0.0 || distance<1e-6 || crossSection<=1e-9) {
+      last_volumetric_flow=desiredFlow;
       return requestedFeed;
     }
-    double lastFlow=last_vol_flow;
+    double lastFlow=last_volumetric_flow;
     double nextFlow=desiredFlow;
     double slopeBudget=pe_slope*distance*crossSection;
     if (desiredFlow > lastFlow) {                           // acceleration (more flow)
@@ -348,7 +348,7 @@ struct GW {
     }
     int feed=(int)std::llround((nextFlow/crossSection)*60.0);
     if (feed<MIN_FEED) feed=MIN_FEED;
-    last_vol_flow=crossSection*(feed/60.0);
+    last_volumetric_flow=crossSection*(feed/60.0);
     return feed;
   }
   void set_e_per_mm(double layerHeight, const Params& params) {
@@ -371,9 +371,9 @@ struct GW {
     e_per_mm = mm3PerMm / toolFilamentArea * tool_flow_ratio * print_flow * role_flow;
   }
   void raw(const char* line){
-    if (dry) return;
-    s += line;
-    s += '\n';
+    if (dry_run) return;
+    gcode += line;
+    gcode += '\n';
   }
   // A multi-line block (a printer profile's custom G-code), one raw line per line; empty lines are dropped.
   void raw_lines(const std::string& text) {
@@ -386,7 +386,7 @@ struct GW {
   }
   // Hot-path line emission — when the fast path (fixed point) fails, fall back to the original snprintf format (byte-identical).
   inline void line_xyf(const char* head, double xValue, double yValue, int feed, const char* fallbackFormat) {
-    char* cursor = buf;
+    char* cursor = line_buffer;
     size_t headLength = strlen(head);
     memcpy(cursor, head, headLength);
     cursor += headLength;
@@ -399,14 +399,14 @@ struct GW {
       memcpy(end, " F", 2);
       end = fmt_i(end+2, feed);
       *end = '\0';
-      raw(buf);
+      raw(line_buffer);
       return;
     }
-    std::snprintf(buf, sizeof buf, fallbackFormat, xValue, yValue, feed);
-    raw(buf);
+    std::snprintf(line_buffer, sizeof line_buffer, fallbackFormat, xValue, yValue, feed);
+    raw(line_buffer);
   }
   inline void line_vf(const char* head, double value, int precision, int feed, const char* fallbackFormat) {
-    char* cursor = buf;
+    char* cursor = line_buffer;
     size_t headLength = strlen(head);
     memcpy(cursor, head, headLength);
     cursor += headLength;
@@ -415,30 +415,30 @@ struct GW {
       memcpy(end, " F", 2);
       end = fmt_i(end+2, feed);
       *end = '\0';
-      raw(buf);
+      raw(line_buffer);
       return;
     }
-    std::snprintf(buf, sizeof buf, fallbackFormat, value, feed);
-    raw(buf);
+    std::snprintf(line_buffer, sizeof line_buffer, fallbackFormat, value, feed);
+    raw(line_buffer);
   }
   // Straight travel including retraction (upstream behavior)
   void travel_raw(double x, double y, int fTravel) {
-    double distance = std::hypot(x-px, y-py);
+    double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-6) return;
     // Firmware retraction retracts whatever length is configured, 0 included (GCodeWriter::_retract's "fake 1").
-    bool retract = distance > retract_min_travel && (retract_len > 0 || firmware_retraction);
+    bool retract = distance > retract_min_travel && (retract_length > 0 || firmware_retraction);
     if (retract) {
       retract_move();
       if (z_hop > 0) line_vf("G1 Z", z + z_hop + z_offset, 3, fTravel, "G1 Z%.3f F%d");
     }
-    line_xyf("G0 X", x+offX, y+offY, fTravel, "G0 X%.3f Y%.3f F%d");
+    line_xyf("G0 X", x+offset_x, y+offset_y, fTravel, "G0 X%.3f Y%.3f F%d");
     if (retract) {
       if (z_hop > 0) line_vf("G1 Z", z + z_offset, 3, fTravel, "G1 Z%.3f F%d");
       unretract_move();
     }
-    px=x;
-    py=y;
-    curF=-1;
+    position_x=x;
+    position_y=y;
+    current_feed=-1;
   }
   // GCodeWriter::_retract / unretract: G10/G11 with firmware retraction, else an E move — relative, or in absolute
   //  mode the position minus the length followed by G92 E0 (reset_e), then the unretract back to +length.
@@ -448,41 +448,41 @@ struct GW {
       return;
     }
     if (!absolute_e) {
-      line_vf("G1 E-", retract_len, 4, retractF, "G1 E-%.4f F%d");
+      line_vf("G1 E-", retract_length, 4, retract_feed, "G1 E-%.4f F%d");
       return;
     }
     char line[64];
-    std::snprintf(line, sizeof line, "G1 E%.5f F%d", e_pos - retract_len, retractF);
+    std::snprintf(line, sizeof line, "G1 E%.5f F%d", extruder_position - retract_length, retract_feed);
     raw(line);
     raw("G92 E0");
-    e_pos = 0.0;
+    extruder_position = 0.0;
   }
   void unretract_move() {
     if (firmware_retraction) {
       raw(machine_firmware_unretract(flavor));
       if (absolute_e) {
         raw("G92 E0");
-        e_pos = 0.0;
+        extruder_position = 0.0;
       }
       return;
     }
     if (!absolute_e) {
-      line_vf("G1 E", retract_len, 4, retractF, "G1 E%.4f F%d");
+      line_vf("G1 E", retract_length, 4, retract_feed, "G1 E%.4f F%d");
       return;
     }
     char line[64];
-    std::snprintf(line, sizeof line, "G1 E%.5f F%d", retract_len, retractF);
+    std::snprintf(line, sizeof line, "G1 E%.5f F%d", retract_length, retract_feed);
     raw(line);
-    e_pos = retract_len;
+    extruder_position = retract_length;
   }
   // Detour move inside the material (no retraction — stays inside the material, the §6.5 desktop behavior)
   void travel_hop(double x, double y, int fTravel) {
-    double distance = std::hypot(x-px, y-py);
+    double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-6) return;
-    line_xyf("G0 X", x+offX, y+offY, fTravel, "G0 X%.3f Y%.3f F%d");
-    px=x;
-    py=y;
-    curF=-1;
+    line_xyf("G0 X", x+offset_x, y+offset_y, fTravel, "G0 X%.3f Y%.3f F%d");
+    position_x=x;
+    position_y=y;
+    current_feed=-1;
   }
   // True when the straight line A->B lies entirely inside internal_area (RetractWhenCrossingPerimeters::
   //  travel_inside_internal_regions: diff_pl(travel, island).empty()).
@@ -603,27 +603,27 @@ struct GW {
     return (containingCount&1)==1;
   }
   void travel(double x, double y, int fTravel) {
-    double distance = std::hypot(x-px, y-py);
+    double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-6) return;
     apply_travel_motion(distance);
-    if (dry) {                                   // G003: a detour ends at the same point -> position only
-      px=x;
-      py=y;
-      curF=-1;
+    if (dry_run) {                                   // G003: a detour ends at the same point -> position only
+      position_x=x;
+      position_y=y;
+      current_feed=-1;
       return;
     }
     if (!internal_area.empty() && feature_role != outer_wall_role && feature_role != inner_wall_role &&
-        last_extrusion_role != outer_wall_role && inside_internal_area(px, py, x, y)) {
+        last_extrusion_role != outer_wall_role && inside_internal_area(position_x, position_y, x, y)) {
       travel_hop(x, y, fTravel);
       return;
     }
     if (!island.empty()) {
       bool staysInside;
-      if (avoid_walls) staysInside = seg_inside(px,py,x,y);
-      else staysInside = seg_inside_fast(px,py,x,y);
+      if (avoid_walls) staysInside = seg_inside(position_x,position_y,x,y);
+      else staysInside = seg_inside_fast(position_x,position_y,x,y);
       if (!staysInside) {
         if (avoid_walls) {
-          std::vector<DPt> waypoints = detour_path(px,py,x,y);
+          std::vector<DPt> waypoints = detour_path(position_x,position_y,x,y);
           if (!waypoints.empty()) {
             for (auto& waypoint:waypoints) travel_hop(waypoint.x,waypoint.y,fTravel);
             travel_hop(x,y,fTravel);
@@ -636,11 +636,11 @@ struct GW {
     travel_raw(x, y, fTravel);
   }
   void extrude(double x, double y, int fPrint) {
-    if (!dry && checks_overhang_segments()) {
+    if (!dry_run && checks_overhang_segments()) {
       // Each piece between two crossings is either over the layer below or not; its middle decides, and the fan
       //  follows. Pieces shorter than a quarter of the line width are not split off (upstream's min_spacing).
-      const double startX = px;
-      const double startY = py;
+      const double startX = position_x;
+      const double startY = position_y;
       const double length = std::hypot(x-startX, y-startY);
       std::vector<double> cuts;
       for (double fraction : overhang_crossings(startX, startY, x, y))
@@ -660,14 +660,14 @@ struct GW {
     extrude_move(x, y, fPrint);
   }
   void extrude_move(double x, double y, int fPrint) {
-    double distance = std::hypot(x-px, y-py);
+    double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-9) return;
     apply_print_motion();
     fPrint = capped_feed(fPrint);
-    if (dry) {                                   // G003 dry run (assumes pe off — guarded in parallel mode)
-      px=x;
-      py=y;
-      curF=fPrint;
+    if (dry_run) {                                   // G003 dry run (assumes pe off — guarded in parallel mode)
+      position_x=x;
+      position_y=y;
+      current_feed=fPrint;
       return;
     }
     last_extrusion_role = feature_role;
@@ -676,36 +676,36 @@ struct GW {
     filament += deltaE;
     ++segments;
     const double eWord = e_word(deltaE);
-    note_xy(px, py);   // both ends: an open path's first point follows a travel, so it is noted nowhere else
+    note_xy(position_x, position_y);   // both ends: an open path's first point follows a travel, so it is noted nowhere else
     note_xy(x, y);
-    char* cursor = buf;
+    char* cursor = line_buffer;
     memcpy(cursor, "G1 X", 4);
     cursor += 4;
-    cursor = fmt_fixed_safe(cursor, x+offX, 3);
+    cursor = fmt_fixed_safe(cursor, x+offset_x, 3);
     if (cursor) {
       memcpy(cursor, " Y", 2);
-      cursor = fmt_fixed_safe(cursor+2, y+offY, 3);
+      cursor = fmt_fixed_safe(cursor+2, y+offset_y, 3);
     }
     if (cursor) {
       memcpy(cursor, " E", 2);
       cursor = fmt_fixed_safe(cursor+2, eWord, 5);
     }
     if (cursor) {                                // fast path succeeded — F only when it changes
-      if (feed != curF) {
+      if (feed != current_feed) {
         memcpy(cursor, " F", 2);
         cursor = fmt_i(cursor+2, feed);
       }
       *cursor = '\0';
-    } else if (feed != curF) std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f F%d", x+offX,y+offY,eWord,feed);
-    else                     std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f E%.5f",     x+offX,y+offY,eWord);
-    curF = feed;
-    raw(buf);
-    px=x;
-    py=y;
+    } else if (feed != current_feed) std::snprintf(line_buffer,sizeof line_buffer,"G1 X%.3f Y%.3f E%.5f F%d", x+offset_x,y+offset_y,eWord,feed);
+    else                     std::snprintf(line_buffer,sizeof line_buffer,"G1 X%.3f Y%.3f E%.5f",     x+offset_x,y+offset_y,eWord);
+    current_feed = feed;
+    raw(line_buffer);
+    position_x=x;
+    position_y=y;
   }
   // For spiral mode: extrusion that raises Z as it goes
   void extrude_z(double x, double y, double nextZ, int fPrint) {
-    double distance = std::hypot(x-px, y-py);
+    double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-9) {
       z=nextZ;
       return;
@@ -716,23 +716,23 @@ struct GW {
     filament += deltaE;
     ++segments;
     const double eWord = e_word(deltaE);
-    note_xy(px, py);
+    note_xy(position_x, position_y);
     note_xy(x, y);
-    if (nextZ > exMaxZ) exMaxZ = nextZ;     // z ramps within the move here, so the member z is one layer behind
-    if (fPrint != curF) {
-      std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,nextZ+z_offset,eWord,fPrint);
-      curF=fPrint;
+    if (nextZ > extruded_max_z) extruded_max_z = nextZ;     // z ramps within the move here, so the member z is one layer behind
+    if (fPrint != current_feed) {
+      std::snprintf(line_buffer,sizeof line_buffer,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offset_x,y+offset_y,nextZ+z_offset,eWord,fPrint);
+      current_feed=fPrint;
     } else {
-      std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,nextZ+z_offset,eWord);
+      std::snprintf(line_buffer,sizeof line_buffer,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offset_x,y+offset_y,nextZ+z_offset,eWord);
     }
-    raw(buf);
-    px=x;
-    py=y;
+    raw(line_buffer);
+    position_x=x;
+    position_y=y;
     z=nextZ;
   }
   // For the scarf seam: extrusion applying both Z and flow (an E multiplier) (Z always written)
   void extrude_zf(double x, double y, double nextZ, double flowMul, int fPrint) {
-    double distance = std::hypot(x-px, y-py);
+    double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-9) {
       z=nextZ;
       return;
@@ -743,18 +743,18 @@ struct GW {
     filament += deltaE;
     ++segments;
     const double eWord = e_word(deltaE);
-    note_xy(px, py);
+    note_xy(position_x, position_y);
     note_xy(x, y);
-    if (nextZ > exMaxZ) exMaxZ = nextZ;     // z ramps within the move here, so the member z is one layer behind
-    if (fPrint != curF) {
-      std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offX,y+offY,nextZ+z_offset,eWord,fPrint);
-      curF=fPrint;
+    if (nextZ > extruded_max_z) extruded_max_z = nextZ;     // z ramps within the move here, so the member z is one layer behind
+    if (fPrint != current_feed) {
+      std::snprintf(line_buffer,sizeof line_buffer,"G1 X%.3f Y%.3f Z%.3f E%.5f F%d", x+offset_x,y+offset_y,nextZ+z_offset,eWord,fPrint);
+      current_feed=fPrint;
     } else {
-      std::snprintf(buf,sizeof buf,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offX,y+offY,nextZ+z_offset,eWord);
+      std::snprintf(line_buffer,sizeof line_buffer,"G1 X%.3f Y%.3f Z%.3f E%.5f",     x+offset_x,y+offset_y,nextZ+z_offset,eWord);
     }
-    raw(buf);
-    px=x;
-    py=y;
+    raw(line_buffer);
+    position_x=x;
+    position_y=y;
     z=nextZ;
   }
   // Cooling fan (M106 emitted only on change). With the cooling filter running the fan is the filter's to set.
@@ -762,9 +762,9 @@ struct GW {
     if (cooling_markers) return;
     if (fanValue==lastFan) return;
     lastFan=fanValue;
-    if (dry) return;
-    std::snprintf(buf,sizeof buf,"M106 S%d",fanValue);
-    raw(buf);
+    if (dry_run) return;
+    std::snprintf(line_buffer,sizeof line_buffer,"M106 S%d",fanValue);
+    raw(line_buffer);
   }
   // Upstream's cooling markers around every extrusion path (GCode::_extrude :7767-8171) for the cooling filter
   //  (cooling_bridge.h), which reads and removes them: the speed line marked ;_EXTRUDE_SET_SPEED (and
@@ -825,16 +825,16 @@ struct GW {
     fan_marker_on[which] = on;
     const char* edge = "END";
     if (on) edge = "START";
-    std::snprintf(buf, sizeof buf, ";%s_FAN_%s", prefix, edge);
-    raw(buf);
+    std::snprintf(line_buffer, sizeof line_buffer, ";%s_FAN_%s", prefix, edge);
+    raw(line_buffer);
   }
   void path_begin(int fPrint) {
     if (!cooling_markers) return;
     fPrint = capped_feed(fPrint);
-    if (feature_role == outer_wall_role) std::snprintf(buf, sizeof buf, "G1 F%d;_EXTRUDE_SET_SPEED;_EXTERNAL_PERIMETER", fPrint);
-    else                                 std::snprintf(buf, sizeof buf, "G1 F%d;_EXTRUDE_SET_SPEED", fPrint);
-    raw(buf);
-    curF = fPrint;
+    if (feature_role == outer_wall_role) std::snprintf(line_buffer, sizeof line_buffer, "G1 F%d;_EXTRUDE_SET_SPEED;_EXTERNAL_PERIMETER", fPrint);
+    else                                 std::snprintf(line_buffer, sizeof line_buffer, "G1 F%d;_EXTRUDE_SET_SPEED", fPrint);
+    raw(line_buffer);
+    current_feed = fPrint;
     bool overhang = fan_overhang && (feature_role == bridge_role || (fan_overhang_external && feature_role == outer_wall_role));
     fan_marker(0, overhang, "_OVERHANG");
     fan_marker(1, fan_support_interface && feature_role == support_interface_role, "_SUPP_INTERFACE");
@@ -847,11 +847,11 @@ struct GW {
   //  the print's `resolution` for everything else. `type` is the toolpath type the caller emits (emit.cpp).
   void extrude_run(const std::vector<DPt>& path, int fPrint, float type) {
     if (path.size() > 1) apply_print_motion();
-    if (dry) {
+    if (dry_run) {
       if (path.size()>1) {
-        px=path.back().x;
-        py=path.back().y;
-        curF=capped_feed(fPrint);
+        position_x=path.back().x;
+        position_y=path.back().y;
+        current_feed=capped_feed(fPrint);
       }
       return;
     }
@@ -900,19 +900,19 @@ struct GW {
     filament+=deltaE;
     ++segments;
     const double eWord = e_word(deltaE);
-    double centerOffsetX=centerX-px;
-    double centerOffsetY=centerY-py;
+    double centerOffsetX=centerX-position_x;
+    double centerOffsetY=centerY-position_y;
     const char* command = "G2";
     if (counterClockwise) command = "G3";
-    if (fPrint!=curF){
-      std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",command,end.x+offX,end.y+offY,centerOffsetX,centerOffsetY,eWord,fPrint);
-      curF=fPrint;
+    if (fPrint!=current_feed){
+      std::snprintf(line_buffer,sizeof line_buffer,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f F%d",command,end.x+offset_x,end.y+offset_y,centerOffsetX,centerOffsetY,eWord,fPrint);
+      current_feed=fPrint;
     } else {
-      std::snprintf(buf,sizeof buf,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   command,end.x+offX,end.y+offY,centerOffsetX,centerOffsetY,eWord);
+      std::snprintf(line_buffer,sizeof line_buffer,"%s X%.3f Y%.3f I%.3f J%.3f E%.5f",   command,end.x+offset_x,end.y+offset_y,centerOffsetX,centerOffsetY,eWord);
     }
-    raw(buf);
-    px=end.x;
-    py=end.y;
+    raw(line_buffer);
+    position_x=end.x;
+    position_y=end.y;
     last_extrusion_role = feature_role;
   }
 };
@@ -931,9 +931,9 @@ inline GWBedOverflow extrusion_bed_overflow(const GW& writer, const Params& para
   const double tolerance = 3e-4;
   const double halfWidth = params.bed_width * 0.5;
   const double halfDepth = params.bed_depth * 0.5;
-  overflow.x = std::max(0.0, std::max(writer.exMaxX - halfWidth, -halfWidth - writer.exMinX) - tolerance);
-  overflow.y = std::max(0.0, std::max(writer.exMaxY - halfDepth, -halfDepth - writer.exMinY) - tolerance);
+  overflow.x = std::max(0.0, std::max(writer.extruded_max_x - halfWidth, -halfWidth - writer.extruded_min_x) - tolerance);
+  overflow.y = std::max(0.0, std::max(writer.extruded_max_y - halfDepth, -halfDepth - writer.extruded_min_y) - tolerance);
   // bed_height 0 = the profile states no ceiling, so nothing is ever too tall (same rule as prepare_model).
-  if (params.bed_height > 0.0) overflow.z = std::max(0.0, writer.exMaxZ - params.bed_height - tolerance);
+  if (params.bed_height > 0.0) overflow.z = std::max(0.0, writer.extruded_max_z - params.bed_height - tolerance);
   return overflow;
 }
