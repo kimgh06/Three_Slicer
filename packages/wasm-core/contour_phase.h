@@ -51,7 +51,11 @@ void set_layer_count(int layerCount);
 
 // 4 x i32 per piece: start x, start y (layer-relative), successor, layer
 extern std::vector<int> result;
-struct Assembled { double walkMs = 0, fallbackMs = 0; std::vector<int> fallbackLayers; bool unavailable = false; };   // unavailable: an open layer and neither captured loops nor the mesh to rebuild it from
+struct Assembled {
+  double walkMs = 0, fallbackMs = 0;
+  std::vector<int> fallbackLayers;
+  bool unavailable = false;   // unavailable: an open layer and neither captured loops nor the mesh to rebuild it from
+};
 Assembled assemble();
 
 }  // namespace contour_phase
