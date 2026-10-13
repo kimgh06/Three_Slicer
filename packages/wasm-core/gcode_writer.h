@@ -1,5 +1,5 @@
 // gcode_writer.h — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
-//  Header-only (like clip_util.h / slice_planes.h): GW's members are all defined inside the struct,
+//  Header-only (like clip_util.h / slice_planes.h): GcodeWriter's members are all defined inside the struct,
 //  and the fixed-point formatters they call keep their original `static inline` linkage.
 #pragma once
 #include "arcfit_bridge.h"
@@ -23,7 +23,7 @@ static const char* const AFTER_LAYER_SLOT = ";_AFTER_LAYER_CHANGE_SLOT";
 // A tool change on a printer with custom G-code (custom_gcode_toolchanges): the line names the change by its index.
 static const char* const TOOLCHANGE_SLOT = ";_TOOLCHANGE_SLOT ";
 
-struct GWBedOverflow {
+struct ExtrusionBedOverflow {
   double x = 0.0, y = 0.0, z = 0.0;
   bool any() const { return x > 0.0 || y > 0.0 || z > 0.0; }
 };
@@ -32,16 +32,16 @@ struct GWBedOverflow {
 // (performance) Fixed-point formatter for the G-code hot path — ~5x faster than snprintf (fmt_bench2 measurements: 2 datasets x 2 runs, 0 mismatches out of 2M).
 //  At a rounding boundary (|frac−0.5|<1e-6) it returns nullptr -> the caller falls back to snprintf, guaranteeing byte-identical output.
 //  The sign comes from signbit(v) (including −0.0) — matching snprintf's "-0.000" output.
-static const long long FMT_P10[] = {1,10,100,1000,10000,100000};
-static inline char* fmt_fixed_safe(char* out, double value, int precision) {
+static const long long POWERS_OF_TEN[] = {1,10,100,1000,10000,100000};
+static inline char* format_fixed_safe(char* out, double value, int precision) {
   double magnitude = std::fabs(value);
-  double scaled  = magnitude * FMT_P10[precision];
+  double scaled  = magnitude * POWERS_OF_TEN[precision];
   double fraction = scaled - std::floor(scaled);
   if (fraction > 0.5 - 1e-6 && fraction < 0.5 + 1e-6) return nullptr;   // rounding boundary -> snprintf fallback
   long long rounded = (long long)llround(scaled);
   if (std::signbit(value)) *out++ = '-';
-  long long integerPart = rounded / FMT_P10[precision];
-  long long fractionPart = rounded % FMT_P10[precision];
+  long long integerPart = rounded / POWERS_OF_TEN[precision];
+  long long fractionPart = rounded % POWERS_OF_TEN[precision];
   char digits[24];
   int digitCount = 0;
   do {
@@ -56,7 +56,7 @@ static inline char* fmt_fixed_safe(char* out, double value, int precision) {
   }
   return out + precision;
 }
-static inline char* fmt_i(char* out, int value) {
+static inline char* format_int(char* out, int value) {
   if (value < 0) {
     *out++ = '-';
     value = -value;
@@ -71,7 +71,7 @@ static inline char* fmt_i(char* out, int value) {
   return out;
 }
 
-struct GW {
+struct GcodeWriter {
   bool dry_run=false;   // G003 E1 dry run: skips strings/toolpaths and only updates position, current_feed, fan and seam state (to chain the entry state)
   std::string gcode;   // the G-code text written so far
   double position_x=0, position_y=0, z=0;
@@ -105,7 +105,7 @@ struct GW {
   bool   firmware_retraction=false; // G10/G11 instead of E moves
   double z_offset=0.0;              // added to every Z written (upstream's z_offset)
   // Upstream's per-role acceleration and jerk (GCode::_extrude :7289-7342, travel_to :8285-8333): what each role and
-  //  travel prints at, resolved once from the profile (gw_setup_motion, emit.cpp) as [on_first_layer][role], and the
+  //  travel prints at, resolved once from the profile (gcode_writer_setup_motion, emit.cpp) as [on_first_layer][role], and the
   //  writer's dedupe state (GCodeWriter m_last_acceleration / m_last_travel_acceleration / m_last_jerk). Both off — the
   //  host sent no default_acceleration / default_jerk — writes nothing, as every caller before these keys got.
   bool     motion_accel=false, motion_jerk=false, motion_bbl=false;
@@ -272,7 +272,7 @@ struct GW {
   int    last_extrusion_role=-1;   // reset on every layer (layer_z), so the parallel writers start where st starts
   bool   avoid_walls=false;
   long   wall_crossings=0;         // number of travels that actually crossed a wall (for cross-checking)
-  // Upstream's ;TYPE: role tag (Params::gcode_role_tags). `type` is the kernel's toolpath type, the value push_seg
+  // Upstream's ;TYPE: role tag (Params::gcode_role_tags). `type` is the kernel's toolpath type, the value push_toolpath_segment
   //  records into the stream (0=travel … 11=prime tower, emit.cpp), so the text and the stream name the same role.
   //  Stated again after every layer marker, because a reader keyed on layers (gcode_parse.js) resets its role there.
   //  Upstream's own names where one exists; upstream folds raft into Support and thin walls into walls, which would
@@ -365,7 +365,7 @@ struct GW {
   }
   // WP3: sets the upstream volumetric flow (mm³/mm, ExtrusionPath::mm3_per_mm) directly — lets tree support reproduce the flow
   //  computed by the upstream Flow verbatim (including cases where it differs from the rectangular width x height approximation, such as bridging contact layers).
-  void set_e_per_mm_vol(double mm3PerMm, const Params& params) {
+  void set_e_per_mm_volume(double mm3PerMm, const Params& params) {
     if (mm3PerMm < 0) mm3PerMm = 0;
     double toolFilamentArea = PI * tool_filament_diameter * tool_filament_diameter / 4.0;
     e_per_mm = mm3PerMm / toolFilamentArea * tool_flow_ratio * print_flow * role_flow;
@@ -385,19 +385,19 @@ struct GW {
     }
   }
   // Hot-path line emission — when the fast path (fixed point) fails, fall back to the original snprintf format (byte-identical).
-  inline void line_xyf(const char* head, double xValue, double yValue, int feed, const char* fallbackFormat) {
+  inline void line_xy_feed(const char* head, double xValue, double yValue, int feed, const char* fallbackFormat) {
     char* cursor = line_buffer;
     size_t headLength = strlen(head);
     memcpy(cursor, head, headLength);
     cursor += headLength;
-    char* end = fmt_fixed_safe(cursor, xValue, 3);
+    char* end = format_fixed_safe(cursor, xValue, 3);
     if (end) {
       memcpy(end, " Y", 2);
-      end = fmt_fixed_safe(end+2, yValue, 3);
+      end = format_fixed_safe(end+2, yValue, 3);
     }
     if (end) {
       memcpy(end, " F", 2);
-      end = fmt_i(end+2, feed);
+      end = format_int(end+2, feed);
       *end = '\0';
       raw(line_buffer);
       return;
@@ -405,15 +405,15 @@ struct GW {
     std::snprintf(line_buffer, sizeof line_buffer, fallbackFormat, xValue, yValue, feed);
     raw(line_buffer);
   }
-  inline void line_vf(const char* head, double value, int precision, int feed, const char* fallbackFormat) {
+  inline void line_value_feed(const char* head, double value, int precision, int feed, const char* fallbackFormat) {
     char* cursor = line_buffer;
     size_t headLength = strlen(head);
     memcpy(cursor, head, headLength);
     cursor += headLength;
-    char* end = fmt_fixed_safe(cursor, value, precision);
+    char* end = format_fixed_safe(cursor, value, precision);
     if (end) {
       memcpy(end, " F", 2);
-      end = fmt_i(end+2, feed);
+      end = format_int(end+2, feed);
       *end = '\0';
       raw(line_buffer);
       return;
@@ -429,11 +429,11 @@ struct GW {
     bool retract = distance > retract_min_travel && (retract_length > 0 || firmware_retraction);
     if (retract) {
       retract_move();
-      if (z_hop > 0) line_vf("G1 Z", z + z_hop + z_offset, 3, fTravel, "G1 Z%.3f F%d");
+      if (z_hop > 0) line_value_feed("G1 Z", z + z_hop + z_offset, 3, fTravel, "G1 Z%.3f F%d");
     }
-    line_xyf("G0 X", x+offset_x, y+offset_y, fTravel, "G0 X%.3f Y%.3f F%d");
+    line_xy_feed("G0 X", x+offset_x, y+offset_y, fTravel, "G0 X%.3f Y%.3f F%d");
     if (retract) {
-      if (z_hop > 0) line_vf("G1 Z", z + z_offset, 3, fTravel, "G1 Z%.3f F%d");
+      if (z_hop > 0) line_value_feed("G1 Z", z + z_offset, 3, fTravel, "G1 Z%.3f F%d");
       unretract_move();
     }
     position_x=x;
@@ -448,7 +448,7 @@ struct GW {
       return;
     }
     if (!absolute_e) {
-      line_vf("G1 E-", retract_length, 4, retract_feed, "G1 E-%.4f F%d");
+      line_value_feed("G1 E-", retract_length, 4, retract_feed, "G1 E-%.4f F%d");
       return;
     }
     char line[64];
@@ -467,7 +467,7 @@ struct GW {
       return;
     }
     if (!absolute_e) {
-      line_vf("G1 E", retract_length, 4, retract_feed, "G1 E%.4f F%d");
+      line_value_feed("G1 E", retract_length, 4, retract_feed, "G1 E%.4f F%d");
       return;
     }
     char line[64];
@@ -479,7 +479,7 @@ struct GW {
   void travel_hop(double x, double y, int fTravel) {
     double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-6) return;
-    line_xyf("G0 X", x+offset_x, y+offset_y, fTravel, "G0 X%.3f Y%.3f F%d");
+    line_xy_feed("G0 X", x+offset_x, y+offset_y, fTravel, "G0 X%.3f Y%.3f F%d");
     position_x=x;
     position_y=y;
     current_feed=-1;
@@ -492,10 +492,10 @@ struct GW {
     segment.push_back(IntPoint((cInt)std::llround(endX*SCALE),(cInt)std::llround(endY*SCALE)));
     Paths travelPaths;
     travelPaths.push_back(segment);
-    return paths_len(clip_open(travelPaths, internal_area), false) >= std::hypot(endX-startX, endY-startY) - 1e-3;
+    return paths_length(clip_open(travelPaths, internal_area), false) >= std::hypot(endX-startX, endY-startY) - 1e-3;
   }
   // True when the straight line A->B lies (almost) entirely inside the island (inside the walls)
-  bool seg_inside(double startX,double startY,double endX,double endY){
+  bool segment_inside(double startX,double startY,double endX,double endY){
     if (island.empty()) return true;
     Path segment;
     segment.push_back(IntPoint((cInt)std::llround(startX*SCALE),(cInt)std::llround(startY*SCALE)));
@@ -503,11 +503,11 @@ struct GW {
     Paths travelPaths;
     travelPaths.push_back(segment);
     double fullLength=std::hypot(endX-startX,endY-startY);
-    double insideLength=paths_len(clip_open(travelPaths, island), false);
+    double insideLength=paths_length(clip_open(travelPaths, island), false);
     return insideLength >= fullLength - 0.05;
   }
   // Detour along the island boundary: walk the boundary of the polygon nearest A from the vertex nearest A to the vertex nearest B (the shorter way)
-  std::vector<DPt> detour_path(double startX,double startY,double endX,double endY){
+  std::vector<MillimetrePoint> detour_path(double startX,double startY,double endX,double endY){
     const Path* nearestPolygon=nullptr;
     double bestDistance=1e30;
     IntPoint startPoint((cInt)std::llround(startX*SCALE),(cInt)std::llround(startY*SCALE));
@@ -555,7 +555,7 @@ struct GW {
     };
     int direction = -1;
     if (arcLength(+1)<=arcLength(-1)) direction = +1;
-    std::vector<DPt> waypoints;
+    std::vector<MillimetrePoint> waypoints;
     waypoints.push_back({polygon[startIndex].x()*INV, polygon[startIndex].y()*INV});
     int index=startIndex;
     while(index!=endIndex){
@@ -568,8 +568,8 @@ struct GW {
   // Fast guard (statistics only) — with avoid_walls=false the verdict only feeds the wall_crossings counter (no effect on G-code).
   //  Replaces Clipper clip_open (measured at ~20µs per travel, the single largest cost in the serial emission section) with an integer
   //  orientation intersection test plus an even-odd PIP on the midpoint. Only boundary cases (tangency, collinearity) may disagree with the clip verdict (counter error accepted).
-  //  With avoid_walls=true the detour path (G-code) depends on the verdict -> the existing seg_inside (clip_open) is kept.
-  bool seg_inside_fast(double startX,double startY,double endX,double endY){
+  //  With avoid_walls=true the detour path (G-code) depends on the verdict -> the existing segment_inside (clip_open) is kept.
+  bool segment_inside_fast(double startX,double startY,double endX,double endY){
     const cInt x1=(cInt)std::llround(startX*SCALE);
     const cInt y1=(cInt)std::llround(startY*SCALE);
     const cInt x2=(cInt)std::llround(endX*SCALE);
@@ -619,11 +619,11 @@ struct GW {
     }
     if (!island.empty()) {
       bool staysInside;
-      if (avoid_walls) staysInside = seg_inside(position_x,position_y,x,y);
-      else staysInside = seg_inside_fast(position_x,position_y,x,y);
+      if (avoid_walls) staysInside = segment_inside(position_x,position_y,x,y);
+      else staysInside = segment_inside_fast(position_x,position_y,x,y);
       if (!staysInside) {
         if (avoid_walls) {
-          std::vector<DPt> waypoints = detour_path(position_x,position_y,x,y);
+          std::vector<MillimetrePoint> waypoints = detour_path(position_x,position_y,x,y);
           if (!waypoints.empty()) {
             for (auto& waypoint:waypoints) travel_hop(waypoint.x,waypoint.y,fTravel);
             travel_hop(x,y,fTravel);
@@ -681,19 +681,19 @@ struct GW {
     char* cursor = line_buffer;
     memcpy(cursor, "G1 X", 4);
     cursor += 4;
-    cursor = fmt_fixed_safe(cursor, x+offset_x, 3);
+    cursor = format_fixed_safe(cursor, x+offset_x, 3);
     if (cursor) {
       memcpy(cursor, " Y", 2);
-      cursor = fmt_fixed_safe(cursor+2, y+offset_y, 3);
+      cursor = format_fixed_safe(cursor+2, y+offset_y, 3);
     }
     if (cursor) {
       memcpy(cursor, " E", 2);
-      cursor = fmt_fixed_safe(cursor+2, eWord, 5);
+      cursor = format_fixed_safe(cursor+2, eWord, 5);
     }
     if (cursor) {                                // fast path succeeded — F only when it changes
       if (feed != current_feed) {
         memcpy(cursor, " F", 2);
-        cursor = fmt_i(cursor+2, feed);
+        cursor = format_int(cursor+2, feed);
       }
       *cursor = '\0';
     } else if (feed != current_feed) std::snprintf(line_buffer,sizeof line_buffer,"G1 X%.3f Y%.3f E%.5f F%d", x+offset_x,y+offset_y,eWord,feed);
@@ -731,7 +731,7 @@ struct GW {
     z=nextZ;
   }
   // For the scarf seam: extrusion applying both Z and flow (an E multiplier) (Z always written)
-  void extrude_zf(double x, double y, double nextZ, double flowMul, int fPrint) {
+  void extrude_z_flow(double x, double y, double nextZ, double flowMul, int fPrint) {
     double distance = std::hypot(x-position_x, y-position_y);
     if (distance < 1e-9) {
       z=nextZ;
@@ -773,7 +773,7 @@ struct GW {
   //  ironing fan, each opened and closed as the role changes and re-opened on a new layer. Off without the filter.
   bool cooling_markers=false;
   bool fan_overhang=false, fan_overhang_external=false, fan_support_interface=false, fan_ironing=false;
-  int  bridge_role=6, support_interface_role=9, ironing_role=12;   // FlowRole indices (emit.h), set by gw_setup_motion
+  int  bridge_role=6, support_interface_role=9, ironing_role=12;   // FlowRole indices (emit.h), set by gcode_writer_setup_motion
   bool fan_marker_on[3] = { false, false, false };                 // overhang, support interface, ironing
   // The overhang fan per wall segment (GCode::_extrude with ExtrusionQualityEstimator): a segment whose overlap with
   //  the layer below is at most the threshold gets it. overlap = 1 - (signed distance to the lower slice + w/2) / w, so
@@ -782,7 +782,7 @@ struct GW {
   // ponytail: a segment is judged by its two ends against one region, the line width of the print (not each wall's
   //  own), and without upstream's curled-line distance or its smoothing between neighbouring points.
   Paths overhang_area;
-  double line_width = 0.42;   // the print's line width (gw_setup_machine), the overhang pieces' scale
+  double line_width = 0.42;   // the print's line width (gcode_writer_setup_machine), the overhang pieces' scale
   bool outside_overhang_area(double x, double y) const {
     const IntPoint point((cInt)std::llround(x*SCALE), (cInt)std::llround(y*SCALE));
     int inside = 0;
@@ -845,7 +845,7 @@ struct GW {
   //  The arcs are upstream's ArcFitter (arcfit_bridge.cpp) at upstream's per-role tolerance (LayerRegion::simplify_path,
   //  Layer::simplify_support_path): SPARSE_INFILL_RESOLUTION for sparse infill, SUPPORT_RESOLUTION for support and raft,
   //  the print's `resolution` for everything else. `type` is the toolpath type the caller emits (emit.cpp).
-  void extrude_run(const std::vector<DPt>& path, int fPrint, float type) {
+  void extrude_run(const std::vector<MillimetrePoint>& path, int fPrint, float type) {
     if (path.size() > 1) apply_print_motion();
     if (dry_run) {
       if (path.size()>1) {
@@ -871,16 +871,16 @@ struct GW {
     }
     extrude_fitted(path, fPrint, type);
   }
-  void extrude_fitted(const std::vector<DPt>& path, int fPrint, float type) {
+  void extrude_fitted(const std::vector<MillimetrePoint>& path, int fPrint, float type) {
     // An arc stands for the points it was fitted to, so they never reach extrude() and its note_xy. Noting every
     //  input point here keeps the extent honest: the arc stays within the fitting tolerance of them.
-    for (const DPt& point : path) note_xy(point.x, point.y);
+    for (const MillimetrePoint& point : path) note_xy(point.x, point.y);
     double tolerance = arc_resolution;
     if ((int)type == 2) tolerance = 0.04;                          // SPARSE_INFILL_RESOLUTION (libslic3r.h)
     if ((int)type == 5 || (int)type == 6) tolerance = 0.0375;      // SUPPORT_RESOLUTION
     std::vector<std::pair<double,double>> points;
     points.reserve(path.size());
-    for (const DPt& point : path) points.emplace_back(point.x, point.y);
+    for (const MillimetrePoint& point : path) points.emplace_back(point.x, point.y);
     std::vector<arcfit_bridge::Move> moves;
     arcfit_bridge::fit(points, tolerance, moves);
     for (const arcfit_bridge::Move& move : moves) {
@@ -893,7 +893,7 @@ struct GW {
     }
   }
   // One G2/G3 from the current position to `end` around (centerX, centerY), E from upstream's arc length.
-  void extrude_arc(DPt end, double centerX, double centerY, double length, bool counterClockwise, int fPrint) {
+  void extrude_arc(MillimetrePoint end, double centerX, double centerY, double length, bool counterClockwise, int fPrint) {
     apply_print_motion();
     fPrint = capped_feed(fPrint);
     double deltaE = e_per_mm*length;
@@ -925,8 +925,8 @@ struct GW {
 //  answer whether the print clears the ceiling. Upstream splits this into a second warning taken from the same
 //  G-code (ToolHeightOutside — the top layer's z against max_print_height), and this is that check.
 //  The tolerance is upstream's BedEpsilon (3 * EPSILON, libslic3r.h): it absorbs coordinate noise, not an overhang.
-inline GWBedOverflow extrusion_bed_overflow(const GW& writer, const Params& params) {
-  GWBedOverflow overflow;
+inline ExtrusionBedOverflow extrusion_bed_overflow(const GcodeWriter& writer, const Params& params) {
+  ExtrusionBedOverflow overflow;
   if (!writer.extruded_anything()) return overflow;  // nothing was printed -> nothing can be off the bed
   const double tolerance = 3e-4;
   const double halfWidth = params.bed_width * 0.5;

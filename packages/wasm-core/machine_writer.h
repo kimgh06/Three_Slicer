@@ -1,6 +1,6 @@
 // machine_writer.h — the machine commands of upstream's GCodeWriter (GCodeWriter.cpp) whose text depends on the
 // firmware flavor: temperatures, accelerations, jerk, pressure advance. Plain functions over the flavor, so the
-// kernel's own writer (GW) and the start / second-layer blocks format them one way. Header-only, like
+// kernel's own writer (GcodeWriter) and the start / second-layer blocks format them one way. Header-only, like
 // gcode_writer.h.
 //
 // The flavor comes from Params::gcode_flavor. When the host sends none (Flavor::Unset), every command the kernel
