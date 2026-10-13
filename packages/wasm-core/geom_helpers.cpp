@@ -222,7 +222,7 @@ static uint32_t lcg(uint32_t& state){
 void rotate_seam(Path& path, int mode, SeamCtx& seamContext, double nozzleX, double nozzleY) {
   if (mode < 0 || path.size() < 3) return;
   size_t best = 0;
-  if (mode == 0 || (mode == 2 && !seamContext.has)) {          // back / the first layer of aligned
+  if (mode == 0 || (mode == 2 && !seamContext.hasLast)) {          // back / the first layer of aligned
     cInt bestY=path[0].y();
     for (size_t i=1;i<path.size();++i) {
       if (path[i].y()>bestY) {
@@ -249,7 +249,7 @@ void rotate_seam(Path& path, int mode, SeamCtx& seamContext, double nozzleX, dou
       }
     }
   } else {                                             // random (deterministic)
-    best = lcg(seamContext.rng) % path.size();
+    best = lcg(seamContext.randomState) % path.size();
   }
   std::rotate(path.begin(), path.begin()+best, path.end());
 }
