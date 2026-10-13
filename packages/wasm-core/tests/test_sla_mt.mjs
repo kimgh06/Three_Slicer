@@ -31,9 +31,9 @@ const params = JSON.stringify({
   pad_enable: true,
 })
 
-const [st, mt] = [await createSlicer(), await createSlicerMt()]
-const expected = st.slice_sla(boxSTL(), params, undefined)
-const actual = mt.slice_sla(boxSTL(), params, undefined)
+const [singleThreadSlicer, threadedSlicer] = [await createSlicer(), await createSlicerMt()]
+const expected = singleThreadSlicer.slice_sla(boxSTL(), params, undefined)
+const actual = threadedSlicer.slice_sla(boxSTL(), params, undefined)
 
 assert.equal(actual.error, undefined, `mt slice_sla errored: ${actual.error}`)
 for (const key of ['layers', 'support_points', 'pad_layers', 'lift_layers', 'path_segments'])

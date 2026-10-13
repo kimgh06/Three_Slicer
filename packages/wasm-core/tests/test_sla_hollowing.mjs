@@ -28,7 +28,7 @@ assert.equal(deriveSlaParams({ hollowing_enable: true }).hollowing_enable, true)
 assert.equal(deriveSlaParams({}).hollowing_enable, false)
 
 const slicer = await createSlicer()
-const params = over => JSON.stringify({ layer_height: 0.05, bed_width: 120.96, bed_depth: 68.04, ...over })
+const params = overrides => JSON.stringify({ layer_height: 0.05, bed_width: 120.96, bed_depth: 68.04, ...overrides })
 
 // The gate: typed error, no layers, and it must fire before any slicing work claims progress.
 const hollow = slicer.slice_sla(boxSTL(), params({ hollowing_enable: true }), undefined)
@@ -36,10 +36,10 @@ assert.match(hollow.error ?? '', /^SLA_UNSUPPORTED_HOLLOWING/, `expected the typ
 assert.equal(hollow.layers, undefined)
 
 // The gate is a gate, not a regression: false and absent both slice normally.
-for (const p of [params({ hollowing_enable: false }), params({})]) {
-  const r = slicer.slice_sla(boxSTL(), p, undefined)
-  assert.equal(r.error, undefined)
-  assert.ok(r.stats.layers > 0)
+for (const paramsJson of [params({ hollowing_enable: false }), params({})]) {
+  const result = slicer.slice_sla(boxSTL(), paramsJson, undefined)
+  assert.equal(result.error, undefined)
+  assert.ok(result.stats.layers > 0)
 }
 
 console.log('test_sla_hollowing: kernel typed refusal, deriveSlaParams passthrough, and the false/absent path passed')

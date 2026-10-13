@@ -8,15 +8,15 @@ const here = new URL('..', import.meta.url).pathname   // the package root, one 
 const root = resolve(here, '../..')
 const fixtures = join(here, 'fixtures/sla')
 const source = join(root, 'slicers/PrusaSlicer')
-const out = mkdtempSync(join(tmpdir(), 'three-slicer-sla-oracle-'))
+const outputDirectory = mkdtempSync(join(tmpdir(), 'three-slicer-sla-oracle-'))
 
 try {
   // Given: the pinned Prusa source and deterministic fixtures.
   // When: the manifest builder runs without a native binary.
-  execFileSync(process.execPath, [join(here, 'tools', 'build_sla_oracle.mjs'), '--prusa-source', source, '--out', out])
+  execFileSync(process.execPath, [join(here, 'tools', 'build_sla_oracle.mjs'), '--prusa-source', source, '--out', outputDirectory])
 
   // Then: the manifest records the exact source provenance and every fixture has a committed baseline.
-  const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
+  const manifest = JSON.parse(readFileSync(join(outputDirectory, 'manifest.json'), 'utf8'))
   assert.equal(manifest.prusa.version, '2.9.6')
   assert.equal(manifest.adapter.required, true)
   assert.equal(manifest.fixtureDirectory, fixtures)
@@ -33,10 +33,10 @@ try {
   // When: regeneration is requested.
   // Then: it fails clearly rather than substituting the current kernel.
   assert.throws(() => execFileSync(process.execPath, [join(here, 'tools', 'generate_sla_oracle.mjs'), '--fixtures', fixtures], {
-    env: { ...process.env, PRUSA_SLICER_BIN: '', PRUSA_NATIVE_ORACLE: out },
+    env: { ...process.env, PRUSA_SLICER_BIN: '', PRUSA_NATIVE_ORACLE: outputDirectory },
     stdio: 'pipe',
   }), /PRUSA_SLICER_BIN/)
   console.log('test_sla_oracle: 3 checks passed')
 } finally {
-  rmSync(out, { recursive: true, force: true })
+  rmSync(outputDirectory, { recursive: true, force: true })
 }
