@@ -6,23 +6,24 @@
 using namespace Slic3r;
 
 namespace tree_bridge {
-std::vector<Edge> branch_mst(const std::vector<std::pair<double,double>>& pts_mm)
+std::vector<Edge> branch_mst(const std::vector<std::pair<double,double>>& points_mm)
 {
     std::vector<Edge> out;
-    if (pts_mm.size() < 2) return out;
-    std::vector<Point> verts; verts.reserve(pts_mm.size());
-    for (const auto& p : pts_mm)
-        verts.emplace_back((coord_t)std::llround(p.first / SCALING_FACTOR),
-                           (coord_t)std::llround(p.second / SCALING_FACTOR));
-    MinimumSpanningTree mst(verts);
+    if (points_mm.size() < 2) return out;
+    std::vector<Point> vertices;
+    vertices.reserve(points_mm.size());
+    for (const auto& point : points_mm)
+        vertices.emplace_back((coord_t)std::llround(point.first / SCALING_FACTOR),
+                              (coord_t)std::llround(point.second / SCALING_FACTOR));
+    MinimumSpanningTree mst(vertices);
     std::set<std::pair<long long,long long>> seen;
-    for (const Point& v : mst.vertices())
-        for (const Point& a : mst.adjacent_nodes(v)) {
-            long long ka = (long long)v.x() * 1000003LL + v.y();
-            long long kb = (long long)a.x() * 1000003LL + a.y();
-            auto key = std::minmax(ka, kb);
+    for (const Point& vertex : mst.vertices())
+        for (const Point& neighbor : mst.adjacent_nodes(vertex)) {
+            long long vertex_key = (long long)vertex.x() * 1000003LL + vertex.y();
+            long long neighbor_key = (long long)neighbor.x() * 1000003LL + neighbor.y();
+            auto key = std::minmax(vertex_key, neighbor_key);
             if (!seen.insert({key.first, key.second}).second) continue;   // undirected, unique
-            out.push_back({ v.x()*SCALING_FACTOR, v.y()*SCALING_FACTOR, a.x()*SCALING_FACTOR, a.y()*SCALING_FACTOR });
+            out.push_back({ vertex.x()*SCALING_FACTOR, vertex.y()*SCALING_FACTOR, neighbor.x()*SCALING_FACTOR, neighbor.y()*SCALING_FACTOR });
         }
     return out;
 }

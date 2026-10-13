@@ -15,21 +15,22 @@ using namespace Slic3r;
 namespace fill_bridge {
 
 static inline coord_t sc(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
-static inline double  um(coord_t c) { return double(c) * SCALING_FACTOR; }
+static inline double  um(coord_t coord) { return double(coord) * SCALING_FACTOR; }
 
-static InfillPattern pat_from_name(const std::string& n) {
-    if (n=="gyroid")       return ipGyroid;
-    if (n=="honeycomb")    return ipHoneycomb;
-    if (n=="3dhoneycomb")  return ip3DHoneycomb;
-    if (n=="crosshatch")   return ipCrossHatch;
-    if (n=="concentric")   return ipConcentric;
+static InfillPattern pat_from_name(const std::string& name) {
+    if (name=="gyroid")       return ipGyroid;
+    if (name=="honeycomb")    return ipHoneycomb;
+    if (name=="3dhoneycomb")  return ip3DHoneycomb;
+    if (name=="crosshatch")   return ipCrossHatch;
+    if (name=="concentric")   return ipConcentric;
     return ipCount; // unknown
 }
 
-static Polygon to_polygon(const Poly& p) {
-    Polygon poly; poly.points.reserve(p.size());
-    for (const auto& xy : p) poly.points.emplace_back(sc(xy.first), sc(xy.second));
-    return poly;
+static Polygon to_polygon(const Poly& poly_mm) {
+    Polygon polygon;
+    polygon.points.reserve(poly_mm.size());
+    for (const auto& xy : poly_mm) polygon.points.emplace_back(sc(xy.first), sc(xy.second));
+    return polygon;
 }
 
 std::vector<Poly> generate_fill(const std::vector<Poly>& region_mm, const std::string& pattern,
@@ -37,37 +38,40 @@ std::vector<Poly> generate_fill(const std::vector<Poly>& region_mm, const std::s
                                 double z_mm, int layer_id)
 {
     std::vector<Poly> out;
-    InfillPattern ip = pat_from_name(pattern);
-    if (ip == ipCount || region_mm.empty() || region_mm[0].size() < 3) return out;
+    InfillPattern infill_pattern = pat_from_name(pattern);
+    if (infill_pattern == ipCount || region_mm.empty() || region_mm[0].size() < 3) return out;
 
-    ExPolygon ex;
-    ex.contour = to_polygon(region_mm[0]);
+    ExPolygon region;
+    region.contour = to_polygon(region_mm[0]);
     for (size_t i = 1; i < region_mm.size(); ++i)
-        if (region_mm[i].size() >= 3) ex.holes.push_back(to_polygon(region_mm[i]));
+        if (region_mm[i].size() >= 3) region.holes.push_back(to_polygon(region_mm[i]));
 
-    std::unique_ptr<Fill> fill(Fill::new_from_type(ip));
+    std::unique_ptr<Fill> fill(Fill::new_from_type(infill_pattern));
     if (!fill) return out;
     fill->spacing        = spacing_mm;
     fill->z              = z_mm;
     fill->layer_id       = (size_t) std::max(0, layer_id);
     fill->angle          = float(angle_deg * M_PI / 180.0);
-    fill->bounding_box   = get_extents(ex);
+    fill->bounding_box   = get_extents(region);
     fill->loop_clipping  = 0;
     fill->link_max_length= 0;
     fill->overlap        = 0;
 
     FillParams params;
-    params.density     = float(density <= 0 ? 0.15 : density);
+    double fill_density = density;
+    if (density <= 0) fill_density = 0.15;
+    params.density     = float(fill_density);
     params.dont_adjust = true;
 
-    Surface surface(stInternal, ex);
-    Polylines pls;
-    try { pls = fill->fill_surface(&surface, params); }
+    Surface surface(stInternal, region);
+    Polylines polylines;
+    try { polylines = fill->fill_surface(&surface, params); }
     catch (...) { return out; }
 
-    for (const Polyline& pl : pls) {
-        Poly poly; poly.reserve(pl.points.size());
-        for (const Point& pt : pl.points) poly.push_back({ um(pt.x()), um(pt.y()) });
+    for (const Polyline& polyline : polylines) {
+        Poly poly;
+        poly.reserve(polyline.points.size());
+        for (const Point& point : polyline.points) poly.push_back({ um(point.x()), um(point.y()) });
         if (poly.size() >= 2) out.push_back(std::move(poly));
     }
     return out;

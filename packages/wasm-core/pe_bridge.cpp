@@ -8,10 +8,11 @@ std::string equalize(const std::string& gcode, double filament_diameter_mm, doub
 {
     if (max_slope_mm3_s2 <= 0.0 || gcode.empty()) return gcode;
     try {
-        Slic3r::PressureEqualizer pe(filament_diameter_mm, max_slope_mm3_s2, segment_length_mm,
-                                     relative_e, external_perim_only);
-        std::string out = pe.process_to_string(gcode);
-        return out.empty() ? gcode : out;
+        Slic3r::PressureEqualizer equalizer(filament_diameter_mm, max_slope_mm3_s2, segment_length_mm,
+                                            relative_e, external_perim_only);
+        std::string out = equalizer.process_to_string(gcode);
+        if (out.empty()) return gcode;
+        return out;
     } catch (...) { return gcode; }
 }
 }
