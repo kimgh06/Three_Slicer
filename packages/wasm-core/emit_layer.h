@@ -12,7 +12,7 @@
 
 // Per-layer precomputation for PASS2 (geometry separation, infill line generation) — kept apart from emission (serial, gw/seam state).
 //  It holds only deterministic per-layer independent work, so mt builds can precompute it on workers (identical results, verified with golden).
-struct EmitPre {
+struct EmitPrecompute {
   Paths gapLines, solidLines, topLines, bridgeLines, sparseLines, supI, supB, flExtra, ironLines;
   // Split out only when their flow ratio is not 1 (issue 63 round 1): upstream's exposed top (erTopSolidInfill) and
   //  bottom (erBottomSurface) of the current layer, and the brim rings, which otherwise ride in flExtra with the skirt.
@@ -20,11 +20,11 @@ struct EmitPre {
   bool brim=false;
   int fPrint=0, fBridge=0, fSup=0;
   RoleFeeds feeds;   // the feed per role on this layer (emit.cpp role_feeds); every role at fPrint without per-role speeds
-  // The writer's per-layer regions (GW overhang_area / internal_area), empty when not checked.
+  // The writer's per-layer regions (GcodeWriter overhang_area / internal_area), empty when not checked.
   Paths overhangArea, internalArea;
 };
 
-void emit_layer_any(GW& writer, std::vector<float>& toolpath, std::vector<float>& widths,
-                    int layerIndex, LayerData& layerData, EmitPre& pre, const Params& params,
+void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vector<float>& widths,
+                    int layerIndex, LayerData& layerData, EmitPrecompute& pre, const Params& params,
                     double layerZ, double defaultWidth, int layerCount, int raftLayers, int travelFeed,
-                    int seamMode, bool scarfOn, bool ironOn, SeamCtx& seamCtx);
+                    int seamMode, bool scarfOn, bool ironOn, SeamContext& seamCtx);

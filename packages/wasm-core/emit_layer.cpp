@@ -5,7 +5,7 @@
 #include <cstdio>
 
 // support_filament / support_interface_filament are upstream coInt filament indices: 0 = "Default" (keep the tool
-// that is loaded), 1..n = that filament, which is tool n-1 (Params::support_tool_of). Returning -1 for the default is what makes GW::set_tool
+// that is loaded), 1..n = that filament, which is tool n-1 (Params::support_tool_of). Returning -1 for the default is what makes GcodeWriter::set_tool
 // a no-op, so the default configuration emits no T command anywhere and the G-code is unchanged.
 // ponytail: only the T command is switched — the extruder's own filament diameter/flow (Params::forTool) is not
 //  reloaded for the support block, so a support filament of a different diameter still extrudes at the object's
@@ -13,17 +13,17 @@
 // The T command and the toolpath stream's tool channel have to move together, or the preview colours support with
 //  the object's filament while the G-code prints it with another. -1 ("Default", keep the loaded tool) leaves both
 //  alone, so the default configuration still emits no T command and no tool bits at all.
-static void use_tool(GW& writer, int tool) {
+static void use_tool(GcodeWriter& writer, int tool) {
   writer.set_tool(tool);
   if (tool >= 0) g_seg_tool = tool;
 }
 
 // G003 step 1: the normal layer emission body extracted — a single implementation shared by the serial path and (in step 2) the parallel writer.
 //  Behavior unchanged (a pure move) — equivalence verified by the golden and st vs mt gates.
-static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vector<float>& widths,
-                            int layerIndex, LayerData& layerData, EmitPre& pre, const Params& params,
+static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, std::vector<float>& widths,
+                            int layerIndex, LayerData& layerData, EmitPrecompute& pre, const Params& params,
                             double layerZ, double defaultWidth, int layerCount, int raftLayers, int travelFeed,
-                            int seamMode, bool scarfOn, bool ironOn, SeamCtx& seamCtx) {
+                            int seamMode, bool scarfOn, bool ironOn, SeamContext& seamCtx) {
     char comment[72];
     (void)comment;
     (void)widths;
@@ -61,7 +61,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
       g_seg_w_cur = (float)width;
     };
   // Upstream's role flow ratio for the feature about to be emitted (emit.cpp role_flow_ratio), on the current width,
-  //  and the role the writer's acceleration and jerk follow (GW::set_feature).
+  //  and the role the writer's acceleration and jerk follow (GcodeWriter::set_feature).
   auto flow = [&](FlowRole role){
     writer.set_role_flow(role_flow_ratio(params, role, writer.on_first_layer));
     writer.set_feature((int)role);
@@ -87,9 +87,9 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
     if (params.enable_support && !layerData.supTree.empty()) {                    // stages 18/19: the real organic tree support (per-path width)
       writer.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(writer, supportTool);                                       // branches are one body: the base filament covers them
-      writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_vw sets each branch's own section
+      writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_variable_width sets each branch's own section
       writer.set_feature((int)FlowRole::Support);
-      emit_lines_vw(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, feeds.of(FlowRole::Support), travelFeed);
+      emit_lines_variable_width(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, feeds.of(FlowRole::Support), travelFeed);
       use_tool(writer, params.single_tool);
     }
     if (!skirtBrimLoops.empty()) {
@@ -119,7 +119,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
         writer.set_feature((int)wallRole);
         const int wallFeed = feeds.of(wallRole);
         if (!wall.loop) {
-          emit_lines_vw(writer, toolpath, std::vector<TreePath>{ { wall.path, wall.width, 0, (float)layerData.thickness, 0.0f } }, layerZ, layerData.thickness, params, 8.0f, wallFeed, travelFeed);
+          emit_lines_variable_width(writer, toolpath, std::vector<TreePath>{ { wall.path, wall.width, 0, (float)layerData.thickness, 0.0f } }, layerZ, layerData.thickness, params, 8.0f, wallFeed, travelFeed);
           continue;
         }
         setWidth(wall.width);
@@ -146,7 +146,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
     writer.set_feature((int)FlowRole::GapFill);
     if (!layerData.classicGapFill.empty()) {
       writer.raw("; gap-fill");
-      emit_lines_vw(writer, toolpath, layerData.classicGapFill, layerZ, layerData.thickness, params, 7.0f, feeds.of(FlowRole::GapFill), travelFeed);
+      emit_lines_variable_width(writer, toolpath, layerData.classicGapFill, layerZ, layerData.thickness, params, 7.0f, feeds.of(FlowRole::GapFill), travelFeed);
     }
     double defaultLineWidth = params.line_width;
     if (firstLayer) defaultLineWidth = params.initial_layer_line_width;
@@ -160,7 +160,7 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
       int savedFan = writer.lastFan;
       writer.set_fan(255);
       flow(FlowRole::Bridge);
-      if (params.thick_bridges) writer.set_e_per_mm_vol(thick_bridge_mm3_per_mm(params), params);
+      if (params.thick_bridges) writer.set_e_per_mm_volume(thick_bridge_mm3_per_mm(params), params);
       emit_lines(writer, toolpath, bridgeLines, layerZ, 9.0f, feeds.of(FlowRole::Bridge), travelFeed);
       int restoredFan = savedFan;
       if (savedFan < 0) restoredFan = 0;
@@ -219,10 +219,10 @@ static void emit_layer_full(GW& writer, std::vector<float>& toolpath, std::vecto
 
 // G003 step 2: full emission of one layer (setup + the empty/normal branches) — a single implementation shared by the serial path and the parallel writer.
 //  Spiral mode is inlined at the call site (guarded out of parallelism), and scarf/PE tags/PE-lite/real PE also fall back to serial via the parEmit guard.
-void emit_layer_any(GW& writer, std::vector<float>& toolpath, std::vector<float>& widths,
-                           int layerIndex, LayerData& layerData, EmitPre& pre, const Params& params,
+void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vector<float>& widths,
+                           int layerIndex, LayerData& layerData, EmitPrecompute& pre, const Params& params,
                            double layerZ, double defaultWidth, int layerCount, int raftLayers, int travelFeed,
-                           int seamMode, bool scarfOn, bool ironOn, SeamCtx& seamCtx) {
+                           int seamMode, bool scarfOn, bool ironOn, SeamContext& seamCtx) {
   writer.role_flow = 1.0;                              // no role ratio leaks across a layer boundary
   writer.on_first_layer = (layerIndex == 0 && raftLayers == 0);      // with a raft the first layer is the raft's (raft.cpp)
   writer.set_e_per_mm(layerData.thickness, params);
@@ -277,9 +277,9 @@ void emit_layer_any(GW& writer, std::vector<float>& toolpath, std::vector<float>
     if (params.enable_support && !layerData.supTree.empty()) {
       writer.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(writer, supportTool);
-      writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_vw sets each branch's section
+      writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_variable_width sets each branch's section
       writer.set_feature((int)FlowRole::Support);
-      emit_lines_vw(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, pre.feeds.of(FlowRole::Support), travelFeed);
+      emit_lines_variable_width(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, pre.feeds.of(FlowRole::Support), travelFeed);
       use_tool(writer, params.single_tool);
     }
     return;

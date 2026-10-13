@@ -1,5 +1,5 @@
 // emit.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
-//  `static` is kept on the helpers used only here (push_seg / pe_role_of); the emit_* entry points lost it
+//  `static` is kept on the helpers used only here (push_toolpath_segment / pe_role_of); the emit_* entry points lost it
 //  because emit.h now declares them for the other translation units.
 #include "emit.h"
 
@@ -8,9 +8,9 @@
 #include <cstdio>
 
 // Toolpath types: 0=travel,1=wall,2=sparse,3=solid,4=skirt/brim,5=support,6=raft,7=gap-fill,8=thin-wall,9=bridge,10=ironing,11=prime-tower
-// Per-segment width tracking (for the stage-7 variable-width walls). When g_seg_w is set, every push_seg records the current width into a parallel array.
+// Per-segment width tracking (for the stage-7 variable-width walls). When g_seg_w is set, every push_toolpath_segment records the current width into a parallel array.
 //  (The existing paths format keeps stride 8 -> the 88 tests are unaffected. widths is one optional extra array with one entry per segment.)
-// G003: thread_local so parallel writers (a GW per layer) record their own widths — semantics unchanged on the st/serial path.
+// G003: thread_local so parallel writers (a GcodeWriter per layer) record their own widths — semantics unchanged on the st/serial path.
 bool g_keep_island = false;   // G003: when the cache is kept, emit copies island instead of moving it (so the cache can be reused repeatedly)
 thread_local std::vector<float>* g_seg_w = nullptr;
 thread_local float g_seg_w_cur = 0.42f;
@@ -20,7 +20,7 @@ thread_local float g_seg_w_cur = 0.42f;
 //  9th float would cost +12.5% of it for one small integer. With the untooled default (0) the field IS the bare
 //  role, which is what keeps every single-material stream byte-for-byte what it was.
 thread_local int g_seg_tool = 0;
-static inline void push_seg(std::vector<float>& toolpaths,double x0,double y0,double x1,double y1,double z,float type){
+static inline void push_toolpath_segment(std::vector<float>& toolpaths,double x0,double y0,double x1,double y1,double z,float type){
   const float encodedRole = type + (float)(g_seg_tool * 16);
   toolpaths.push_back((float)x0);
   toolpaths.push_back((float)y0);
@@ -54,17 +54,17 @@ static int pe_role_of(float type){
   }
 }
 // The dry pass's stand-in for one path's travel to (x0, y0) and its extrusion: the writer's acceleration and jerk move
-//  as the real emit's would (GW::apply_travel_motion / apply_print_motion), so a parallel writer starts from the
+//  as the real emit's would (GcodeWriter::apply_travel_motion / apply_print_motion), so a parallel writer starts from the
 //  state the serial emit reaches. Called before the dry pass moves the position.
-static void dry_path_motion(GW& writer, double x0, double y0) {
+static void dry_path_motion(GcodeWriter& writer, double x0, double y0) {
   const double distance = std::hypot(x0 - writer.position_x, y0 - writer.position_y);
   if (distance >= 1e-6) writer.apply_travel_motion(distance);
   writer.apply_print_motion();
 }
 // Closed loops (walls/skirt/raft). seamMode: -1 = no rotation, 0 = back, 1 = nearest, 2 = aligned, 3 = random.
-// With updateSeam=true the start point is recorded into SeamCtx (for the next layer of aligned).
-void emit_loops(GW& writer, std::vector<float>& toolpaths, Paths loops, double z, float type, int fPrint, int fTravel,
-                       int seamMode, SeamCtx& seamContext, bool updateSeam){
+// With updateSeam=true the start point is recorded into SeamContext (for the next layer of aligned).
+void emit_loops(GcodeWriter& writer, std::vector<float>& toolpaths, Paths loops, double z, float type, int fPrint, int fTravel,
+                       int seamMode, SeamContext& seamContext, bool updateSeam){
   if (writer.dry_run) {   // G003 E1: seam rotation, position and current_feed only — the writer pass reproduces the bytes from an identical entry state
     for (Path loop : loops) {
       if (loop.size() < 2) continue;
@@ -73,7 +73,7 @@ void emit_loops(GW& writer, std::vector<float>& toolpaths, Paths loops, double z
       writer.position_x = loop[0].x()*INV;
       writer.position_y = loop[0].y()*INV;
       writer.current_feed = fPrint;
-      if (writer.small_perimeter_length > 0) writer.current_feed = writer.loop_feed(paths_len(Paths{loop}, true), fPrint);
+      if (writer.small_perimeter_length > 0) writer.current_feed = writer.loop_feed(paths_length(Paths{loop}, true), fPrint);
       if (updateSeam) {
         seamContext.lastX=writer.position_x;
         seamContext.lastY=writer.position_y;
@@ -91,15 +91,15 @@ void emit_loops(GW& writer, std::vector<float>& toolpaths, Paths loops, double z
       anyRun=true;
     }
     rotate_seam(loop, seamMode, seamContext, writer.position_x, writer.position_y);
-    std::vector<DPt> points;
+    std::vector<MillimetrePoint> points;
     points.reserve(loop.size()+1);
     for (auto& vertex:loop) points.push_back({vertex.x()*INV, vertex.y()*INV});
     points.push_back(points.front());                             // close the loop
-    push_seg(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
+    push_toolpath_segment(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
     writer.travel(points[0].x, points[0].y, fTravel);
-    for (size_t i=1;i<points.size();++i) push_seg(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, z, type);
+    for (size_t i=1;i<points.size();++i) push_toolpath_segment(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, z, type);
     int fLoop = fPrint;
-    if (writer.small_perimeter_length > 0) fLoop = writer.loop_feed(paths_len(Paths{loop}, true), fPrint);
+    if (writer.small_perimeter_length > 0) fLoop = writer.loop_feed(paths_length(Paths{loop}, true), fPrint);
     writer.path_begin(fLoop);
     writer.extrude_run(points, fLoop, type);
     writer.path_end();
@@ -112,7 +112,7 @@ void emit_loops(GW& writer, std::vector<float>& toolpaths, Paths loops, double z
   if (anyRun) writer.pe_end_run();
 }
 // Open lines (infill/support). Arc fitting applies.
-void emit_lines(GW& writer, std::vector<float>& toolpaths, const Paths& lines, double z, float type, int fPrint, int fTravel){
+void emit_lines(GcodeWriter& writer, std::vector<float>& toolpaths, const Paths& lines, double z, float type, int fPrint, int fTravel){
   if (writer.dry_run) {
     for (const Path& line : lines) if (line.size() >= 2) {
       dry_path_motion(writer, line[0].x()*INV, line[0].y()*INV);
@@ -130,12 +130,12 @@ void emit_lines(GW& writer, std::vector<float>& toolpaths, const Paths& lines, d
       writer.pe_begin_run(pe_role_of(type), fPrint);
       anyRun=true;
     }
-    std::vector<DPt> points;
+    std::vector<MillimetrePoint> points;
     points.reserve(line.size());
     for (auto& vertex:line) points.push_back({vertex.x()*INV, vertex.y()*INV});
-    push_seg(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
+    push_toolpath_segment(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
     writer.travel(points[0].x, points[0].y, fTravel);
-    for (size_t i=1;i<points.size();++i) push_seg(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, z, type);
+    for (size_t i=1;i<points.size();++i) push_toolpath_segment(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, z, type);
     writer.path_begin(fPrint);
     writer.extrude_run(points, fPrint, type);
     writer.path_end();
@@ -143,9 +143,9 @@ void emit_lines(GW& writer, std::vector<float>& toolpaths, const Paths& lines, d
   if (anyRun) writer.pe_end_run();
 }
 // Stage 19 -> WP3: tree support emission — open polylines with per-path width. E uses the upstream mm3_per_mm when present
-//  (set_e_per_mm_vol — reproducing the upstream Flow rate, e.g. on bridging contact layers), otherwise the old width x height rectangular approximation.
+//  (set_e_per_mm_volume — reproducing the upstream Flow rate, e.g. on bridging contact layers), otherwise the old width x height rectangular approximation.
 //  The PE role splits runs by each path's upstream role (base 14 / interface 15), preserving the upstream role distinction.
-void emit_lines_vw(GW& writer, std::vector<float>& toolpaths, const std::vector<TreePath>& lines,
+void emit_lines_variable_width(GcodeWriter& writer, std::vector<float>& toolpaths, const std::vector<TreePath>& lines,
                           double z, double layerHeight, const Params& params, float type, int fPrint, int fTravel){
   if (writer.dry_run) {   // G003 E1: position and current_feed only (E/flow state is reset at every layer start, so it does not chain)
     for (const auto& treePath : lines) {
@@ -154,7 +154,7 @@ void emit_lines_vw(GW& writer, std::vector<float>& toolpaths, const std::vector<
       writer.position_x = treePath.path.back().x()*INV;
       writer.position_y = treePath.path.back().y()*INV;
       // The flow the real emit sets for this line, so the volumetric cap leaves current_feed where the real emit would.
-      if (treePath.mm3_per_mm > 1e-9) writer.set_e_per_mm_vol(treePath.mm3_per_mm, params);
+      if (treePath.mm3_per_mm > 1e-9) writer.set_e_per_mm_volume(treePath.mm3_per_mm, params);
       else if (treePath.height > 1e-6) writer.set_e_per_mm_width(treePath.width, treePath.height, params);
       else writer.set_e_per_mm_width(treePath.width, layerHeight, params);
       writer.current_feed = writer.capped_feed(fPrint);
@@ -176,15 +176,15 @@ void emit_lines_vw(GW& writer, std::vector<float>& toolpaths, const std::vector<
     }
     double pathHeight = layerHeight;
     if (treePath.height > 1e-6) pathHeight = treePath.height;
-    if (treePath.mm3_per_mm > 1e-9) writer.set_e_per_mm_vol(treePath.mm3_per_mm, params);
+    if (treePath.mm3_per_mm > 1e-9) writer.set_e_per_mm_volume(treePath.mm3_per_mm, params);
     else                     writer.set_e_per_mm_width(treePath.width, pathHeight, params);
     g_seg_w_cur = treePath.width;
-    std::vector<DPt> points;
+    std::vector<MillimetrePoint> points;
     points.reserve(line.size());
     for (auto& vertex:line) points.push_back({vertex.x()*INV, vertex.y()*INV});
-    push_seg(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
+    push_toolpath_segment(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
     writer.travel(points[0].x, points[0].y, fTravel);
-    for (size_t i=1;i<points.size();++i) push_seg(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, z, type);
+    for (size_t i=1;i<points.size();++i) push_toolpath_segment(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, z, type);
     writer.path_begin(fPrint);
     writer.extrude_run(points, fPrint, type);
     writer.path_end();
@@ -194,7 +194,7 @@ void emit_lines_vw(GW& writer, std::vector<float>& toolpaths, const std::vector<
   writer.set_e_per_mm(layerHeight, params);
 }
 // Stage 7: emit the real ported Arachne variable-width walls. E is computed from the per-segment width (set_e_per_mm_width) and widths is recorded.
-void emit_arachne_walls(GW& writer, std::vector<float>& toolpaths, const std::vector<arachne_bridge::WLine>& walls,
+void emit_arachne_walls(GcodeWriter& writer, std::vector<float>& toolpaths, const std::vector<arachne_bridge::WallLine>& walls,
                                double z, double layerHeight, const Params& params, const RoleFeeds& feeds, int fTravel){
   bool anyRun=false;
   for (const auto& wall : walls) {
@@ -214,7 +214,7 @@ void emit_arachne_walls(GW& writer, std::vector<float>& toolpaths, const std::ve
       writer.pe_begin_run(2 /*erExternalPerimeter*/, fPrint);
       anyRun=true;
     }
-    push_seg(toolpaths, writer.position_x, writer.position_y, wall.junctions[0].x, wall.junctions[0].y, z, 0.0f);
+    push_toolpath_segment(toolpaths, writer.position_x, writer.position_y, wall.junctions[0].x, wall.junctions[0].y, z, 0.0f);
     writer.travel(wall.junctions[0].x, wall.junctions[0].y, fTravel);
     writer.path_begin(fPrint);
     size_t pointCount = wall.junctions.size();
@@ -222,14 +222,14 @@ void emit_arachne_walls(GW& writer, std::vector<float>& toolpaths, const std::ve
       double segmentWidth = 0.5*(wall.junctions[i-1].width + wall.junctions[i].width);
       writer.set_e_per_mm_width(segmentWidth, layerHeight, params);
       g_seg_w_cur = (float)segmentWidth;
-      push_seg(toolpaths, wall.junctions[i-1].x, wall.junctions[i-1].y, wall.junctions[i].x, wall.junctions[i].y, z, 1.0f);
+      push_toolpath_segment(toolpaths, wall.junctions[i-1].x, wall.junctions[i-1].y, wall.junctions[i].x, wall.junctions[i].y, z, 1.0f);
       writer.extrude(wall.junctions[i].x, wall.junctions[i].y, fPrint);
     }
     if (wall.closed) {
       double segmentWidth = 0.5*(wall.junctions[pointCount-1].width + wall.junctions[0].width);
       writer.set_e_per_mm_width(segmentWidth, layerHeight, params);
       g_seg_w_cur = (float)segmentWidth;
-      push_seg(toolpaths, wall.junctions[pointCount-1].x, wall.junctions[pointCount-1].y, wall.junctions[0].x, wall.junctions[0].y, z, 1.0f);
+      push_toolpath_segment(toolpaths, wall.junctions[pointCount-1].x, wall.junctions[pointCount-1].y, wall.junctions[0].x, wall.junctions[0].y, z, 1.0f);
       writer.extrude(wall.junctions[0].x, wall.junctions[0].y, fPrint);
     }
     writer.path_end();
@@ -238,13 +238,13 @@ void emit_arachne_walls(GW& writer, std::vector<float>& toolpaths, const std::ve
   g_seg_w_cur = (float)params.line_width;
 }
 // Spiral (vase): a single outer wall rising continuously from z0 to z0+h around the perimeter
-void emit_spiral(GW& writer, std::vector<float>& toolpaths, const Paths& outerWall, double z0, double layerHeight, int fPrint, int fTravel){
+void emit_spiral(GcodeWriter& writer, std::vector<float>& toolpaths, const Paths& outerWall, double z0, double layerHeight, int fPrint, int fTravel){
   if (outerWall.empty() || outerWall[0].size()<2) return;
   const Path& wallPath = outerWall[0];
-  std::vector<DPt> points;
+  std::vector<MillimetrePoint> points;
   for (auto& vertex:wallPath) points.push_back({vertex.x()*INV, vertex.y()*INV});
   points.push_back(points.front());
-  push_seg(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z0, 0.0f);
+  push_toolpath_segment(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z0, 0.0f);
   writer.travel(points[0].x, points[0].y, fTravel);
   writer.role_tag(1);
   writer.path_begin(fPrint);
@@ -257,17 +257,17 @@ void emit_spiral(GW& writer, std::vector<float>& toolpaths, const Paths& outerWa
     if (totalLength>1e-9) riseFraction = travelled/totalLength;
     double pointZ = z0 + layerHeight*riseFraction;
     writer.extrude_z(points[i].x, points[i].y, pointZ, fPrint);
-    push_seg(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, pointZ, 1.0f);
+    push_toolpath_segment(toolpaths, points[i-1].x,points[i-1].y, points[i].x,points[i].y, pointZ, 1.0f);
   }
   writer.path_end();
 }
 // Scarf joint seam (outer wall loop): ramp z (z-h -> z) and flow (0 -> 1) up at the start, then ramp down over the same length at the end with an overlap (flow 1 -> 0).
 //  ⚠ An approximation — a gentle sloped joint instead of a z-seam blob. Applied to the outer wall only when seam_slope_type=external/all.
-void emit_scarf_loop(GW& writer, std::vector<float>& toolpaths, Path loop, double z, double layerHeight,
-                            int fPrint, int fTravel, int seamMode, SeamCtx& seamContext){
+void emit_scarf_loop(GcodeWriter& writer, std::vector<float>& toolpaths, Path loop, double z, double layerHeight,
+                            int fPrint, int fTravel, int seamMode, SeamContext& seamContext){
   if (loop.size() < 3) return;
   rotate_seam(loop, seamMode, seamContext, writer.position_x, writer.position_y);
-  std::vector<DPt> points;
+  std::vector<MillimetrePoint> points;
   points.reserve(loop.size()+1);
   for (auto& vertex:loop) points.push_back({vertex.x()*INV, vertex.y()*INV});
   points.push_back(points.front());
@@ -276,7 +276,7 @@ void emit_scarf_loop(GW& writer, std::vector<float>& toolpaths, Path loop, doubl
   fPrint = writer.loop_feed(loopLength, fPrint);
   double scarfLength = std::min(writer.scarf_length, 0.45*loopLength);
   if (scarfLength < 1e-3) scarfLength = 0.45*loopLength;
-  push_seg(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
+  push_toolpath_segment(toolpaths, writer.position_x, writer.position_y, points[0].x, points[0].y, z, 0.0f);
   writer.travel(points[0].x, points[0].y, fTravel);
   writer.raw("; scarf");
   writer.path_begin(fPrint);
@@ -300,8 +300,8 @@ void emit_scarf_loop(GW& writer, std::vector<float>& toolpaths, Path loop, doubl
       double flow=std::max(0.05, rampFraction);
       double fromX=writer.position_x;
       double fromY=writer.position_y;
-      writer.extrude_zf(x, y, rampZ, flow, fPrint);
-      push_seg(toolpaths, fromX,fromY, x,y, rampZ, 1.0f);
+      writer.extrude_z_flow(x, y, rampZ, flow, fPrint);
+      push_toolpath_segment(toolpaths, fromX,fromY, x,y, rampZ, 1.0f);
     }
     rampDistance+=segmentLength;
     if (rampDistance>=scarfLength) {
@@ -314,7 +314,7 @@ void emit_scarf_loop(GW& writer, std::vector<float>& toolpaths, Path loop, doubl
     double fromX=writer.position_x;
     double fromY=writer.position_y;
     writer.extrude(points[i].x, points[i].y, fPrint);
-    push_seg(toolpaths, fromX,fromY, points[i].x,points[i].y, z, 1.0f);
+    push_toolpath_segment(toolpaths, fromX,fromY, points[i].x,points[i].y, z, 1.0f);
   }
   // Overlapping ramp down: retrace scarfLength from the start, keeping z and taking flow 1 -> 0 (finishing over the ramp-up)
   double rampDownDistance=0;
@@ -331,8 +331,8 @@ void emit_scarf_loop(GW& writer, std::vector<float>& toolpaths, Path loop, doubl
       double flow=std::max(0.05, 1.0-rampFraction);
       double fromX=writer.position_x;
       double fromY=writer.position_y;
-      writer.extrude_zf(x, y, z, flow, fPrint);
-      push_seg(toolpaths, fromX,fromY, x,y, z, 1.0f);
+      writer.extrude_z_flow(x, y, z, flow, fPrint);
+      push_toolpath_segment(toolpaths, fromX,fromY, x,y, z, 1.0f);
     }
     rampDownDistance+=segmentLength;
     if (rampDownDistance>=scarfLength) break;
@@ -349,7 +349,7 @@ void emit_scarf_loop(GW& writer, std::vector<float>& toolpaths, Path loop, doubl
 //     density / price, because inventing one would be worse than omitting the line;
 //   · the parameters the slice ran with, delimited so a tool can find them (upstream re-imports its own exports
 //     from exactly this block).
-void emit_gcode_footer_blocks(GW& writer, const Params& params, const std::vector<double>& filamentByTool, int toolChanges) {
+void emit_gcode_footer_blocks(GcodeWriter& writer, const Params& params, const std::vector<double>& filamentByTool, int toolChanges) {
   if (params.gcode_stats_block) {
     // One entry per filament, comma separated, in filament order — upstream's own layout, so the same parsers read it.
     std::vector<double> used = filamentByTool;
@@ -541,7 +541,7 @@ RoleFeeds role_feeds(const Params& params, bool firstLayer, int printedLayer, in
       case FlowRole::Ironing:          speed = params.ironing_speed; break;
       case FlowRole::Other:            speed = outer; break;
     }
-    // 0 = as fast as the filament's volumetric limit allows: the writer's cap (GW::capped_feed) does the rest.
+    // 0 = as fast as the filament's volumetric limit allows: the writer's cap (GcodeWriter::capped_feed) does the rest.
     if (speed == 0) speed = params.machine_max_speed_xy;
     const bool perimeterLike = role == FlowRole::OuterWall || role == FlowRole::InnerWall || role == FlowRole::Brim;
     double rampFrom = firstLayerInfill;
@@ -564,7 +564,7 @@ RoleFeeds role_feeds(const Params& params, bool firstLayer, int printedLayer, in
   return feeds;
 }
 
-void gw_setup_motion(GW& writer, const Params& params, bool is_bbl) {
+void gcode_writer_setup_motion(GcodeWriter& writer, const Params& params, bool is_bbl) {
   writer.motion_accel = params.default_acceleration > 0;
   writer.motion_jerk = params.default_jerk > 0;
   writer.motion_bbl = is_bbl;
