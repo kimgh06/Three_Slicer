@@ -8,17 +8,29 @@ const ok = (condition, message) => {
   console.log(`  ${{ true: 'ok' }[condition] ?? 'FAIL'}: ${message}`)
   if (!condition) failures++
 }
-const near = (a, b, tolerance = 0.002) => Math.abs(a - b) <= tolerance * Math.max(1, Math.abs(b))
+const near = (actual, expected, tolerance = 0.002) => Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected))
 
-function boxTris(ox, oy, oz, sx, sy, sz) {
-  const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v => [v[0]+ox, v[1]+oy, v[2]+oz])
-  const q = (a,b,cc,d) => [[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]]
-  return [...q(0,1,2,3), ...q(4,5,6,7), ...q(0,1,5,4), ...q(1,2,6,5), ...q(2,3,7,6), ...q(3,0,4,7)]
+function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
+  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
+  const quad = (first,second,third,fourth) => [[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
+  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
 }
 function trisToSTL(tris) {
-  const buf = Buffer.alloc(84 + tris.length*50); buf.writeUInt32LE(tris.length, 80); let off = 84
-  for (const t of tris) { off += 12; for (const p of t) { buf.writeFloatLE(p[0],off); buf.writeFloatLE(p[1],off+4); buf.writeFloatLE(p[2],off+8); off += 12 } buf.writeUInt16LE(0,off); off += 2 }
-  return new Uint8Array(buf)
+  const buffer = Buffer.alloc(84 + tris.length*50)
+  buffer.writeUInt32LE(tris.length, 80)
+  let offset = 84
+  for (const triangle of tris) {
+    offset += 12
+    for (const point of triangle) {
+      buffer.writeFloatLE(point[0],offset)
+      buffer.writeFloatLE(point[1],offset+4)
+      buffer.writeFloatLE(point[2],offset+8)
+      offset += 12
+    }
+    buffer.writeUInt16LE(0,offset)
+    offset += 2
+  }
+  return new Uint8Array(buffer)
 }
 const cube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 4))
 // A 6 mm post under a 20 mm slab: the slab's underside is a bridge.
@@ -31,25 +43,35 @@ const FILAMENT_AREA = Math.PI * base.filament_diameter ** 2 / 4
 // Every extrusion G1/G2/G3 longer than 1 mm: { layer, role, ePerMm, flow (mm³/s) }.
 function extrusions(gcode) {
   const moves = []
-  let x = 0, y = 0, f = 0, layer = -1, role = ''
+  let x = 0, y = 0, feedRate = 0, layer = -1, role = ''
   for (const line of gcode.split('\n')) {
     const marker = /^; LAYER (\d+)/.exec(line)
-    if (marker) { layer = Number(marker[1]); continue }
-    if (line.startsWith(';TYPE:')) { role = line.slice(6); continue }
+    if (marker) {
+      layer = Number(marker[1])
+      continue
+    }
+    if (line.startsWith(';TYPE:')) {
+      role = line.slice(6)
+      continue
+    }
     const move = /^G([0-3]) (.*)/.exec(line)
     if (!move) continue
-    const words = Object.fromEntries(move[2].split(';')[0].trim().split(/\s+/).map(w => [w[0], Number(w.slice(1))]))
-    if (words.F) f = words.F
-    const nx = words.X ?? x, ny = words.Y ?? y
-    const distance = Math.hypot(nx - x, ny - y)
-    x = nx; y = ny
+    const words = Object.fromEntries(move[2].split(';')[0].trim().split(/\s+/).map(word => [word[0], Number(word.slice(1))]))
+    if (words.F) feedRate = words.F
+    const nextX = words.X ?? x, nextY = words.Y ?? y
+    const distance = Math.hypot(nextX - x, nextY - y)
+    x = nextX
+    y = nextY
     if (move[1] !== '1' || !(words.E > 0) || distance < 1) continue
-    moves.push({ layer, role, ePerMm: words.E / distance, flow: words.E * FILAMENT_AREA / distance * f / 60 })
+    moves.push({ layer, role, ePerMm: words.E / distance, flow: words.E * FILAMENT_AREA / distance * feedRate / 60 })
   }
   return moves
 }
-const median = values => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.floor(sorted.length / 2)] }
-const ePerMm = (moves, keep) => median(moves.filter(keep).map(m => m.ePerMm))
+const median = values => {
+  const sorted = [...values].sort((left, right) => left - right)
+  return sorted[Math.floor(sorted.length / 2)]
+}
+const ePerMm = (moves, keep) => median(moves.filter(keep).map(extrusion => extrusion.ePerMm))
 
 const slicer = await createSlicer()
 const slice = (model, params) => {
@@ -63,10 +85,10 @@ console.log('[filament_max_volumetric_speed] caps every extrusion, as upstream d
   const fast = { ...base, print_speed: 300, first_layer_speed: 300 }
   const free = slice(cube, fast)
   const capped = slice(cube, { ...fast, filament_max_volumetric_speed: [5] })
-  const maxFree = Math.max(...free.moves.map(m => m.flow)), maxCapped = Math.max(...capped.moves.map(m => m.flow))
+  const maxFree = Math.max(...free.moves.map(extrusion => extrusion.flow)), maxCapped = Math.max(...capped.moves.map(extrusion => extrusion.flow))
   ok(maxFree > 5, `without the key the flow reaches ${maxFree.toFixed(1)} mm³/s`)
   ok(maxCapped <= 5.01, `with a 5 mm³/s cap the fastest extrusion is ${maxCapped.toFixed(2)} mm³/s`)
-  ok(capped.result.gcode.split('\n').filter(l => /^G1 .*E/.test(l)).length === free.result.gcode.split('\n').filter(l => /^G1 .*E/.test(l)).length,
+  ok(capped.result.gcode.split('\n').filter(line => /^G1 .*E/.test(line)).length === free.result.gcode.split('\n').filter(line => /^G1 .*E/.test(line)).length,
     'the cap changes speeds, not the paths')
   ok(near(capped.result.stats.filament_mm, free.result.stats.filament_mm, 1e-9), 'nor the filament')
 }
@@ -82,7 +104,7 @@ console.log("[top_solid_infill_flow_ratio / bottom_solid_infill_flow_ratio] only
 {
   const plain = slice(cube, base), scaled = slice(cube, { ...base, top_solid_infill_flow_ratio: 0.8, bottom_solid_infill_flow_ratio: 1.2 })
   const top = plain.result.stats.layers - 1
-  const solidOn = (moves, layer) => ePerMm(moves, m => m.layer === layer && m.role === 'Internal solid infill')
+  const solidOn = (moves, layer) => ePerMm(moves, extrusion => extrusion.layer === layer && extrusion.role === 'Internal solid infill')
   ok(near(solidOn(scaled.moves, top) / solidOn(plain.moves, top), 0.8), `top layer solid E/mm x${(solidOn(scaled.moves, top) / solidOn(plain.moves, top)).toFixed(3)}`)
   ok(near(solidOn(scaled.moves, 0) / solidOn(plain.moves, 0), 1.2), `first layer solid E/mm x${(solidOn(scaled.moves, 0) / solidOn(plain.moves, 0)).toFixed(3)}`)
   ok(near(solidOn(scaled.moves, top - 1), solidOn(plain.moves, top - 1)), 'a shell layer below the top prints as before')
@@ -91,7 +113,7 @@ console.log("[top_solid_infill_flow_ratio / bottom_solid_infill_flow_ratio] only
 console.log('[bridge_flow] the bridge section, regular or a round thread (thick_bridges)')
 {
   const plain = slice(table, base)
-  const bridge = moves => ePerMm(moves, m => m.role === 'Bridge')
+  const bridge = moves => ePerMm(moves, extrusion => extrusion.role === 'Bridge')
   ok(Number.isFinite(bridge(plain.moves)), 'the table has a bridge')
   const scaled = slice(table, { ...base, bridge_flow: 0.8 })
   ok(near(bridge(scaled.moves) / bridge(plain.moves), 0.8), `bridge E/mm x${(bridge(scaled.moves) / bridge(plain.moves)).toFixed(3)}`)
@@ -104,7 +126,7 @@ console.log('[brim_flow_ratio] the brim, not the skirt')
 {
   const withBrim = { ...base, brim_width: 2 }
   const plain = slice(cube, withBrim), scaled = slice(cube, { ...withBrim, brim_flow_ratio: 0.7 })
-  const skirt = moves => ePerMm(moves, m => m.layer === 0 && m.role === 'Skirt')
+  const skirt = moves => ePerMm(moves, extrusion => extrusion.layer === 0 && extrusion.role === 'Skirt')
   ok(scaled.result.gcode.includes('; brim'), 'the brim is emitted on its own')
   const brimMoves = scaled.result.gcode.split('; brim\n')[1]
   ok(brimMoves && near(ePerMm(extrusions('; LAYER 0\n;TYPE:Skirt\n' + brimMoves.split(';TYPE:')[0]), () => true) / skirt(plain.moves), 0.7, 0.01),
@@ -115,29 +137,32 @@ console.log('[set_other_flow_ratios] per-role ratios and the first layer, off un
 {
   const others = { outer_wall_flow_ratio: 0.9, sparse_infill_flow_ratio: 1.1, first_layer_flow_ratio: 1.05 }
   const plain = slice(cube, base)
-  const off = slice(cube, { ...base, ...others })
-  ok(off.result.gcode === plain.result.gcode, 'without set_other_flow_ratios the per-role ratios do nothing')
-  const on = slice(cube, { ...base, ...others, set_other_flow_ratios: true })
-  const sparse = (moves, layer) => ePerMm(moves, m => m.layer === layer && m.role === 'Sparse infill')
-  ok(near(sparse(on.moves, 5) / sparse(plain.moves, 5), 1.1), 'sparse infill x1.1')
-  const walls = (moves, layer) => moves.filter(m => m.layer === layer && m.role === 'Outer wall').map(m => m.ePerMm)
-  ok(near(Math.min(...walls(on.moves, 5)) / Math.min(...walls(plain.moves, 5)), 0.9), 'the outer wall x0.9')
-  const skirt = moves => ePerMm(moves, m => m.layer === 0 && m.role === 'Skirt')
-  ok(near(skirt(on.moves), skirt(plain.moves)), 'the skirt keeps its flow on the first layer')
+  const withoutSwitch = slice(cube, { ...base, ...others })
+  ok(withoutSwitch.result.gcode === plain.result.gcode, 'without set_other_flow_ratios the per-role ratios do nothing')
+  const withSwitch = slice(cube, { ...base, ...others, set_other_flow_ratios: true })
+  const sparse = (moves, layer) => ePerMm(moves, extrusion => extrusion.layer === layer && extrusion.role === 'Sparse infill')
+  ok(near(sparse(withSwitch.moves, 5) / sparse(plain.moves, 5), 1.1), 'sparse infill x1.1')
+  const walls = (moves, layer) => moves.filter(extrusion => extrusion.layer === layer && extrusion.role === 'Outer wall').map(extrusion => extrusion.ePerMm)
+  ok(near(Math.min(...walls(withSwitch.moves, 5)) / Math.min(...walls(plain.moves, 5)), 0.9), 'the outer wall x0.9')
+  const skirt = moves => ePerMm(moves, extrusion => extrusion.layer === 0 && extrusion.role === 'Skirt')
+  ok(near(skirt(withSwitch.moves), skirt(plain.moves)), 'the skirt keeps its flow on the first layer')
   // The cube's first layer is all bottom shell, so the first-layer ratio is read on its outer wall.
-  ok(near(Math.min(...walls(on.moves, 0)) / Math.min(...walls(plain.moves, 0)), 0.9 * 1.05), 'the first layer outer wall x0.9 x1.05')
+  ok(near(Math.min(...walls(withSwitch.moves, 0)) / Math.min(...walls(plain.moves, 0)), 0.9 * 1.05), 'the first layer outer wall x0.9 x1.05')
 }
 
 console.log('[multi-material] the same multipliers on the multi-material path')
 {
-  const A = boxTris(-13, -5, 0, 10, 10, 4), B = boxTris(3, -5, 0, 10, 10, 4)
-  const twoBoxes = trisToSTL([...A, ...B])
-  const mm = { ...base, extruder_count: 2, mm_group_split: A.length, wall_generator: 'arachne' }
-  const plain = slice(twoBoxes, mm), scaled = slice(twoBoxes, { ...mm, print_flow_ratio: 0.9, filament_max_volumetric_speed: [2, 2] })
+  const leftBox = boxTris(-13, -5, 0, 10, 10, 4), rightBox = boxTris(3, -5, 0, 10, 10, 4)
+  const twoBoxes = trisToSTL([...leftBox, ...rightBox])
+  const multiMaterial = { ...base, extruder_count: 2, mm_group_split: leftBox.length, wall_generator: 'arachne' }
+  const plain = slice(twoBoxes, multiMaterial), scaled = slice(twoBoxes, { ...multiMaterial, print_flow_ratio: 0.9, filament_max_volumetric_speed: [2, 2] })
   ok(scaled.result.stats.filament_mm < plain.result.stats.filament_mm * 0.95, 'print_flow_ratio scales it')
-  ok(Math.max(...scaled.moves.filter(m => m.role !== 'Prime tower').map(m => m.flow)) <= 2.01, 'the cap holds for both tools')
+  ok(Math.max(...scaled.moves.filter(extrusion => extrusion.role !== 'Prime tower').map(extrusion => extrusion.flow)) <= 2.01, 'the cap holds for both tools')
 }
 
-if (failures) { console.log(`${failures} FLOW CHECK(S) FAILED`); process.exit(1) }
+if (failures) {
+  console.log(`${failures} FLOW CHECK(S) FAILED`)
+  process.exit(1)
+}
 console.log('ALL FLOW CHECKS PASSED')
 process.exit(0)

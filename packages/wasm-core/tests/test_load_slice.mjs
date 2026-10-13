@@ -16,21 +16,24 @@ const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the packag
 // cube20.stl sits at the package root, the rest under testing_files/ — both are committed fixtures.
 const fixture = (name) => {
   const inFolder = join(here, 'testing_files', name)
-  return readFileSync(existsSync(inFolder) ? inFolder : join(here, name))
+  if (existsSync(inFolder)) return readFileSync(inFolder)
+  return readFileSync(join(here, name))
 }
 
-function modelToSTL(pos) {   // N*9 z-up model -> binary STL
-  const triangles = pos.length / 9
+function modelToSTL(positions) {   // N*9 z-up model -> binary STL
+  const triangles = positions.length / 9
   const buffer = Buffer.alloc(84 + triangles * 50)
   buffer.writeUInt32LE(triangles, 80)
-  let at = 84, read = 0
-  for (let t = 0; t < triangles; t++) {
-    at += 12                                     // the stored normal stays zero; the kernel recomputes it
+  let offset = 84, readIndex = 0
+  for (let triangleIndex = 0; triangleIndex < triangles; triangleIndex++) {
+    offset += 12                                     // the stored normal stays zero; the kernel recomputes it
     for (let corner = 0; corner < 3; corner++) {
-      buffer.writeFloatLE(pos[read++], at); buffer.writeFloatLE(pos[read++], at + 4); buffer.writeFloatLE(pos[read++], at + 8)
-      at += 12
+      buffer.writeFloatLE(positions[readIndex++], offset)
+      buffer.writeFloatLE(positions[readIndex++], offset + 4)
+      buffer.writeFloatLE(positions[readIndex++], offset + 8)
+      offset += 12
     }
-    at += 2
+    offset += 2
   }
   return buffer
 }
@@ -42,11 +45,16 @@ const params = {
   skirt_loops: 0, brim_width: 0, infill_angle: 45,
 }
 
-const M = await createSlicer()
+const slicer = await createSlicer()
 let failures = 0
 const check = (label, condition, detail = '') => {
-  console.log((condition ? '  ok: ' : '  FAIL: ') + label + (condition || !detail ? '' : ' — ' + detail))
-  if (!condition) failures++
+  if (condition) {
+    console.log('  ok: ' + label)
+    return
+  }
+  if (!detail) console.log('  FAIL: ' + label)
+  else console.log('  FAIL: ' + label + ' — ' + detail)
+  failures++
 }
 
 check(`the loader still claims stl,obj,3mf,amf,ply (${SUPPORTED_EXT.join(',')})`, SUPPORTED_EXT.join(',') === 'stl,obj,3mf,amf,ply')
@@ -54,20 +62,27 @@ check(`the loader still claims stl,obj,3mf,amf,ply (${SUPPORTED_EXT.join(',')})`
 for (const name of ['cube20.stl', 'cube.obj', 'cube.ply']) {
   const bytes = fixture(name)
   const objects = await loadModel(name, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
-  const pos = objects[0]?.modelPos ?? new Float32Array(0)
+  const positions = objects[0]?.modelPos ?? new Float32Array(0)
   const span = (axis) => {
     let low = Infinity, high = -Infinity
-    for (let at = axis; at < pos.length; at += 3) { if (pos[at] < low) low = pos[at]; if (pos[at] > high) high = pos[at] }
+    for (let index = axis; index < positions.length; index += 3) {
+      if (positions[index] < low) low = positions[index]
+      if (positions[index] > high) high = positions[index]
+    }
     return high - low
   }
-  check(`${name}: one object of 12 triangles`, objects.length === 1 && pos.length / 9 === 12, `${objects.length} objects, ${pos.length / 9} triangles`)
+  check(`${name}: one object of 12 triangles`, objects.length === 1 && positions.length / 9 === 12, `${objects.length} objects, ${positions.length / 9} triangles`)
   check(`${name}: a 20mm cube, z still up`, Math.abs(span(0) - 20) < 0.1 && Math.abs(span(2) - 20) < 0.1,
     `x ${span(0).toFixed(2)}, z ${span(2).toFixed(2)}`)
-  const result = M.slice(new Uint8Array(modelToSTL(pos)), JSON.stringify(params), () => {})
+  const result = slicer.slice(new Uint8Array(modelToSTL(positions)), JSON.stringify(params), () => {})
   const layers = result.layers?.length ?? 0
   check(`${name}: the kernel slices it into ~99 layers of real G-code`, layers >= 90 && layers <= 105 && (result.gcode || '').length > 1000,
     `${layers} layers, ${(result.gcode || '').length} bytes`)
 }
 
-console.log(failures ? `\n${failures} CHECK(S) FAILED\n` : '\nLOAD -> SLICE PASSED (stl/obj/ply; 3mf/amf are browser-only)\n')
-process.exit(failures ? 1 : 0)
+if (failures) {
+  console.log(`\n${failures} CHECK(S) FAILED\n`)
+  process.exit(1)
+}
+console.log('\nLOAD -> SLICE PASSED (stl/obj/ply; 3mf/amf are browser-only)\n')
+process.exit(0)
