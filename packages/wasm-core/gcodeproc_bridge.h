@@ -23,11 +23,11 @@ struct Limits {
 };
 
 struct Result {
-    double total_s = 0.0;
-    std::vector<double> layer_s;
-    double first_layer_s = 0.0;
-    double extrude_s = 0.0, travel_s = 0.0;
-    std::map<int, double> role_s;       // ExtrusionRole int -> s
+    double total_seconds = 0.0;
+    std::vector<double> layer_seconds;
+    double first_layer_seconds = 0.0;
+    double extrude_seconds = 0.0, travel_seconds = 0.0;
+    std::map<int, double> role_seconds;       // ExtrusionRole int -> s
     double filament_mm = 0.0;
     long   moves = 0;
     bool   ok = false;

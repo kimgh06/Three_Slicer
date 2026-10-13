@@ -31,8 +31,8 @@ static std::string square_gcode(int F_mm_min, int loops){
 // The same Result whichever way the text is fed: whole, or in chunks of any size (a line may be split anywhere).
 //  This is what lets the mt feeder hand a partially fed G-code to the Estimator past GCodeProcessor's move cap.
 static bool same_result(const Result& left, const Result& right){
-    return left.total_s==right.total_s && left.moves==right.moves && left.filament_mm==right.filament_mm && left.first_layer_s==right.first_layer_s
-        && left.extrude_s==right.extrude_s && left.travel_s==right.travel_s && left.layer_s==right.layer_s && left.role_s==right.role_s;
+    return left.total_seconds==right.total_seconds && left.moves==right.moves && left.filament_mm==right.filament_mm && left.first_layer_seconds==right.first_layer_seconds
+        && left.extrude_seconds==right.extrude_seconds && left.travel_seconds==right.travel_seconds && left.layer_seconds==right.layer_seconds && left.role_seconds==right.role_seconds;
 }
 // The verdict word of a comparison, for the printed lines below.
 static const char* same_word(bool equal){
@@ -48,7 +48,7 @@ static bool check_chunked(const Limits& limits){
         for (size_t i=0;i<gcode.size();i+=step) estimator.feed(gcode.data()+i, std::min(step, gcode.size()-i));
         Result chunked = estimator.end();
         bool equal = same_result(whole, chunked);
-        printf("chunk step %zu: %s (total=%.6f moves=%ld layers=%zu)\n", step, same_word(equal), chunked.total_s, chunked.moves, chunked.layer_s.size());
+        printf("chunk step %zu: %s (total=%.6f moves=%ld layers=%zu)\n", step, same_word(equal), chunked.total_seconds, chunked.moves, chunked.layer_seconds.size());
         ok = ok && equal;
     }
     return ok;
@@ -73,7 +73,7 @@ static bool check_token_forms(const Limits& limits){
     Result canonical_result = estimate(canonical, limits);
     bool equal = same_result(exotic_result, canonical_result);
     printf("token forms: %s (total=%.6f vs %.6f, moves=%ld vs %ld, filament=%.6f vs %.6f)\n", same_word(equal),
-           exotic_result.total_s, canonical_result.total_s, exotic_result.moves, canonical_result.moves,
+           exotic_result.total_seconds, canonical_result.total_seconds, exotic_result.moves, canonical_result.moves,
            exotic_result.filament_mm, canonical_result.filament_mm);
     return equal;
 }
@@ -82,12 +82,12 @@ int main(){
     bool ok = check_chunked(limits) && check_token_forms(limits);
     Result slow = estimate(square_gcode(1200, 20), limits);   // 20 mm/s
     Result fast = estimate(square_gcode(6000, 20), limits);   // 100 mm/s
-    printf("slow(20mm/s): total=%.3fs moves=%ld filament=%.3fmm layer0=%.3fs\n", slow.total_s, slow.moves, slow.filament_mm, slow.first_layer_s);
-    printf("fast(100mm/s): total=%.3fs moves=%ld filament=%.3fmm\n", fast.total_s, fast.moves, fast.filament_mm);
+    printf("slow(20mm/s): total=%.3fs moves=%ld filament=%.3fmm layer0=%.3fs\n", slow.total_seconds, slow.moves, slow.filament_mm, slow.first_layer_seconds);
+    printf("fast(100mm/s): total=%.3fs moves=%ld filament=%.3fmm\n", fast.total_seconds, fast.moves, fast.filament_mm);
     printf("total>0=%d  faster_is_less=%d  filament_equal=%d\n",
-           slow.total_s>0.0, fast.total_s < slow.total_s, (int)(std::abs(slow.filament_mm-fast.filament_mm)<1e-6));
+           slow.total_seconds>0.0, fast.total_seconds < slow.total_seconds, (int)(std::abs(slow.filament_mm-fast.filament_mm)<1e-6));
     // manual sanity: 20 loops * 200mm/loop = 4000mm extrude at ~20mm/s -> ~200s+ (plus accel). Print time plausible.
-    ok = ok && slow.total_s > 0.0 && fast.total_s < slow.total_s && std::abs(slow.filament_mm-fast.filament_mm) < 1e-6;
+    ok = ok && slow.total_seconds > 0.0 && fast.total_seconds < slow.total_seconds && std::abs(slow.filament_mm-fast.filament_mm) < 1e-6;
     if (!ok) {
         printf("test_time: FAILED\n");
         return 1;

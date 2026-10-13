@@ -98,25 +98,25 @@ static Result build_result(GCodeProcessor& processor, double filament_mm) {
     Result out;
     const auto& processor_result = processor.get_result();
     const int normal_mode = (int)PrintEstimatedStatistics::ETimeMode::Normal;
-    out.total_s = processor_result.print_statistics.modes[normal_mode].time;
+    out.total_seconds = processor_result.print_statistics.modes[normal_mode].time;
     out.moves   = (long)processor_result.moves.size();
     std::map<long, double> layer_acc;   // key = round(position.z * 1000)
     for (const auto& move : processor_result.moves) {
         const float move_time = move.time[normal_mode];
         if (move.type == EMoveType::Extrude) {
-            out.extrude_s += move_time;
-            out.role_s[(int)move.extrusion_role] += move_time;
+            out.extrude_seconds += move_time;
+            out.role_seconds[(int)move.extrusion_role] += move_time;
         }
-        else if (move.type == EMoveType::Travel) out.travel_s += move_time;
+        else if (move.type == EMoveType::Travel) out.travel_seconds += move_time;
         if (move_time > 0.f) layer_acc[(long)std::lround((double)move.position.z() * 1000.0)] += move_time;
     }
-    out.layer_s.reserve(layer_acc.size());
-    for (auto& layer_entry : layer_acc) out.layer_s.push_back(layer_entry.second);
-    double first_layer_s = 0.0;
-    if (!out.layer_s.empty()) first_layer_s = out.layer_s.front();
-    out.first_layer_s = first_layer_s;
+    out.layer_seconds.reserve(layer_acc.size());
+    for (auto& layer_entry : layer_acc) out.layer_seconds.push_back(layer_entry.second);
+    double first_layer_seconds = 0.0;
+    if (!out.layer_seconds.empty()) first_layer_seconds = out.layer_seconds.front();
+    out.first_layer_seconds = first_layer_seconds;
     out.filament_mm = filament_mm;
-    out.ok = out.total_s > 0.0;
+    out.ok = out.total_seconds > 0.0;
     return out;
 }
 
@@ -126,7 +126,7 @@ namespace {
     double g_fil_total = 0.0, g_fil_e_abs = 0.0;
     bool g_fil_relative = false;
     // hand-over past the move cap: the text fed so far (kept only when a fallback was given — in batch mode the whole G-code is
-    //  resident in gw.s anyway, so this is at most one more copy of the part before the cap), and the transcribed estimator that
+    //  resident in GW::gcode anyway, so this is at most one more copy of the part before the cap), and the transcribed estimator that
     //  takes over. Measured on a 774k-facet model (2.2M moves, 58.6MB): without the hand-over the feeder's work was discarded at
     //  the cap and the whole text was re-parsed serially after the last layer, 3.2-3.7s of a 6.8s mt slice.
     bool g_keep_text = false;
@@ -191,12 +191,12 @@ Result estimate_end() {
     Result out;
     if (g_fb) {
         gcode_time::Result transcribed = g_fb->end();
-        out.total_s = transcribed.total_s;
-        out.layer_s = std::move(transcribed.layer_s);
-        out.first_layer_s = transcribed.first_layer_s;
-        out.extrude_s = transcribed.extrude_s;
-        out.travel_s = transcribed.travel_s;
-        out.role_s = std::move(transcribed.role_s);
+        out.total_seconds = transcribed.total_seconds;
+        out.layer_seconds = std::move(transcribed.layer_seconds);
+        out.first_layer_seconds = transcribed.first_layer_seconds;
+        out.extrude_seconds = transcribed.extrude_seconds;
+        out.travel_seconds = transcribed.travel_seconds;
+        out.role_seconds = std::move(transcribed.role_seconds);
         out.filament_mm = transcribed.filament_mm;
         out.moves = transcribed.moves;
         out.ok = true;

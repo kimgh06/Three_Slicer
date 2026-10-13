@@ -340,7 +340,7 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
 //  start of the line or after a space/tab, nothing past a ';'. Measured before this rewrite: the transcribed estimate of a
 //  58.6MB G-code took 3.2s serial after the last layer (mt), with the parser doing a substr per line and 5-7 scans per line.
 enum { PX=0, PY=1, PZ=2, PE=3, PF=4, PI=5, PJ=6, PN=7 };
-struct AxisVals { double v[PN]; bool has[PN]; };
+struct AxisVals { double values[PN]; bool has[PN]; };
 
 static const double kPow10[23] = { 1e0,1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,1e11,1e12,1e13,1e14,1e15,1e16,1e17,1e18,1e19,1e20,1e21,1e22 };
 
@@ -426,7 +426,7 @@ static void parse_axes(const char* line_begin, const char* line_end, AxisVals& o
         if (cursor != line_begin && cursor[-1] != ' ' && cursor[-1] != '\t') continue;
         double value;
         if (parse_number(cursor + 1, line_end, value)) {
-            out.v[axis] = value;
+            out.values[axis] = value;
             out.has[axis] = true;
         }
     }
@@ -438,8 +438,8 @@ static inline bool gword(const char* text, size_t length, char digit) {   // "G<
 }
 
 struct Estimator::Impl {
-    Limits lim;
-    Result R;
+    Limits limits;
+    Result result;
     std::vector<TimeBlock> blocks;
     State curr, prev;
     double pos[4] = {0,0,0,0};          // absolute X,Y,Z,E
@@ -450,7 +450,7 @@ struct Estimator::Impl {
     int  cur_role = -1;
     std::string carry;                  // a line split across feeds
 
-    explicit Impl(const Limits& limits) : lim(limits) {}
+    explicit Impl(const Limits& machineLimits) : limits(machineLimits) {}
 
     void line(const char* text, size_t len) {
         if (len == 0) return;
@@ -458,7 +458,7 @@ struct Estimator::Impl {
         // markers
         if (starts(text, len, "; LAYER ", 8) || starts(text, len, "; LAYER\t", 8)) {
             ++layer_id;
-            R.layer_s.push_back(0.0);
+            result.layer_seconds.push_back(0.0);
             return;
         }
         if (starts(text, len, ";_EXTRUSION_ROLE:", 17)) {
@@ -492,7 +492,7 @@ struct Estimator::Impl {
         if (starts(text, len, "G92", 3)) {
             AxisVals axes;
             parse_axes(text, text_end, axes);
-            if (axes.has[PE]) pos[AE] = axes.v[PE];
+            if (axes.has[PE]) pos[AE] = axes.values[PE];
             return;
         }
         // motion: G0 / G1 / G2 / G3
@@ -502,33 +502,33 @@ struct Estimator::Impl {
 
         AxisVals axes;
         parse_axes(text, text_end, axes);
-        if (axes.has[PF]) m_feedrate = axes.v[PF] / 60.0;   // mm/min -> mm/s
+        if (axes.has[PF]) m_feedrate = axes.values[PF] / 60.0;   // mm/min -> mm/s
 
         // new absolute position
         double new_x = pos[AX], new_y = pos[AY], new_z = pos[AZ], delta_e = 0.0;
         if (axes.has[PX]) {
-            new_x = axes.v[PX];
-            if (!xyz_absolute) new_x = pos[AX] + axes.v[PX];
+            new_x = axes.values[PX];
+            if (!xyz_absolute) new_x = pos[AX] + axes.values[PX];
         }
         if (axes.has[PY]) {
-            new_y = axes.v[PY];
-            if (!xyz_absolute) new_y = pos[AY] + axes.v[PY];
+            new_y = axes.values[PY];
+            if (!xyz_absolute) new_y = pos[AY] + axes.values[PY];
         }
         if (axes.has[PZ]) {
-            new_z = axes.v[PZ];
-            if (!xyz_absolute) new_z = pos[AZ] + axes.v[PZ];
+            new_z = axes.values[PZ];
+            if (!xyz_absolute) new_z = pos[AZ] + axes.values[PZ];
         }
         if (axes.has[PE]) {
-            delta_e = axes.v[PE];
-            if (!e_relative) delta_e = axes.v[PE] - pos[AE];
+            delta_e = axes.values[PE];
+            if (!e_relative) delta_e = axes.values[PE] - pos[AE];
         }
 
         float delta[4];
         if (clockwise_arc || counter_clockwise_arc) {
             // arc: distance = radius * swept angle (center from I/J relative to start)
             double center_offset_x = 0.0, center_offset_y = 0.0;
-            if (axes.has[PI]) center_offset_x = axes.v[PI];
-            if (axes.has[PJ]) center_offset_y = axes.v[PJ];
+            if (axes.has[PI]) center_offset_x = axes.values[PI];
+            if (axes.has[PJ]) center_offset_y = axes.values[PJ];
             double center_x = pos[AX] + center_offset_x, center_y = pos[AY] + center_offset_y;
             double radius = std::hypot(pos[AX]-center_x, pos[AY]-center_y);
             double start_angle = std::atan2(pos[AY]-center_y, pos[AX]-center_x);
@@ -567,18 +567,18 @@ struct Estimator::Impl {
         } else if (xyz_moved) move_type = 2;                            // travel
 
         // filament = E of real extrusion moves only (exclude unretract re-prime), to match kernel gw.filament
-        if (move_type == 1 && delta[AE] > 0.f) R.filament_mm += delta[AE];
+        if (move_type == 1 && delta[AE] > 0.f) result.filament_mm += delta[AE];
 
         if (move_type != 0) {
             int role = -1;
             if (move_type == 1) role = cur_role;
-            add_move(blocks, curr, prev, delta, (float)m_feedrate, lim, move_type, role, std::max(0, layer_id));
-            ++R.moves;
+            add_move(blocks, curr, prev, delta, (float)m_feedrate, limits, move_type, role, std::max(0, layer_id));
+            ++result.moves;
         }
         pos[AX] = new_x;
         pos[AY] = new_y;
         pos[AZ] = new_z;
-        if (!e_relative && axes.has[PE]) pos[AE] = axes.v[PE];
+        if (!e_relative && axes.has[PE]) pos[AE] = axes.values[PE];
     }
 
     void feed(const char* data, size_t len) {
@@ -619,16 +619,16 @@ struct Estimator::Impl {
         for (const TimeBlock& block : blocks) {
             double block_time = block.time();
             if (!(block_time==block_time) || block_time<0) block_time=0;   // guard NaN
-            R.total_s += block_time;
-            if (block.layer_id >= 0 && block.layer_id < (int)R.layer_s.size()) R.layer_s[block.layer_id] += block_time;
+            result.total_seconds += block_time;
+            if (block.layer_id >= 0 && block.layer_id < (int)result.layer_seconds.size()) result.layer_seconds[block.layer_id] += block_time;
             if (block.move_type == 1)
-                R.extrude_s += block_time;
+                result.extrude_seconds += block_time;
             else if (block.move_type == 2)
-                R.travel_s += block_time;
-            if (block.role >= 0) R.role_s[block.role] += block_time;
+                result.travel_seconds += block_time;
+            if (block.role >= 0) result.role_seconds[block.role] += block_time;
         }
-        if (!R.layer_s.empty()) R.first_layer_s = R.layer_s.front();
-        return std::move(R);
+        if (!result.layer_seconds.empty()) result.first_layer_seconds = result.layer_seconds.front();
+        return std::move(result);
     }
 };
 
