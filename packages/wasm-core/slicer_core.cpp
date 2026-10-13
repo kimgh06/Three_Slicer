@@ -110,7 +110,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     trisOwn = parse_stl(bytes);
   }
   std::vector<Tri>& tris = [&]() -> std::vector<Tri>& {
-    if (reuseGeom) return g_scache.tris;
+    if (reuseGeom) return g_scache.triangles;
     return trisOwn;
   }();
 
@@ -122,7 +122,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   // Model preparation (bbox -> center/seat -> over_bed) -> pass1.cpp
   ModelPrep modelPrep = prepare_model(tris, params, reuseGeom);
-  double centerX = modelPrep.cx, centerY = modelPrep.cy, height = modelPrep.height;
+  double centerX = modelPrep.centerX, centerY = modelPrep.centerY, height = modelPrep.height;
   bool over_bed = modelPrep.over_bed;
 
   const double lineWidth = params.line_width;
@@ -198,24 +198,24 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   std::vector<LayerData> layersOwn;
   if (!reuseSup) layersOwn.resize(layerCount);
   std::vector<LayerData>& layers = [&]() -> std::vector<LayerData>& {
-    if (reuseSup) return g_scache.L;
+    if (reuseSup) return g_scache.layers;
     return layersOwn;
   }();
   // Phase context: exactly the slice()-scope state the moved phase bodies used to capture.
   SliceCtx context;
-  context.p=&params;
-  context.tris=&tris;
-  context.L=&layers;
-  context.CX=isCanceled;
+  context.params=&params;
+  context.triangles=&tris;
+  context.layers=&layers;
+  context.isCanceled=isCanceled;
   context.report=report;
   context.treeZMaxResid=&treeZMaxResid;
   context.treeSupLayers=&treeSupLayers;
-  context.N=layerCount;
+  context.layerCount=layerCount;
   context.total=total;
   context.height=height;
-  context.w=lineWidth;
-  context.cx=centerX;
-  context.cy=centerY;
+  context.lineWidth=lineWidth;
+  context.centerX=centerX;
+  context.centerY=centerY;
   context.sparse_spacing=sparse_spacing;
   context.solid_spacing=solid_spacing;
   context.support_spacing=support_spacing;
@@ -271,9 +271,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   }
 
   GW writer;
-  writer.s.reserve(1<<17);
+  writer.gcode.reserve(1<<17);
   EmitFlags emitFlags = gw_setup_preamble(writer, params, treeSupLayers, treeZMaxResid, startBlock);
-  writer.cur_tool = singleTool;                      // loaded by the start template, so a support T change returns to it
+  writer.current_tool = singleTool;                      // loaded by the start template, so a support T change returns to it
   bool realPE = emitFlags.realPE, ironOn = emitFlags.ironOn, scarfOn = emitFlags.scarfOn;
   int  seamMode = emitFlags.seamMode;
   SeamCtx seamCtx;
@@ -283,8 +283,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   //  would need the filter to keep them for the PE pass, as upstream does when its pressure equalizer is on).
   bool cooling = false;
   struct CoolingSession {
-    bool on = false;
-    ~CoolingSession(){ if (on) cooling_bridge::end(); }
+    bool active = false;
+    ~CoolingSession(){ if (active) cooling_bridge::end(); }
   } coolingSession;
   if (customGcode && !writer.emit_pe_tags) {
     std::vector<unsigned int> tools = { (unsigned int)singleTool };
@@ -292,7 +292,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       if (tool >= 0 && std::find(tools.begin(), tools.end(), (unsigned int)tool) == tools.end()) tools.push_back((unsigned int)tool);
     if (cooling_bridge::begin(params.placeholder_config, tools).empty()) {
       cooling = true;
-      coolingSession.on = true;
+      coolingSession.active = true;
       const cooling_bridge::Markers markers = cooling_bridge::markers((unsigned int)singleTool);
       writer.cooling_markers = true;
       writer.fan_overhang = markers.overhang;
@@ -326,7 +326,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   int firstLayerFeed  = (int)std::llround(params.first_layer_speed*60);
   em::val layersArr = em::val::array();
 
-  // Stage 30: streaming setup — streaming (release writer.s after emitting each chunk) only when a layer sink is registered and the real PE
+  // Stage 30: streaming setup — streaming (release writer.gcode after emitting each chunk) only when a layer sink is registered and the real PE
   //  (whole-string cross-layer smoothing) is not in use. realPE needs the entire g-code, so it falls back to batch (opt-in, outside the golden path).
   em::val& sink = layer_sink();
   bool streaming = (!sink.isUndefined() && !sink.isNull() && !realPE);
@@ -337,38 +337,38 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   setup_time_limits(params, timeLimits, processorLimits);                // machine limits for the time estimate (shared by streaming and batch)
 #ifdef __EMSCRIPTEN_PTHREADS__
   // (mt) Overlap targets: streamed full estimates and batch full estimates (realPE is excluded because it needs whole-string post-processing,
-  //  and transcribed is a different engine so it keeps the old path). In batch mode the accumulated writer.s is sliced and fed at each flush.
+  //  and transcribed is a different engine so it keeps the old path). In batch mode the accumulated writer.gcode is sliced and fed at each flush.
   TimeFeeder feeder;
   const bool overlapBatch = !streaming && !realPE && params.time_engine != "transcribed";
-  size_t fedOffset = 0;                            // batch overlap: how much of writer.s has already been fed
-  const gcode_time::Limits* fallback = nullptr;   // batch keeps writer.s resident, so the hand-over's kept text costs no new ceiling; streaming stays stream-notime
+  size_t fedOffset = 0;                            // batch overlap: how much of writer.gcode has already been fed
+  const gcode_time::Limits* fallback = nullptr;   // batch keeps writer.gcode resident, so the hand-over's kept text costs no new ceiling; streaming stays stream-notime
   if (overlapBatch) fallback = &timeLimits;
   if (streamTime || overlapBatch) feeder.begin(processorLimits, fallback);
   auto feed_batch_tail = [&]{                   // feed everything after the last flush (including the footer)
-    std::string chunk = writer.s.substr(fedOffset);
-    fedOffset = writer.s.size();
+    std::string chunk = writer.gcode.substr(fedOffset);
+    fedOffset = writer.gcode.size();
     if (writer.emit_pe_tags && params.pe_strip_tags) strip_pe_tags(chunk);   // batch feeds the estimator the same tag-stripped input as streaming
     feeder.feed(std::move(chunk));
   };
 #else
   if (streamTime) gcodeproc_bridge::estimate_begin(processorLimits, nullptr);
 #endif
-  // Layer emission: batch accumulates into layersArr; streaming emits a chunk (everything in writer.s since the last flush) plus the toolpaths, then releases writer.s.
-  //  The preamble goes into the first flush chunk and the footer into the last -> concatenating the chunks is byte-identical to the batch writer.s.
-  // The cooling filter's input is one printed layer's text: what writer.s gained since the last flush (coolStart).
+  // Layer emission: batch accumulates into layersArr; streaming emits a chunk (everything in writer.gcode since the last flush) plus the toolpaths, then releases writer.gcode.
+  //  The preamble goes into the first flush chunk and the footer into the last -> concatenating the chunks is byte-identical to the batch writer.gcode.
+  // The cooling filter's input is one printed layer's text: what writer.gcode gained since the last flush (coolStart).
   size_t coolStart = 0;
   int printedLayer = 0;
   double filamentFlushed = 0.0;                  // writer.filament as of the last flush: what every earlier layer extruded
   auto flush_layer = [&](double z, int layerIndex, std::vector<float>& toolpath, std::vector<float>& widths) {
     double flushStart = emscripten_get_now();
     struct TF {
-      double& acc, t0;
-      ~TF(){ acc += emscripten_get_now() - t0; }
+      double& total, start;
+      ~TF(){ total += emscripten_get_now() - start; }
     } flushTimer{timeFlush, flushStart};
     if (cooling || layerSlots) {
-      std::string layerText = writer.s.substr(coolStart);
-      writer.s.resize(coolStart);
-      writer.s += finishLayer(std::move(layerText), printedLayer, z, filamentFlushed);
+      std::string layerText = writer.gcode.substr(coolStart);
+      writer.gcode.resize(coolStart);
+      writer.gcode += finishLayer(std::move(layerText), printedLayer, z, filamentFlushed);
     }
     filamentFlushed = writer.filament;
     ++printedLayer;
@@ -381,11 +381,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 #ifdef __EMSCRIPTEN_PTHREADS__
       if (overlapBatch) feed_batch_tail();               // feed the estimator worker incrementally at each layer boundary (aligned to '\n')
 #endif
-      coolStart = writer.s.size();
+      coolStart = writer.gcode.size();
       return;
     }
     std::string chunk;
-    chunk.swap(writer.s);   // take the accumulated text and empty writer.s (freeing the heap)
+    chunk.swap(writer.gcode);   // take the accumulated text and empty writer.gcode (freeing the heap)
     coolStart = 0;
     if (writer.emit_pe_tags && params.pe_strip_tags) strip_pe_tags(chunk);   // stateless line filter (chunked == batch)
 #ifdef __EMSCRIPTEN_PTHREADS__
@@ -405,11 +405,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   };
 
   // ---- Raft (inserted below the model, shifting the model in z) ----
-  coolStart = writer.s.size();                       // the preamble is not a layer: the filter starts after it
+  coolStart = writer.gcode.size();                       // the preamble is not a layer: the filter starts after it
   int raftLayers = std::max(0, params.raft_layers);
   double zShift = raft_emit(writer, params, layers, lineWidth, raftLayers, travelFeed, firstLayerFeed, seamCtx, flush_layer);
   // finalize the phase context for compute_pre
-  context.nraft = raftLayers;
+  context.raftLayerCount = raftLayers;
   context.zShift = zShift;
   context.ironOn = ironOn;
 
@@ -473,26 +473,26 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   // ---- PASS 2: solid/sparse infill separation + support + emission ----
 #ifdef __EMSCRIPTEN_PTHREADS__
   if (parallelEmit) {
-    // G003: E1 (a serial dry run — chaining the seam, position, curF and fan entry state) -> a writer pool (per-layer G-code/toolpath generation)
+    // G003: E1 (a serial dry run — chaining the seam, position, current_feed and fan entry state) -> a writer pool (per-layer G-code/toolpath generation)
     //  -> an ordered flush. E is relative (M83) so it is layer-local, and cross-layer state is fully captured by the entry cursor -> byte-identical to st (serial)
     //  (gates: golden + a large-model cmp). filament is the ordered sum of per-layer partials (only the association order differs — the theoretical %.2f rounding
     //  boundary risk in the footer is covered by golden). The window (flushWindow) bounds residency -> keeping the streaming OOM mitigation.
     struct Cursor {
-      double px, py;
-      int curF, lastFan;
+      double positionX, positionY;
+      int currentFeed, lastFan;
       unsigned lastAccel, lastTravelAccel;
       double lastJerk;
-      SeamCtx sc;
+      SeamCtx seam;
     };
     struct EmitJob {
-      EmitPre pre;
+      EmitPre precomputed;
       Cursor entry;
       Paths island;
       std::string gcode;
-      std::vector<float> tp, widths;
+      std::vector<float> toolpath, widths;
       double filament = 0;
       long segments = 0, crossings = 0;
-      std::atomic<int> jst{0};   // 0=ready 1=dispatched 2=done
+      std::atomic<int> state{0};   // 0=ready 1=dispatched 2=done
     };
     std::vector<std::unique_ptr<EmitJob>> jobs(layerCount);
     for (int k = 0; k < layerCount; ++k) jobs[k] = std::make_unique<EmitJob>();
@@ -500,9 +500,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     std::condition_variable emitCondition;
     int nextWriterJob = 0, dispatched = 0;
     GW base = writer;   // the template GW for writers
-    base.s.clear();
+    base.gcode.clear();
     base.island.clear();
-    base.dry = false;
+    base.dry_run = false;
     // A writer's totals are its layer's alone: flushJob adds them to writer's. Copied as they stood, every layer re-added
     //  what the raft had already counted (measured on a 20mm cube with 2 raft layers: 9018.83mm of filament, st 1084.41).
     base.filament = 0;
@@ -523,22 +523,22 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         EmitJob& job = *jobs[k];
         GW layerWriter = base;
         g_seg_tool = singleTool;   // thread_local: a pool thread keeps the tool the previous slice left on it
-        layerWriter.px = job.entry.px;
-        layerWriter.py = job.entry.py;
-        layerWriter.curF = job.entry.curF;
+        layerWriter.position_x = job.entry.positionX;
+        layerWriter.position_y = job.entry.positionY;
+        layerWriter.current_feed = job.entry.currentFeed;
         layerWriter.lastFan = job.entry.lastFan;
         layerWriter.last_accel = job.entry.lastAccel;
         layerWriter.last_travel_accel = job.entry.lastTravelAccel;
         layerWriter.last_jerk = job.entry.lastJerk;
         layerWriter.island = std::move(job.island);
-        SeamCtx seam = job.entry.sc;
+        SeamCtx seam = job.entry.seam;
         LayerData& jobLayer = layers[k];
-        emit_layer_any(layerWriter, job.tp, job.widths, k, jobLayer, job.pre, params, jobLayer.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seam);
-        job.gcode.swap(layerWriter.s);
+        emit_layer_any(layerWriter, job.toolpath, job.widths, k, jobLayer, job.precomputed, params, jobLayer.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seam);
+        job.gcode.swap(layerWriter.gcode);
         job.filament = layerWriter.filament;
         job.segments = layerWriter.segments;
         job.crossings = layerWriter.wall_crossings;
-        job.jst.store(2, std::memory_order_release);
+        job.state.store(2, std::memory_order_release);
         emitCondition.notify_all();
       }
     };
@@ -553,26 +553,26 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       EmitJob& job = *jobs[k];
       if (writerThreads.empty()) {   // fallback when no writer could be spawned (pool exhausted): the main thread generates it itself
         GW layerWriter = base;
-        layerWriter.px=job.entry.px;
-        layerWriter.py=job.entry.py;
-        layerWriter.curF=job.entry.curF;
+        layerWriter.position_x=job.entry.positionX;
+        layerWriter.position_y=job.entry.positionY;
+        layerWriter.current_feed=job.entry.currentFeed;
         layerWriter.lastFan=job.entry.lastFan;
         layerWriter.last_accel=job.entry.lastAccel;
         layerWriter.last_travel_accel=job.entry.lastTravelAccel;
         layerWriter.last_jerk=job.entry.lastJerk;
         layerWriter.island = std::move(job.island);
-        SeamCtx seam = job.entry.sc;
+        SeamCtx seam = job.entry.seam;
         LayerData& jobLayer = layers[k];
-        emit_layer_any(layerWriter, job.tp, job.widths, k, jobLayer, job.pre, params, jobLayer.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seam);
-        job.gcode.swap(layerWriter.s);
+        emit_layer_any(layerWriter, job.toolpath, job.widths, k, jobLayer, job.precomputed, params, jobLayer.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seam);
+        job.gcode.swap(layerWriter.gcode);
         job.filament = layerWriter.filament;
         job.segments = layerWriter.segments;
         job.crossings = layerWriter.wall_crossings;
-        job.jst.store(2);
+        job.state.store(2);
       }
       {
         std::unique_lock<std::mutex> lock(emitMutex);
-        emitCondition.wait(lock, [&]{ return job.jst.load(std::memory_order_acquire) == 2; });
+        emitCondition.wait(lock, [&]{ return job.state.load(std::memory_order_acquire) == 2; });
       }
       // The layer templates and the cooling filter are stateful across layers, so they run here, in print order, on the
       //  layer alone. writer.filament has not taken this layer's yet: it is what the earlier layers extruded.
@@ -584,22 +584,22 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       if (!streaming) {
         em::val layerObject = em::val::object();
         layerObject.set("z", jobZ);
-        layerObject.set("paths", to_f32(job.tp));
+        layerObject.set("paths", to_f32(job.toolpath));
         layerObject.set("widths", to_f32(job.widths));
         layersArr.call<void>("push", layerObject);
-        writer.s += job.gcode;
+        writer.gcode += job.gcode;
         if (overlapBatch) feed_batch_tail();
       } else {
-        // Text written outside the writers — the preamble, and anything else still in writer.s — goes ahead of the layer,
-        //  as flush_layer sends it and as the batch branch above appends it. Sending J.gcode alone held the preamble
+        // Text written outside the writers — the preamble, and anything else still in writer.gcode — goes ahead of the layer,
+        //  as flush_layer sends it and as the batch branch above appends it. Sending job.gcode alone held the preamble
         //  back until the footer flush, so a streamed mt slice put M83 and the temperatures after the last layer.
         std::string chunk;
-        chunk.swap(writer.s);
+        chunk.swap(writer.gcode);
         chunk += job.gcode;
         if (streamTime) feeder.feed(chunk);
         em::val paths = [&]() {
           if (economy) return em::val::array();
-          return to_f32(job.tp);
+          return to_f32(job.toolpath);
         }();
         em::val widthArray = [&]() {
           if (economy) return em::val::array();
@@ -608,16 +608,16 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         sink(jobZ, k, chunk, paths, widthArray);
       }
       job.gcode = std::string();
-      job.tp = {};
+      job.toolpath = {};
       job.widths = {};
-      job.pre = EmitPre{};
+      job.precomputed = EmitPre{};
       if (!keepStages) {
         int releaseLayer = k - std::max(params.bottom_shell_layers, 1) - 1 - flushWindow;   // release only outside the writer/dry reference window
         if (releaseLayer >= 0) layers[releaseLayer] = LayerData{};
       }
       report(layerCount+2+k+1, total);
     };
-    writer.dry = true;
+    writer.dry_run = true;
     bool dispatchCanceled = false;
     std::vector<float> dryToolpath, dryWidths;   // dry-run dummies (not recorded)
     for (int i = 0; i < layerCount; ++i) {
@@ -635,15 +635,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       cv_room.notify_all();
       LayerData& layerData = layers[i];
       EmitJob& job = *jobs[i];
-      job.entry = { writer.px, writer.py, writer.curF, writer.lastFan, writer.last_accel, writer.last_travel_accel, writer.last_jerk, seamCtx };
+      job.entry = { writer.position_x, writer.position_y, writer.current_feed, writer.lastFan, writer.last_accel, writer.last_travel_accel, writer.last_jerk, seamCtx };
       if (g_keep_island) job.island = layerData.island;   // G003
       else job.island = std::move(layerData.island);
       emit_layer_any(writer, dryToolpath, dryWidths, i, layerData, pre, params, layerData.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamCtx);
-      job.pre = std::move(pre);
+      job.precomputed = std::move(pre);
       {
         std::lock_guard<std::mutex> lock(emitMutex);
         dispatched = i + 1;
-        job.jst.store(1);
+        job.state.store(1);
       }
       emitCondition.notify_all();
       if (i - flushWindow >= nextFlush) {
@@ -651,7 +651,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         ++nextFlush;
       }
     }
-    writer.dry = false;
+    writer.dry_run = false;
     while (!dispatchCanceled && nextFlush < layerCount) {   // G002: on cancel, never wait for undispatched jobs (avoids a deadlock)
       flushJob(nextFlush);
       ++nextFlush;
@@ -689,12 +689,12 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     std::vector<float> widths;
     if (params.spiral_mode && !layerData.contour.empty()) {
       // ===== Spiral (vase): a single outer wall with a z ramp — excluded from parallelism, kept inline as before =====
-      writer.set_e_per_mm(layerData.h, params);
+      writer.set_e_per_mm(layerData.thickness, params);
       writer.z = layerZ;
       writer.pe_reset();
       if (g_keep_island) writer.island = layerData.island;   // G003
       else writer.island = std::move(layerData.island);
-      seamCtx.rng = 2654435761u * (uint32_t)(i+1);
+      seamCtx.randomState = 2654435761u * (uint32_t)(i+1);
       g_seg_w = &widths;
       g_seg_w_cur = (float)lineWidth;
       char layerComment[72];
@@ -711,7 +711,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       spiralFeed = role_feeds(params, i==0 && raftLayers==0, i + raftLayers, raftLayers, spiralFeed, spiralFeed, -1.0).of(FlowRole::OuterWall);
       Paths outerWall;
       if (!layerData.walls.empty()) outerWall = layerData.walls[0];
-      emit_spiral(writer, toolpath, outerWall, layerZ, layerData.h, spiralFeed, travelFeed);
+      emit_spiral(writer, toolpath, outerWall, layerZ, layerData.thickness, spiralFeed, travelFeed);
     } else {
       emit_layer_any(writer, toolpath, widths, i, layerData, pre, params, layerZ, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamCtx);
     }
@@ -793,18 +793,18 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   gcode_time::Result timeEstimate;
   std::string engine_used;
   auto absorb = [&](const gcodeproc_bridge::Result& processorResult){
-    timeEstimate.total_s=processorResult.total_s;
-    timeEstimate.first_layer_s=processorResult.first_layer_s;
-    timeEstimate.extrude_s=processorResult.extrude_s;
-    timeEstimate.travel_s=processorResult.travel_s;
+    timeEstimate.total_seconds=processorResult.total_seconds;
+    timeEstimate.first_layer_seconds=processorResult.first_layer_seconds;
+    timeEstimate.extrude_seconds=processorResult.extrude_seconds;
+    timeEstimate.travel_seconds=processorResult.travel_seconds;
     timeEstimate.filament_mm=processorResult.filament_mm;
     timeEstimate.moves=processorResult.moves;
-    timeEstimate.layer_s=processorResult.layer_s;
-    timeEstimate.role_s=processorResult.role_s;
+    timeEstimate.layer_seconds=processorResult.layer_seconds;
+    timeEstimate.role_seconds=processorResult.role_seconds;
   };
   if (streaming) {
     // Stage 30: after emitting the closing chunk (; end … filament comments), end the streamed time estimate. The G-code and layers have
-    //  already been emitted through the callback and writer.s is empty (released per layer). Economy mode skips the time estimate entirely.
+    //  already been emitted through the callback and writer.gcode is empty (released per layer). Economy mode skips the time estimate entirely.
     cooling = false;   // the closing chunk is the end block, not a layer: the batch text never cools it either
     layerSlots = false;
     {
@@ -825,30 +825,30 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   } else {
     // Batch: the real PressureEqualizer (opt-in) -> strip tags -> estimate the time over the whole g-code (the byte-identical path is unchanged).
 #ifdef __EMSCRIPTEN_PTHREADS__
-    if (overlapBatch) feed_batch_tail();   // feed the footer — fedOffset is an offset into the unmodified writer.s, so this must happen before the strip below
+    if (overlapBatch) feed_batch_tail();   // feed the footer — fedOffset is an offset into the unmodified writer.gcode, so this must happen before the strip below
 #endif
     if (realPE)
-      writer.s = pe_bridge::equalize(writer.s, params.filament_diameter, params.max_volumetric_extrusion_rate_slope,
+      writer.gcode = pe_bridge::equalize(writer.gcode, params.filament_diameter, params.max_volumetric_extrusion_rate_slope,
                                  params.extrusion_rate_slope_segment_length, params.use_relative_e_distances, params.pe_external_perimeter_only);
-    if (writer.emit_pe_tags && params.pe_strip_tags) strip_pe_tags(writer.s);
+    if (writer.emit_pe_tags && params.pe_strip_tags) strip_pe_tags(writer.gcode);
     if (params.time_engine == "transcribed") {
-      timeEstimate = gcode_time::estimate(writer.s, timeLimits);
+      timeEstimate = gcode_time::estimate(writer.gcode, timeLimits);
       engine_used = "transcribed";
     } else {
 #ifdef __EMSCRIPTEN_PTHREADS__
       // (mt) With overlapBatch, finish with what has been fed (parsing already overlapped emission). Non-targets such as realPE keep the old one-shot estimate.
       gcodeproc_bridge::Result processorResult;
       if (overlapBatch) processorResult = feeder.finish();
-      else processorResult = gcodeproc_bridge::estimate(writer.s, processorLimits);
+      else processorResult = gcodeproc_bridge::estimate(writer.gcode, processorLimits);
 #else
-      gcodeproc_bridge::Result processorResult = gcodeproc_bridge::estimate(writer.s, processorLimits);
+      gcodeproc_bridge::Result processorResult = gcodeproc_bridge::estimate(writer.gcode, processorLimits);
 #endif
       if (processorResult.ok) {
         absorb(processorResult);
         engine_used = "full";
         if (processorResult.transcribed) engine_used = "full-fallback-transcribed";   // handed over inside the feeder, past the move cap
       } else {
-        timeEstimate = gcode_time::estimate(writer.s, timeLimits);
+        timeEstimate = gcode_time::estimate(writer.gcode, timeLimits);
         engine_used = "full-fallback-transcribed";
       }
     }
@@ -860,21 +860,21 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   // G003: update the stage cache — keep it when requested (for reuse by the next slice), otherwise invalidate the stale cache with the new geometry.
   if (keepStages && !isCanceled()) {
     if (!reuseSup) {
-      if (!reuseGeom) g_scache.tris = std::move(trisOwn);
+      if (!reuseGeom) g_scache.triangles = std::move(trisOwn);
       g_scache.height = height;
-      g_scache.cx = centerX;
-      g_scache.cy = centerY;
+      g_scache.centerX = centerX;
+      g_scache.centerY = centerY;
       g_scache.over_bed = over_bed;
-      g_scache.N = layerCount;
+      g_scache.layerCount = layerCount;
       g_scache.layerKey = layerKey;
-      g_scache.L = std::move(layersOwn);
+      g_scache.layers = std::move(layersOwn);
       g_scache.treeSupLayers = treeSupLayers;
       g_scache.treeZMaxResid = treeZMaxResid;
     }
     g_scache.valid = true;
   } else if (!reuseSup && !reuseGeom) g_scache.valid = false;
   if (!streaming) {   // streaming does not emit resident copies
-    result.set("gcode", writer.s);
+    result.set("gcode", writer.gcode);
     result.set("layers", layersArr);
   }
   return result;
