@@ -24,7 +24,7 @@ static Paths slice_group(const std::vector<Tri>& tris, int firstTri, int endTri,
   Seg segment;
   for (int triIndex=firstTri; triIndex<endTri; ++triIndex){
     const Tri& tri=tris[triIndex];
-    double zmin=std::min({tri.v[0].z,tri.v[1].z,tri.v[2].z}), zmax=std::max({tri.v[0].z,tri.v[1].z,tri.v[2].z});
+    double zmin=std::min({tri.vertices[0].z,tri.vertices[1].z,tri.vertices[2].z}), zmax=std::max({tri.vertices[0].z,tri.vertices[1].z,tri.vertices[2].z});
     if (z<zmin||z>=zmax) continue;
     if (tri_plane(tri,z,segment)) segments.push_back(segment);
   }
@@ -239,29 +239,29 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
       double heightAboveFirstLayer = 0.0;
       if (i>0) heightAboveFirstLayer = i*params.layer_height;
       supportLayer.z = params.first_layer_height + heightAboveFirstLayer;
-      supportLayer.idx = i;
+      supportLayer.index = i;
       double supportLayerHeight = params.layer_height;
       if (i==0) supportLayerHeight = params.first_layer_height;
-      supportLayer.h = supportLayerHeight;
+      supportLayer.thickness = supportLayerHeight;
       supportLayer.contour = layerContour[i];
       supportLayer.fill = layerFill[i];
       supportLayer.topSurf = topSurf[i];
       supportLayer.botSurf = botSurf[i];
     }
     SliceCtx supportContext;
-    supportContext.p = &params;
-    supportContext.tris = &tris;
-    supportContext.L = &supportLayers;
+    supportContext.params = &params;
+    supportContext.triangles = &tris;
+    supportContext.layers = &supportLayers;
     supportContext.treeZMaxResid = &treeZMaxResid;
     supportContext.treeSupLayers = &treeSupLayers;
-    supportContext.CX = [](){ return false; };                 // the MM path has no cancel poll of its own yet
+    supportContext.isCanceled = [](){ return false; };                 // the MM path has no cancel poll of its own yet
     supportContext.report = [](int,int){};
-    supportContext.N = layerCount;
+    supportContext.layerCount = layerCount;
     supportContext.total = layerCount;
     supportContext.height = height;
-    supportContext.w = lineWidth;
-    supportContext.cx = 0;                // the merged mesh is already centred by the caller
-    supportContext.cy = 0;
+    supportContext.lineWidth = lineWidth;
+    supportContext.centerX = 0;                // the merged mesh is already centred by the caller
+    supportContext.centerY = 0;
     supportContext.sparse_spacing = sparse_spacing;
     supportContext.solid_spacing = solid_spacing;
     if (params.support_density > 1e-4) supportContext.support_spacing = lineWidth / params.support_density;
@@ -270,10 +270,10 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
   }
 
   GW writer;
-  writer.s.reserve(1<<16);
+  writer.gcode.reserve(1<<16);
   // Issue 63: with the flattened settings present the custom start G-code is expanded after emission, from the facts
   //  the emission itself produced (tools that printed, tool changes, the tower's extent, the first layer's paths),
-  //  and spliced in at startAt. This path is batch-only (writer.s is returned whole), so nothing has left yet.
+  //  and spliced in at startAt. This path is batch-only (writer.gcode is returned whole), so nothing has left yet.
   const bool customGcode = custom_gcode_active(params);
   custom_gcode_bridge::Facts customFacts;
   // Per-tool filament: two materials mean two temperatures, two flow ratios and two retraction settings, so
@@ -283,24 +283,24 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     writer.tool_filament_diameter = Params::forTool(params.extruder_filament_diameter, tool, params.filament_diameter);
     writer.tool_flow_ratio        = Params::forTool(params.extruder_flow_ratio,        tool, params.flow_ratio);
     // A hole takes tool 0's value (the kernel cannot tell absent from 0); no vector at all = no cap.
-    writer.max_vol_speed          = Params::forTool(params.filament_max_volumetric_speed, tool, Params::forTool(params.filament_max_volumetric_speed, 0, 0.0));
+    writer.max_volumetric_speed          = Params::forTool(params.filament_max_volumetric_speed, tool, Params::forTool(params.filament_max_volumetric_speed, 0, 0.0));
     writer.filament_area          = PI*writer.tool_filament_diameter*writer.tool_filament_diameter/4.0;
-    writer.retract_len            = Params::forTool(params.extruder_retract_length,    tool, params.retract_length);
-    writer.retractF               = (int)std::llround(Params::forTool(params.extruder_retract_speed, tool, params.retract_speed)*60);
+    writer.retract_length            = Params::forTool(params.extruder_retract_length,    tool, params.retract_length);
+    writer.retract_feed               = (int)std::llround(Params::forTool(params.extruder_retract_speed, tool, params.retract_speed)*60);
     writer.z_hop                  = Params::forTool(params.extruder_z_hop,             tool, params.z_hop);
   };
   auto toolTemp=[&](int tool){ return Params::forTool(params.extruder_nozzle_temp, tool, params.nozzle_temp); };
   loadTool(0);
   writer.print_flow = params.print_flow_ratio;               // upstream's print-wide multiplier (the st path sets it in the preamble)
   writer.retract_min_travel=params.retraction_minimum_travel;
-  writer.offX=params.bed_center_x();
-  writer.offY=params.bed_center_y();
+  writer.offset_x=params.bed_center_x();
+  writer.offset_y=params.bed_center_y();
   writer.emit_role_tags = params.gcode_role_tags;
   gw_setup_machine(writer, params);
   // Upstream's cooling filter, as on the single-material path (slicer_core.cpp). This path is batch-only, so the
   //  layers go through it after emission (coolLayers below); the fan markers follow the loaded tool (loadTool).
   bool cooling = false;
-  struct CoolingSession { bool on = false; ~CoolingSession(){ if (on) cooling_bridge::end(); } } coolingSession;
+  struct CoolingSession { bool active = false; ~CoolingSession(){ if (active) cooling_bridge::end(); } } coolingSession;
   if (customGcode && !writer.emit_pe_tags) {
     std::vector<unsigned int> tools;
     for (int tool = 0; tool < std::max(1, params.extruder_count); ++tool) tools.push_back((unsigned int)tool);
@@ -308,7 +308,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
       if (tool >= 0 && std::find(tools.begin(), tools.end(), (unsigned int)tool) == tools.end()) tools.push_back((unsigned int)tool);
     if (cooling_bridge::begin(params.placeholder_config, tools).empty()) {
       cooling = true;
-      coolingSession.on = true;
+      coolingSession.active = true;
       writer.cooling_markers = true;
     }
   }
@@ -402,7 +402,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
       writer.raw("; has_tpu_in_first_layer = 1");
       break;
     }
-  const size_t startAt = writer.s.size();   // where the expanded start block goes (before the writer's own modes)
+  const size_t startAt = writer.gcode.size();   // where the expanded start block goes (before the writer's own modes)
   gw_write_modes(writer, params, custom_gcode_is_bbl(params));
   // With custom G-code every tool change, the first selection included, is upstream's sequence
   //  (custom_gcode_toolchanges), written once the template session runs; the writer leaves a slot per change.
@@ -427,7 +427,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
 
   // Prime tower fallback (square ring). Stage 33: position (10,10) and size 15 were hardcoded -> now wired to prime_tower_x/y/ring_size.
   //  Note: the default path is wipe_tower_real (the real WipeTower) and this ring is the fallback when that fails.
-  double towerX=params.prime_tower_x-writer.offX, towerY=params.prime_tower_y-writer.offY;
+  double towerX=params.prime_tower_x-writer.offset_x, towerY=params.prime_tower_y-writer.offset_y;
   const double towerRingSize=params.prime_tower_ring_size;
   // Three loops was a fixed guess. With a purge table the count comes from the volume the pair actually needs:
   //  one loop of side S extrudes 4*S*e_per_mm millimetres of filament, i.e. 4*S*w*h mm³ of plastic.
@@ -481,10 +481,10 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     return toolTemp(tool);
   };
   int currentLayer=0;
-  // Where the second layer starts in writer.s: its temperature switch goes there once the start block (spliced in after
+  // Where the second layer starts in writer.gcode: its temperature switch goes there once the start block (spliced in after
   //  emission, below) has said what bed temperature it left set.
   size_t secondLayerAt=std::string::npos;
-  std::vector<size_t> layerStarts;   // where each layer's text starts in writer.s, and the tool loaded there
+  std::vector<size_t> layerStarts;   // where each layer's text starts in writer.gcode, and the tool loaded there
   std::vector<int> layerTools;
   std::vector<std::vector<double>> layerFilament;   // each tool's filament (mm) before the layer, and the layer's z
   std::vector<double> layerZ;
@@ -506,7 +506,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     g_seg_w = &widths;
     g_seg_w_cur = (float)params.line_width;   // stage 21: record MM widths
     chargeCurrentTool();                             // the per-tool totals as of this layer's start (the layer templates')
-    layerStarts.push_back(writer.s.size());
+    layerStarts.push_back(writer.gcode.size());
     layerTools.push_back(currentTool);   // the layers finishLayers makes final
     layerFilament.push_back(filamentByTool);
     layerZ.push_back(printZ);
@@ -516,7 +516,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     writer.layer_z(printZ, travelFeed);
     currentLayer = i;
     if (i == 1) {
-      secondLayerAt = writer.s.size();
+      secondLayerAt = writer.gcode.size();
       secondLayerTool = currentTool;
       lastTemp = toolTemp(currentTool);                  // the switch below sets the loaded tool to its own temperature
     }
@@ -602,8 +602,8 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
         change.change.to = tool;
         change.change.layer = currentLayer;
         change.change.layer_z = writer.z;
-        change.change.x = writer.px + writer.offX;
-        change.change.y = writer.py + writer.offY;
+        change.change.x = writer.position_x + writer.offset_x;
+        change.change.y = writer.position_y + writer.offset_y;
         change.change.z = writer.z;
         change.change.tower = viaTower;
         change.change.purge_mm3 = params.flushVolume(currentTool, tool, params.extruder_count);
@@ -615,7 +615,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
         loadTool(tool);
         coolingMarkersFor(tool);
         ++toolChanges;
-        if (writer.absolute_e) writer.e_pos = 0.0;           // the sequence resets E (GCodeWriter::toolchange's reset_e)
+        if (writer.absolute_e) writer.extruder_position = 0.0;           // the sequence resets E (GCodeWriter::toolchange's reset_e)
         writer.unretract_move();
         g_seg_tool = tool;
         return;
@@ -629,7 +629,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
       ++toolChanges;
       if (filamentTypeOf(tool) == "PETG") {                 // upstream's extra unretract for a material that oozes
         char unretractLine[64];
-        std::snprintf(unretractLine,sizeof unretractLine,"G1 E%.4f F%d ; PETG extra unretract",writer.e_word(2.0),writer.retractF);
+        std::snprintf(unretractLine,sizeof unretractLine,"G1 E%.4f F%d ; PETG extra unretract",writer.e_word(2.0),writer.retract_feed);
         writer.raw(unretractLine);
       }
       g_seg_tool = tool;                                // the preview's tool channel follows the T command
@@ -833,7 +833,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
             if (writer.absolute_e) {
               writer.raw("M82");
               writer.raw("G92 E0");
-              writer.e_pos = 0.0;
+              writer.extruder_position = 0.0;
             }
             writer.role_tag_unknown();                        // the tower wrote its own ;TYPE: — the next run re-states ours
             writer.filament += wipeTower.filament_mm;
@@ -876,12 +876,12 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     }
     if (customGcode) {
       // Stride-8 segments, role + tool*16 in slot 3 (toolpath_encoding). Travel (role 0) is not an extrusion; the
-      //  prime tower is role 11. Points go to the printer's frame the way the writer does (+offX/offY).
+      //  prime tower is role 11. Points go to the printer's frame the way the writer does (+offset_x/offset_y).
       for (size_t k=0; k+7<toolpath.size(); k+=8) {
         const int encoded = (int)toolpath[k+3], role = encoded & 15, tool = encoded >> 4;
         if (role == 0) continue;
         for (int endpoint=0; endpoint<2; ++endpoint) {
-          const double x = toolpath[k+endpoint*4] + writer.offX, y = toolpath[k+endpoint*4+1] + writer.offY;
+          const double x = toolpath[k+endpoint*4] + writer.offset_x, y = toolpath[k+endpoint*4+1] + writer.offset_y;
           if (i == 0) {
             customFacts.first_layer_points.push_back(x);
             customFacts.first_layer_points.push_back(y);
@@ -926,14 +926,14 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     if (filamentByTool[tool] > 0) usedTools.push_back(tool);
   if (usedTools.empty()) usedTools.push_back(0);
   // The second layer's temperature switch, inserted at the position recorded during emission. Before the start
-  //  block's splice, which sits earlier in writer.s and would shift that position.
-  size_t layersEnd = writer.s.size();   // the last layer ends here: everything after is the end block
+  //  block's splice, which sits earlier in writer.gcode and would shift that position.
+  size_t layersEnd = writer.gcode.size();   // the last layer ends here: everything after is the end block
   auto insertSecondLayer=[&](int bedSet){
     if (secondLayerAt == std::string::npos) return;
     std::vector<int> tools = { secondLayerTool };   // the loaded tool first: the only one a single nozzle switches
     for (int tool : usedTools) if (tool != secondLayerTool) tools.push_back(tool);
     const std::string text = second_layer_temperatures(params, tools, usedTools.size() > 1, bedSet);
-    writer.s.insert(secondLayerAt, text);
+    writer.gcode.insert(secondLayerAt, text);
     for (size_t& start : layerStarts) if (start > secondLayerAt) start += text.size();
     layersEnd += text.size();
   };
@@ -943,7 +943,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     if ((!cooling && !writer.layer_slots) || layerStarts.empty()) return std::string();
     std::string error;
     if (writer.layer_slots) custom_gcode_layers_begin();
-    std::string out = writer.s.substr(0, layerStarts[0]);
+    std::string out = writer.gcode.substr(0, layerStarts[0]);
     if (customGcode) {   // the first selection, ahead of the first layer
       out = custom_gcode_toolchanges(std::move(out), toolchanges, writer.flavor, error);
       if (!error.empty()) return error;
@@ -951,7 +951,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     for (size_t k = 0; k < layerStarts.size(); ++k) {
       size_t end = layersEnd;
       if (k + 1 < layerStarts.size()) end = layerStarts[k + 1];
-      std::string text = writer.s.substr(layerStarts[k], end - layerStarts[k]);
+      std::string text = writer.gcode.substr(layerStarts[k], end - layerStarts[k]);
       if (writer.layer_slots) {
         std::vector<double> volumes(layerFilament[k].size(), 0.0);
         for (size_t tool = 0; tool < volumes.size(); ++tool) {
@@ -968,8 +968,8 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
       if (cooling) text = cooling_bridge::process_layer(std::move(text), (int)k, (unsigned int)layerTools[k]);
       out += text;
     }
-    out += writer.s.substr(layersEnd);
-    writer.s.swap(out);
+    out += writer.gcode.substr(layersEnd);
+    writer.gcode.swap(out);
     return std::string();
   };
   if (customGcode) {
@@ -984,20 +984,20 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     customFacts.total_layer_count = layerCount;
     customFacts.total_toolchanges = toolChanges;
     double minX=1e18, minY=1e18, maxX=-1e18, maxY=-1e18;
-    for (const Tri& tri : tris) for (const V3& vertex : tri.v) {
+    for (const Tri& tri : tris) for (const V3& vertex : tri.vertices) {
       minX=std::min(minX,(double)vertex.x);
       minY=std::min(minY,(double)vertex.y);
       maxX=std::max(maxX,(double)vertex.x);
       maxY=std::max(maxY,(double)vertex.y);
     }
-    customFacts.object_bboxes = { minX+writer.offX, minY+writer.offY, maxX+writer.offX, maxY+writer.offY };
+    customFacts.object_bboxes = { minX+writer.offset_x, minY+writer.offset_y, maxX+writer.offset_x, maxY+writer.offset_y };
     Paths firstLayer;
     if (!preSliced.empty()) for (const Paths& group : preSliced[0]) firstLayer = union_paths(firstLayer, group);
     customFacts.first_layer_area_mm2 = paths_area(firstLayer);
     { double firstLayerMinX, firstLayerMinY, firstLayerMaxX, firstLayerMaxY;
       bbox_of(firstLayer, firstLayerMinX, firstLayerMinY, firstLayerMaxX, firstLayerMaxY);
       if (firstLayerMaxX >= firstLayerMinX)
-        customFacts.object_first_layer_bboxes = { firstLayerMinX+writer.offX, firstLayerMinY+writer.offY, firstLayerMaxX+writer.offX, firstLayerMaxY+writer.offY }; }
+        customFacts.object_first_layer_bboxes = { firstLayerMinX+writer.offset_x, firstLayerMinY+writer.offset_y, firstLayerMaxX+writer.offset_x, firstLayerMaxY+writer.offset_y }; }
     CustomStart customStart;
     std::string error = custom_gcode_start(params, customFacts, customStart);
     if (error.empty()) {
@@ -1010,12 +1010,12 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
       block += customStart.chamber + "; machine_start_gcode (printer profile, expanded)\n" + customStart.text;
       if (!block.empty() && block.back() != '\n') block += '\n';
       block += customStart.after;
-      writer.s.insert(startAt, block);
+      writer.gcode.insert(startAt, block);
       {   // file_start_gcode at the very top of the file, then the thumbnails' place (preamble.cpp)
         std::string top = customStart.file_start;
         if (!top.empty() && top.back() != '\n') top += '\n';
         top += ";_GP_THUMBNAILS_PLACEHOLDER\n";
-        writer.s.insert(0, top);
+        writer.gcode.insert(0, top);
       }
       writer.raw("; end");
       error = custom_gcode_end(writer, layerCount - 1, writer.z, writer.z, currentTool);
@@ -1065,7 +1065,7 @@ em::val slice_multimaterial(std::vector<Tri>& tris, const Params& params, em::va
     stats.set("over_bed_z", overflow.z); }
   stats.set("wall_crossings",(double)writer.wall_crossings);
   stats.set("extruders",params.extruder_count);
-  result.set("gcode",writer.s);
+  result.set("gcode",writer.gcode);
   result.set("stats",stats);
   result.set("layers",layersArray);
   return result;
