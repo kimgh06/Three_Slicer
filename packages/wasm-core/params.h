@@ -196,8 +196,9 @@ struct Params {
     if (filament_index > 0) return filament_index - 1;
     return -1;
   }
-  static double forTool(const std::vector<double>& per, int tool, double fallback) {
-    return (tool >= 0 && tool < (int)per.size()) ? per[tool] : fallback;
+  static double forTool(const std::vector<double>& perTool, int tool, double fallback) {
+    if (tool >= 0 && tool < (int)perTool.size()) return perTool[tool];
+    return fallback;
   }
   int    mm_group_split=0;                              // triangle group boundary index ([0,split)=T0, [split,N)=T1)
   // N-way grouping: every boundary in triangle order, so three materials are three groups rather than the second
@@ -241,11 +242,13 @@ struct Params {
   // How much filament a change from `from` to `to` has to purge, in mm³. Returns <0 when the host sent no table,
   //  which the caller reads as "keep the fixed tower you always printed".
   double flushVolume(int from, int to, int extruderCount) const {
-    const int n = extruderCount > 0 ? extruderCount : 1;
-    const size_t idx = (size_t)from * (size_t)n + (size_t)to;
-    if ((int)flush_volumes_matrix.size() < n * n || idx >= flush_volumes_matrix.size()) return -1.0;
-    const double mult = flush_multiplier > 1e-6 ? flush_multiplier : 1.0;
-    return std::max(0.0, flush_volumes_matrix[idx] * mult + prime_volume);
+    int count = 1;
+    if (extruderCount > 0) count = extruderCount;
+    const size_t entryIndex = (size_t)from * (size_t)count + (size_t)to;
+    if ((int)flush_volumes_matrix.size() < count * count || entryIndex >= flush_volumes_matrix.size()) return -1.0;
+    double multiplier = 1.0;
+    if (flush_multiplier > 1e-6) multiplier = flush_multiplier;
+    return std::max(0.0, flush_volumes_matrix[entryIndex] * multiplier + prime_volume);
   }
   // Per-filament material identity and physical constants. Upstream carries all of these as one entry per filament
   //  and reports them in the G-code footer; the kernel needs density/cost only to turn extruded millimetres into
@@ -266,7 +269,8 @@ struct Params {
   bool   gcode_role_tags=false;              // ;TYPE:<role> on every role change (upstream GCodeProcessor tag)
   std::string params_json;                   // the raw params object, for the config block above
   int    physicalExtruderOf(int tool) const {          // tool (0-based) -> physical extruder (0-based)
-    return (tool >= 0 && tool < (int)filament_map.size()) ? std::max(0, (int)filament_map[tool] - 1) : tool;
+    if (tool >= 0 && tool < (int)filament_map.size()) return std::max(0, (int)filament_map[tool] - 1);
+    return tool;
   }
   bool   auto_center=false;                             // stage 28: true = realign the combined bbox to the origin (stage-3 legacy). false (default) = trust the viewer coordinates (no realignment, only Z seating) -> the toolpath overlaps the on-screen model exactly. Upstream = only the plate origin offset (GCode.cpp:932).
   // Stage 33: the default switched to true. Evidence (compare_wipetower.mjs measurements, 2-box MM):

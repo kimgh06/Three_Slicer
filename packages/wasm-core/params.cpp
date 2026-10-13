@@ -4,96 +4,116 @@
 #include <cstdlib>
 #include <string>
 
-static size_t jfind_val(const std::string& s, const char* key) {
-  std::string k = std::string("\"") + key + "\"";
-  size_t p = s.find(k);
-  if (p == std::string::npos) return std::string::npos;
-  p = s.find(':', p + k.size());
-  if (p == std::string::npos) return std::string::npos;
-  ++p;
-  while (p < s.size() && (s[p]==' '||s[p]=='\t'||s[p]=='\n')) ++p;
-  return p;
+static size_t jfind_val(const std::string& json, const char* key) {
+  std::string quotedKey = std::string("\"") + key + "\"";
+  size_t position = json.find(quotedKey);
+  if (position == std::string::npos) return std::string::npos;
+  position = json.find(':', position + quotedKey.size());
+  if (position == std::string::npos) return std::string::npos;
+  ++position;
+  while (position < json.size() && (json[position]==' '||json[position]=='\t'||json[position]=='\n')) ++position;
+  return position;
 }
-static double jget(const std::string& s, const char* key, double d) {
-  size_t p = jfind_val(s, key);
-  return (p == std::string::npos) ? d : std::strtod(s.c_str() + p, nullptr);
+static double jget(const std::string& json, const char* key, double fallback) {
+  size_t position = jfind_val(json, key);
+  if (position == std::string::npos) return fallback;
+  return std::strtod(json.c_str() + position, nullptr);
 }
 // `"key": [270, 220]` -> {270, 220}. Absent or non-array yields an empty vector, which every reader treats as
 //  "no per-extruder values, use the scalar" — so an older host that sends nothing keeps the previous behaviour.
-static std::vector<double> jarr(const std::string& s, const char* key) {
+static std::vector<double> jarr(const std::string& json, const char* key) {
   std::vector<double> out;
-  size_t p = jfind_val(s, key);
-  if (p == std::string::npos || p >= s.size() || s[p] != '[') return out;
-  for (++p; p < s.size() && s[p] != ']'; ) {
-    while (p < s.size() && (s[p]==' '||s[p]=='\t'||s[p]=='\n'||s[p]==',')) ++p;
-    if (p >= s.size() || s[p] == ']') break;
+  size_t position = jfind_val(json, key);
+  if (position == std::string::npos || position >= json.size() || json[position] != '[') return out;
+  for (++position; position < json.size() && json[position] != ']'; ) {
+    while (position < json.size() && (json[position]==' '||json[position]=='\t'||json[position]=='\n'||json[position]==',')) ++position;
+    if (position >= json.size() || json[position] == ']') break;
     char* end = nullptr;
-    double v = std::strtod(s.c_str() + p, &end);
-    if (end == s.c_str() + p) break;            // not a number — stop instead of spinning on the same character
-    out.push_back(v);
-    p = (size_t)(end - s.c_str());
+    double value = std::strtod(json.c_str() + position, &end);
+    if (end == json.c_str() + position) break;            // not a number — stop instead of spinning on the same character
+    out.push_back(value);
+    position = (size_t)(end - json.c_str());
   }
   return out;
 }
 // `"key": ["PLA", "ABS"]` -> {"PLA","ABS"}. Same contract as jarr: absent or non-array yields empty, which every
 //  reader treats as "the host sent no per-filament strings". No escape handling — these are option values
 //  (material names, preset ids), not the custom G-code jstr below has to unescape.
-static std::vector<std::string> jstrarr(const std::string& s, const char* key) {
+static std::vector<std::string> jstrarr(const std::string& json, const char* key) {
   std::vector<std::string> out;
-  size_t p = jfind_val(s, key);
-  if (p == std::string::npos || p >= s.size() || s[p] != '[') return out;
-  for (++p; p < s.size() && s[p] != ']'; ) {
-    while (p < s.size() && (s[p]==' '||s[p]=='\t'||s[p]=='\n'||s[p]==',')) ++p;
-    if (p >= s.size() || s[p] == ']') break;
-    if (s[p] == 'n') { out.push_back(std::string()); p += 4; continue; }   // JSON null -> "no value for this slot"
-    if (s[p] != '"') break;
-    size_t end = s.find('"', p + 1);
+  size_t position = jfind_val(json, key);
+  if (position == std::string::npos || position >= json.size() || json[position] != '[') return out;
+  for (++position; position < json.size() && json[position] != ']'; ) {
+    while (position < json.size() && (json[position]==' '||json[position]=='\t'||json[position]=='\n'||json[position]==',')) ++position;
+    if (position >= json.size() || json[position] == ']') break;
+    if (json[position] == 'n') {   // JSON null -> "no value for this slot"
+      out.push_back(std::string());
+      position += 4;
+      continue;
+    }
+    if (json[position] != '"') break;
+    size_t end = json.find('"', position + 1);
     if (end == std::string::npos) break;
-    out.push_back(s.substr(p + 1, end - p - 1));
-    p = end + 1;
+    out.push_back(json.substr(position + 1, end - position - 1));
+    position = end + 1;
   }
   return out;
 }
-static bool jbool(const std::string& s, const char* key, bool d) {
-  size_t p = jfind_val(s, key);
-  if (p == std::string::npos) return d;
-  if (s.compare(p, 4, "true") == 0)  return true;
-  if (s.compare(p, 5, "false") == 0) return false;
-  return std::strtod(s.c_str() + p, nullptr) != 0.0;   // 1/0 accepted too
+static bool jbool(const std::string& json, const char* key, bool fallback) {
+  size_t position = jfind_val(json, key);
+  if (position == std::string::npos) return fallback;
+  if (json.compare(position, 4, "true") == 0)  return true;
+  if (json.compare(position, 5, "false") == 0) return false;
+  return std::strtod(json.c_str() + position, nullptr) != 0.0;   // 1/0 accepted too
 }
-static std::string jstr(const std::string& s, const char* key, const std::string& d) {
-  size_t p = jfind_val(s, key);
-  if (p == std::string::npos || p >= s.size() || s[p] != '"') return d;
-  ++p; std::string out;
+static std::string jstr(const std::string& json, const char* key, const std::string& fallback) {
+  size_t position = jfind_val(json, key);
+  if (position == std::string::npos || position >= json.size() || json[position] != '"') return fallback;
+  ++position;
+  std::string out;
   // Escapes matter for the printer profile's custom G-code, which arrives as one "G28\nM104 ..." string.
   //  Plain option strings contain none, so unescaping is a no-op for them.
-  while (p < s.size() && s[p] != '"') {
-    if (s[p] == '\\' && p + 1 < s.size()) {
-      char c = s[p + 1]; p += 2;
-      switch (c) {
-        case 'n': out += '\n'; break;   case 't': out += '\t'; break;
+  while (position < json.size() && json[position] != '"') {
+    if (json[position] == '\\' && position + 1 < json.size()) {
+      char escaped = json[position + 1];
+      position += 2;
+      switch (escaped) {
+        case 'n': out += '\n'; break;
+        case 't': out += '\t'; break;
         case 'r': break;                                        // CR is dropped: the writer emits its own line ends
-        case 'u': p += 4; break;                                // \uXXXX: skipped, not expected in G-code
-        default:  out += c;                                     // \" \\ \/ and anything else -> literal
+        case 'u': position += 4; break;                         // \uXXXX: skipped, not expected in G-code
+        default:  out += escaped;                               // \" \\ \/ and anything else -> literal
       }
       continue;
     }
-    out += s[p]; ++p;
+    out += json[position];
+    ++position;
   }
-  return out.empty() ? d : out;
+  if (out.empty()) return fallback;
+  return out;
 }
 // Stage 21: reading a coFloatOrPercent width — "120%" -> nozzle*1.2; a number -> as-is; absent -> 0 (the auto-derive marker).
-static double jwidth_raw(const std::string& s, const char* key, double nozzle) {
-  size_t p = jfind_val(s, key);
-  if (p == std::string::npos) return 0.0;
-  if (s[p] == '"') { std::string v; size_t q = p + 1; while (q < s.size() && s[q] != '"') { v += s[q]; ++q; }
-    if (!v.empty() && v.back() == '%') return std::strtod(v.c_str(), nullptr) * 0.01 * nozzle;
-    return std::strtod(v.c_str(), nullptr); }
-  return std::strtod(s.c_str() + p, nullptr);
+static double jwidth_raw(const std::string& json, const char* key, double nozzle) {
+  size_t position = jfind_val(json, key);
+  if (position == std::string::npos) return 0.0;
+  if (json[position] == '"') {
+    std::string text;
+    size_t cursor = position + 1;
+    while (cursor < json.size() && json[cursor] != '"') {
+      text += json[cursor];
+      ++cursor;
+    }
+    if (!text.empty() && text.back() == '%') return std::strtod(text.c_str(), nullptr) * 0.01 * nozzle;
+    return std::strtod(text.c_str(), nullptr);
+  }
+  return std::strtod(json.c_str() + position, nullptr);
 }
 // Upstream Flow::auto_extrusion_width (src/libslic3r/Flow.cpp:21): top-surface/support = nozzle_diameter,
 //  everything else (outer/inner wall, sparse, solid) = 1.125 * nozzle_diameter.
-static double auto_lw(double nozzle, bool top_or_support) { return top_or_support ? nozzle : 1.125 * nozzle; }
+static double auto_lw(double nozzle, bool top_or_support) {
+  if (top_or_support) return nozzle;
+  return 1.125 * nozzle;
+}
 // Feature width resolution: value>0 -> as-is · 0 -> line_width (>0) · line_width also 0 -> the upstream auto. (default line_width=0.42 -> default behavior unchanged)
 static double resolve_lw(double raw, double nozzle, double base_lw, bool top_or_support) {
   if (raw > 0) return raw;
@@ -338,14 +358,14 @@ Params parse_params(const std::string& j) {
   p.arachne_dump                  = jbool(j,"arachne_dump",p.arachne_dump);
   // Stage 21: resolve per-feature widths (after nozzle parsing). When line_width is 0 it is promoted to the upstream auto (the viewer sends 0.42 by default -> unchanged).
   {
-    const double noz = p.nozzle_diameter;
-    if (p.line_width <= 0) p.line_width = auto_lw(noz, false);
-    p.outer_wall_line_width            = resolve_lw(jwidth_raw(j,"outer_wall_line_width",noz),            noz, p.line_width, false);
-    p.inner_wall_line_width            = resolve_lw(jwidth_raw(j,"inner_wall_line_width",noz),            noz, p.line_width, false);
-    p.top_surface_line_width           = resolve_lw(jwidth_raw(j,"top_surface_line_width",noz),           noz, p.line_width, true);   // top surface → nozzle auto
-    p.sparse_infill_line_width         = resolve_lw(jwidth_raw(j,"sparse_infill_line_width",noz),         noz, p.line_width, false);
-    p.internal_solid_infill_line_width = resolve_lw(jwidth_raw(j,"internal_solid_infill_line_width",noz), noz, p.line_width, false);
-    p.initial_layer_line_width         = resolve_lw(jwidth_raw(j,"initial_layer_line_width",noz),         noz, p.line_width, false);
+    const double nozzle = p.nozzle_diameter;
+    if (p.line_width <= 0) p.line_width = auto_lw(nozzle, false);
+    p.outer_wall_line_width            = resolve_lw(jwidth_raw(j,"outer_wall_line_width",nozzle),            nozzle, p.line_width, false);
+    p.inner_wall_line_width            = resolve_lw(jwidth_raw(j,"inner_wall_line_width",nozzle),            nozzle, p.line_width, false);
+    p.top_surface_line_width           = resolve_lw(jwidth_raw(j,"top_surface_line_width",nozzle),           nozzle, p.line_width, true);   // top surface → nozzle auto
+    p.sparse_infill_line_width         = resolve_lw(jwidth_raw(j,"sparse_infill_line_width",nozzle),         nozzle, p.line_width, false);
+    p.internal_solid_infill_line_width = resolve_lw(jwidth_raw(j,"internal_solid_infill_line_width",nozzle), nozzle, p.line_width, false);
+    p.initial_layer_line_width         = resolve_lw(jwidth_raw(j,"initial_layer_line_width",nozzle),         nozzle, p.line_width, false);
   }
   return p;
 }
