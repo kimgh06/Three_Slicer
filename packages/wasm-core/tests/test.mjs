@@ -651,8 +651,8 @@ if (!rMultiMaterial.error) multiMaterialLayersText = rMultiMaterial.stats.layers
 ok(!rMultiMaterial.error, `multimaterial slices ok (layers=${multiMaterialLayersText})`)
 ok(/^T0$/m.test(rMultiMaterial.gcode) && /^T1$/m.test(rMultiMaterial.gcode), `MM has tool changes T0 and T1`)
 ok(typeTotal(rMultiMaterial, 11) > 0, `MM prime tower emitted (type11=${typeTotal(rMultiMaterial, 11)})`)
-// The default is the fallback ring again: the real WipeTower port is not reproducible (see the [wipe tower]
-//  section). Both markers are asserted so a silent flip of the default in either direction fails here.
+// The default is the fallback ring; the real WipeTower is opt-in (see the [wipe tower] section). Both markers are
+//  asserted so a silent flip of the default in either direction fails here.
 ok(/^; prime tower \(ring, \d+ loops/m.test(rMultiMaterial.gcode), `MM uses the deterministic ring by default`)
 ok(!/wipe_tower_real: real ported WipeTower/.test(rMultiMaterial.gcode), `and does not reach for the real tower unasked`)
 // With an explicit opt-out (wipe_tower_real=false) the old square ring path is kept
@@ -1261,10 +1261,9 @@ ok(toolShare(rFlush, 1) > toolShare(rTowerOff, 1),
 ok(Math.abs(rFlush.stats.filament_mm - rTowerOff.stats.filament_mm) < rTowerOff.stats.filament_mm * 0.05,
    `and moving infill between tools does not change how much is extruded (${rTowerOff.stats.filament_mm.toFixed(1)} vs ${rFlush.stats.filament_mm.toFixed(1)} mm)`)
 
-// ===== Wipe tower: the real port is not deterministic ===============================================================
-//  Pinned rather than left as folklore. The fallback ring must stay reproducible (it is what ships by default), and
-//  the real tower's defect must stay visible until it is fixed — a slicer whose output changes between identical
-//  runs cannot be diffed, and its F0 feedrates are not something a printer accepts.
+// ===== Wipe tower: both towers are reproducible =====================================================================
+//  A slicer whose output changes between identical runs cannot be diffed, and an F0 feedrate is not something a
+//  printer accepts. The fallback ring ships by default; the real tower is opt-in and must meet the same bar.
 console.log('\n[wipe tower]')
 const towerBox = makeBoxSTL(20, 20, 20)
 const towerParams = { ...params, extruder_count: 2, outer_wall_filament_id: 2 }
@@ -1279,9 +1278,8 @@ ok(!/wipe_tower_real/.test(JSON.stringify(params)) && !/real ported WipeTower/.t
 const realRuns = [sliceTower(true), sliceTower(true), sliceTower(true)]
 ok(realRuns.every(run => Math.abs(run.stats.filament_mm - realRuns[0].stats.filament_mm) < 1e-6),
    `the real tower is stable in WHAT it extrudes (${realRuns[0].stats.filament_mm.toFixed(4)} mm every run)`)
-// The defect does not reproduce on every model — on this cube the three runs agree. It reproduces on the overlap
-//  fixture with three extruders, which is what makes an uninitialised read the likely cause: the same code, a
-//  different heap, a different answer. Pinned on the case that shows it, so a real fix flips this assertion.
+// Issue #69 (cause and fix in config_bridge.cpp wipe_tower_block) showed on the overlap fixture with three
+//  extruders, and not on the two-extruder cube above.
 const towerRun = () => {
   Module.selector_prepare(new Uint8Array(overlapSTL))
   Module.selector_clear()
@@ -1295,8 +1293,8 @@ const f0Counts = towerRuns.map(run => (run.gcode.match(/ F0$/gm) ?? []).length)
 const reproducible = towerRuns[0].gcode === towerRuns[1].gcode && towerRuns[1].gcode === towerRuns[2].gcode
 ok(towerRuns.every(run => Math.abs(run.stats.filament_mm - towerRuns[0].stats.filament_mm) < 1e-6),
    `and stable in its totals on the fixture that breaks it too (${towerRuns[0].stats.filament_mm.toFixed(4)} mm)`)
-ok(!reproducible || f0Counts.some(count => count > 0),
-   `KNOWN DEFECT, pinned: the real tower is not reproducible and emits F0 feedrates (F0 per run: ${f0Counts.join(', ')})`)
+ok(reproducible, `the real tower gives the same G-code every run with three extruders (issue #69)`)
+ok(f0Counts.every(count => count === 0), `and emits no F0 feedrate (F0 per run: ${f0Counts.join(', ')})`)
 Module.selector_clear()
 
 // ===== Grounded prime tower =========================================================================================
