@@ -1,5 +1,5 @@
 // Stage-30 heap benchmark: slices a large model (big_cyl ~318k segments) twice — legacy BATCH (full GcodeWriter::gcode +
-//  full layersArr resident, then GCodeProcessor buffers the whole string) vs STREAMING (per-layer chunk
+//  full layersArray resident, then GCodeProcessor buffers the whole string) vs STREAMING (per-layer chunk
 //  emit + heap release; worker-side transfer simulated by dropping each chunk). Reports peak WASM heap via
 //  Module.heap_size() (emscripten_get_heap_size; ALLOW_MEMORY_GROWTH grows monotonically → == peak).
 //  Fresh Module per run. Progress → stderr (keeps the session watchdog fed). Hard self-timeout.
