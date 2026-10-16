@@ -277,14 +277,14 @@ struct Params {
   //  the real path succeeded on 49/49 layers without a fallback, purge volumes are actually computed (filament 1098 -> 4902mm),
   //  the upstream G-code structure is emitted (343 CP TOOLCHANGE/WIPE_TOWER markers), and there is no performance penalty (25ms vs 31ms).
   //  The old false path (three 15mm square rings) is decoration with no notion of purging and unfit for real G-code — kept only as a fallback.
-  // Default OFF again. The ported WipeTower is NOT deterministic: slicing the same input three times in one
+  // Default off again. The ported WipeTower was not deterministic: slicing the same input three times in one
   //  process produced three different G-code files, differing only in feedrates — 76, 50 and 42 lines of "F0"
   //  respectively, while the filament total (1566.2021 mm) and segment count (2210) were identical every time.
   //  F0 is not a feedrate a printer accepts, and a slicer that cannot reproduce its own output cannot be diffed
   //  or trusted. The fallback ring is deterministic (measured: three identical runs, zero F0 lines), so it is
   //  what runs unless a caller explicitly asks for the real tower. See the [wipe tower] invariants in test.mjs.
-  //  Suspected cause: set_extruder() reads ~14 per-filament config vectors with get_at(idx) for idx 0 and 1, and
-  //  config_bridge.cpp sizes only three of them to two entries — extruder_printable_height is even left empty.
+  //  The cause was issue #69, fixed in config_bridge.cpp wipe_tower_block; the [wipe tower] invariants in test.mjs
+  //  now require three identical runs with no F0. The default has not been revisited since.
   bool   wipe_tower_real=false;                         // stage 12: use the real WipeTower.generate() on MM changes instead of the stage-6 square ring
   double prime_tower_width=30.0;                        //  width of the real WipeTower (mm). Separate from the square ring width (15).
   // New in stage 7 (the real Arachne port)
