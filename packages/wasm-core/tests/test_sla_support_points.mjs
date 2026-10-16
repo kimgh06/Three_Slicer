@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import createSlicer from '../../engine/src/slicer_core.js'
+import { outwardBoxTriangles, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const read = (relative) => readFileSync(join(here, relative), 'utf8')
@@ -65,27 +66,8 @@ for (const fixture of ['cube-support-off-pad-off', 'mushroom-support-off-pad-off
 
 // ---- Runtime mutation tests against the committed WASM --------------------------------------------------------
 
-function boxTris(x0, y0, z0, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]]
-    .map(([x, y, z]) => [x + x0, y + y0, z + z0])
-  const faces = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
-  return faces.map(face => face.map(cornerIndex => corners[cornerIndex]))
-}
-function writeSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length * 50)
-  buffer.writeUInt32LE(tris.length, 80)
-  tris.forEach((triangle, triangleIndex) => {
-    let offset = 84 + 50 * triangleIndex + 12
-    for (const point of triangle) for (const coordinate of point) {
-      buffer.writeFloatLE(coordinate, offset)
-      offset += 4
-    }
-  })
-  return new Uint8Array(buffer)
-}
-
 const slicer = await createSlicer()
-const mushroom = writeSTL([...boxTris(-2, -2, 0, 4, 4, 8), ...boxTris(-8, -8, 8, 16, 16, 3)])
+const mushroom = trianglesToSTLBytes([...outwardBoxTriangles(-2, -2, 0, 4, 4, 8), ...outwardBoxTriangles(-8, -8, 8, 16, 16, 3)])
 const params = (overrides = {}) => JSON.stringify({
   layer_height: 0.05, initial_layer_height: 0.05, bed_width: 120.96, bed_depth: 68.04,
   supports_enable: true, ...overrides,

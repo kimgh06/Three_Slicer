@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import createSlicer from '../../engine/src/slicer_core.js'
+import { outwardBoxTriangles, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const temporary = mkdtempSync(join(tmpdir(), 'sla-pad-'))
@@ -23,39 +24,15 @@ assert.match(notes, /Pad \(Pad\.cpp \+ ConcaveHull \+ Tesselate\/glu-libtess, LI
 assert.match(notes, /pad_around_object/)
 assert.match(notes, /is_zero_elevation/)
 
+// A 10x10x5 box centred on the origin.
 function boxSTL() {
-  const vertices = [[-5,-5,0],[5,-5,0],[5,5,0],[-5,5,0],[-5,-5,5],[5,-5,5],[5,5,5],[-5,5,5]]
-  const faces = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
-  const buffer = Buffer.alloc(84 + faces.length * 50)
-  buffer.writeUInt32LE(faces.length, 80)
-  faces.forEach((face, index) => {
-    let offset = 84 + index * 50 + 12
-    for (const vertexIndex of face) for (const value of vertices[vertexIndex]) {
-      buffer.writeFloatLE(value, offset)
-      offset += 4
-    }
-  })
-  return new Uint8Array(buffer)
+  return trianglesToSTLBytes(outwardBoxTriangles(-5, -5, 0, 10, 10, 5))
 }
 
 // A slab on a central leg: the slab's underside is a plate-reaching overhang, so embed-mode supports
 // really exist and their feet keep the around-object pad from being redundant.
 function tableSTL() {
-  const boxFaces = (corners) => [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
-    .map(face => face.map(index => corners[index]))
-  const box = (x0, y0, z0, x1, y1, z1) => boxFaces([
-    [x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]])
-  const triangles = [...box(-2, -2, 0, 2, 2, 5), ...box(-6, -6, 5, 6, 6, 7)]
-  const buffer = Buffer.alloc(84 + triangles.length * 50)
-  buffer.writeUInt32LE(triangles.length, 80)
-  triangles.forEach((triangle, index) => {
-    let offset = 84 + index * 50 + 12
-    for (const vertex of triangle) for (const value of vertex) {
-      buffer.writeFloatLE(value, offset)
-      offset += 4
-    }
-  })
-  return new Uint8Array(buffer)
+  return trianglesToSTLBytes([...outwardBoxTriangles(-2, -2, 0, 4, 4, 5), ...outwardBoxTriangles(-6, -6, 5, 12, 12, 2)])
 }
 
 const params = overrides => JSON.stringify({
