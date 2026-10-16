@@ -120,6 +120,16 @@ export function boxTrianglesWithInwardBottom(originX, originY, originZ, sizeX, s
   return INWARD_BOTTOM_BOX_FACES.map(face => face.map(cornerIndex => corners[cornerIndex]))
 }
 
+// An outward box centred on the plate-local origin in x and y and standing on z = 0, the way the viewer sends a model.
+export function centredBoxSTLBytes(sizeX, sizeY, sizeZ) {
+  return trianglesToSTLBytes(outwardBoxTriangles(-sizeX / 2, -sizeY / 2, 0, sizeX, sizeY, sizeZ))
+}
+
+// The 10 x 10 x 5 box the SLA tests slice.
+export function slaBoxSTL() {
+  return centredBoxSTLBytes(10, 10, 5)
+}
+
 // The overhang table: a 6x6x10 leg at (7,7) under a 20x20x4 cap at z=10, whose underside overhangs. Its two boxes
 //  come from buildBox (one of the two box builders above), the leg's 12 facets first.
 export function tableTriangles(buildBox) {

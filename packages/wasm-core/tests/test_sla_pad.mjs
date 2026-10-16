@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import createSlicer from '../../engine/src/slicer_core.js'
-import { outwardBoxTriangles, trianglesToSTLBytes } from './stl_fixtures.mjs'
+import { outwardBoxTriangles, slaBoxSTL, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 const temporary = mkdtempSync(join(tmpdir(), 'sla-pad-'))
@@ -23,11 +23,6 @@ const notes = readFileSync(join(here, 'slasupport_port/PORT_NOTES.md'), 'utf8')
 assert.match(notes, /Pad \(Pad\.cpp \+ ConcaveHull \+ Tesselate\/glu-libtess, LINKED\)/)
 assert.match(notes, /pad_around_object/)
 assert.match(notes, /is_zero_elevation/)
-
-// A 10x10x5 box centred on the origin.
-function boxSTL() {
-  return trianglesToSTLBytes(outwardBoxTriangles(-5, -5, 0, 10, 10, 5))
-}
 
 // A slab on a central leg: the slab's underside is a plate-reaching overhang, so embed-mode supports
 // really exist and their feet keep the around-object pad from being redundant.
@@ -80,7 +75,7 @@ int main() {
   const slicer = await createSlicer()
 
   // Given: pad disabled. Then: no role-6 output of any kind (byte-identical disabled behavior).
-  const padOff = slicer.slice_sla(boxSTL(), params({ pad_enable: false }), undefined)
+  const padOff = slicer.slice_sla(slaBoxSTL(), params({ pad_enable: false }), undefined)
   assert.equal(padOff.stats.pad_layers, 0)
   assert.equal(padOff.pad_mesh.length, 0)
   assert.ok(padOff.layers.every(layer => roleSegments(layer, 6).length === 0))
@@ -88,7 +83,7 @@ int main() {
   // Given: pad enabled, supports off (default 2mm-thick flat pad).
   // Then: the ported pad occupies the bottom pad zone, the MODEL rises above it, and the layer count grows
   // by exactly the pad zone.
-  const padOn = slicer.slice_sla(boxSTL(), params({ pad_enable: true }), undefined)
+  const padOn = slicer.slice_sla(slaBoxSTL(), params({ pad_enable: true }), undefined)
   assert.equal(padOn.stats.pad_capability, 'supported')
   assert.equal(padOn.stats.pad_code, 'SLA_PAD_SUPPORTED')
   assert.equal(padOn.stats.pad_backend, 'prusa_port')
@@ -121,7 +116,7 @@ int main() {
 
   // Given: pad + supports. Then: the feet stand ON the pad (support paths never below the pad zone top),
   // and the whole stack is pad + elevation + model.
-  const supported = slicer.slice_sla(boxSTL(),
+  const supported = slicer.slice_sla(slaBoxSTL(),
     params({ pad_enable: true, supports_enable: true, support_object_elevation: 5 }), undefined)
   assert.equal(supported.stats.pad_layers, padZone)
   assert.equal(supported.stats.layers, padOff.stats.layers + padZone + 100) // + elevation 5mm / 0.05
@@ -136,7 +131,7 @@ int main() {
   // Then: upstream validate_pad semantics — the ring survives only where supports stand, so the pad is
   // legally EMPTY, nothing lifts, and the object prints directly on the plate. Even a requested elevation
   // is forced to zero (is_zero_elevation).
-  const embedFlat = slicer.slice_sla(boxSTL(),
+  const embedFlat = slicer.slice_sla(slaBoxSTL(),
     params({ pad_enable: true, pad_around_object: true, supports_enable: true, support_object_elevation: 5 }), undefined)
   assert.equal(embedFlat.error, undefined, `embed(flat) errored: ${embedFlat.error}`)
   assert.equal(embedFlat.pad_mesh.length, 0, 'no supports -> the ring is redundant everywhere -> empty pad')
@@ -169,7 +164,7 @@ int main() {
 
   // Given: embed + everywhere on the flat cube. Then: the pad spreads under the whole footprint (a
   // BrimPadSkeleton), so it exists even with no supports, and the pad zone lifts the stack.
-  const everywhere = slicer.slice_sla(boxSTL(),
+  const everywhere = slicer.slice_sla(slaBoxSTL(),
     params({ pad_enable: true, pad_around_object: true, pad_around_object_everywhere: true }), undefined)
   assert.equal(everywhere.error, undefined, `everywhere pad errored: ${everywhere.error}`)
   assert.ok(everywhere.pad_mesh.length > 0)
@@ -179,12 +174,12 @@ int main() {
   // Given: a pad request that cannot be satisfied (supports on but enforcers-only filters every point, so
   // nothing reaches the plate to blueprint). Then: the SLICE fails — upstream's SlicingError semantics —
   // instead of silently emitting a scene lifted by a pad zone with nothing underneath.
-  const unpaddable = slicer.slice_sla(boxSTL(),
+  const unpaddable = slicer.slice_sla(slaBoxSTL(),
     params({ pad_enable: true, supports_enable: true, support_object_elevation: 5, support_enforcers_only: true }), undefined)
   assert.match(unpaddable.error ?? '', /pad/, `expected a pad slicing error, got: ${unpaddable.error}`)
 
   // Determinism: the ported pad produces identical bytes across runs.
-  const again = slicer.slice_sla(boxSTL(), params({ pad_enable: true }), undefined)
+  const again = slicer.slice_sla(slaBoxSTL(), params({ pad_enable: true }), undefined)
   assert.deepEqual(again.pad_mesh, padOn.pad_mesh)
 
   console.log('test_sla_pad: ported pad geometry, lifted layer frame, feet-on-pad, embed/everywhere, and pad-off isolation passed')

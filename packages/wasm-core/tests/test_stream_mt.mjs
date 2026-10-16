@@ -8,12 +8,7 @@
 import assert from 'node:assert/strict'
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
-import { outwardBoxTriangles, trianglesToSTLBytes } from './stl_fixtures.mjs'
-
-// A size x size x height box centred on the origin.
-function boxSTL(size, height) {
-  return trianglesToSTLBytes(outwardBoxTriangles(-size / 2, -size / 2, 0, size, size, height))
-}
+import { centredBoxSTLBytes } from './stl_fixtures.mjs'
 
 function streamed(kernel, stl, params) {
   const chunks = []
@@ -25,7 +20,7 @@ function streamed(kernel, stl, params) {
 
 const singleThreadSlicer = await createSlicer()
 const threadedSlicer = await createSlicerMt()
-const stl = boxSTL(20, 6)
+const stl = centredBoxSTLBytes(20, 20, 6)
 let checks = 0
 for (const raft_layers of [0, 2]) {
   const params = JSON.stringify({ layer_height: 0.2, first_layer_height: 0.2, wall_loops: 2, infill_density: 0.15, raft_layers })

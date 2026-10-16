@@ -5,12 +5,7 @@
 import assert from 'node:assert/strict'
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
-import { outwardBoxTriangles, trianglesToSTLBytes } from './stl_fixtures.mjs'
-
-// A 10x10x5 box centred on the origin.
-function boxSTL() {
-  return trianglesToSTLBytes(outwardBoxTriangles(-5, -5, 0, 10, 10, 5))
-}
+import { slaBoxSTL } from './stl_fixtures.mjs'
 
 const params = JSON.stringify({
   layer_height: 0.05,
@@ -23,8 +18,8 @@ const params = JSON.stringify({
 })
 
 const [singleThreadSlicer, threadedSlicer] = [await createSlicer(), await createSlicerMt()]
-const expected = singleThreadSlicer.slice_sla(boxSTL(), params, undefined)
-const actual = threadedSlicer.slice_sla(boxSTL(), params, undefined)
+const expected = singleThreadSlicer.slice_sla(slaBoxSTL(), params, undefined)
+const actual = threadedSlicer.slice_sla(slaBoxSTL(), params, undefined)
 
 assert.equal(actual.error, undefined, `mt slice_sla errored: ${actual.error}`)
 for (const key of ['layers', 'support_points', 'pad_layers', 'lift_layers', 'path_segments'])
