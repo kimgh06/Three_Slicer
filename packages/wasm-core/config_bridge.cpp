@@ -6,6 +6,7 @@
 #include "config_bridge.h"
 #include "arachne_port/config/libslic3r/PrintConfig.hpp"
 #include "arachne_port/wipetower/GCode/WipeTower.hpp"   // real ported WipeTower (TriangleMesh stub via -Iwipetower/inc)
+#include <algorithm>
 #include <sstream>
 #include <cctype>
 #include <cstdlib>
@@ -71,8 +72,16 @@ WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_width, 
         const float height = (float)std::max(z + layer_height, 2.0);
         WipeTower wipe_tower(config, 0, Vec3d(0,0,0), (size_t)old_tool, height,
                      std::vector<unsigned int>{ (unsigned)old_tool, (unsigned)new_tool });
-        wipe_tower.set_extruder(0, config);
-        wipe_tower.set_extruder(1, config);
+        // set_extruder appends one filament row per call, and the tower reads those rows by tool id
+        //  (m_filpar[m_current_tool].max_e_speed for every feedrate, m_filpar[tool].material for the comment). With
+        //  rows for tools 0 and 1 only, a change to or from T2 read past the end and wrote F0 or a heap-dependent
+        //  feedrate (issue #69). Every tool up to the highest one in this change gets its row, in id order.
+        // Every row is filled from this PrintConfig's defaults, as rows 0 and 1 always were, so every tool
+        //  wipes at the same default volumetric limit and is named PLA. Giving each tool its own filament values
+        //  (filament_max_volumetric_speed, temperatures, type) needs the slice's per-filament params passed in here.
+        const int highestTool = std::max(old_tool, new_tool);
+        for (int tool = 0; tool <= highestTool; ++tool)
+            wipe_tower.set_extruder(tool, config);
         wipe_tower.set_layer((float)z, (float)layer_height, 1, is_first_layer, false);
         // 100 was a placeholder standing in for "some purge". Upstream feeds plan_toolchange the volume its
         //  flush matrix computed for exactly this pair (ToolOrdering.cpp get_flush_volume), which is what makes a
