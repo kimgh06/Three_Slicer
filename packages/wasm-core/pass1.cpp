@@ -23,14 +23,14 @@
 #include <vector>
 
 // Model preparation — the bbox pass, the auto_center/Z-seat transform and the over_bed verdict.
-ModelPrep prepare_model(std::vector<Triangle>& tris, const Params& params, bool reuseGeom) {
-  // Move the model so XY is centered on the origin and minZ=0 (with reuseGeom the cached copy is already normalized)
+ModelPrep prepare_model(std::vector<Triangle>& triangles, const Params& params, bool reuseGeometry) {
+  // Move the model so XY is centered on the origin and minZ=0 (with reuseGeometry the cached copy is already normalized)
   double minx=1e18,miny=1e18,minz=1e18,maxx=-1e18,maxy=-1e18,maxz=-1e18;
-  if (reuseGeom) {
+  if (reuseGeometry) {
     minx=miny=minz=0;
     maxx=maxy=maxz=0;
   } else {
-    for (auto& triangle:tris) for (int k=0;k<3;++k){
+    for (auto& triangle:triangles) for (int k=0;k<3;++k){
       minx=std::min(minx,(double)triangle.vertices[k].x);
       maxx=std::max(maxx,(double)triangle.vertices[k].x);
       miny=std::min(miny,(double)triangle.vertices[k].y);
@@ -40,25 +40,25 @@ ModelPrep prepare_model(std::vector<Triangle>& tris, const Params& params, bool 
     }
   }
   double centerX=(minx+maxx)/2, centerY=(miny+maxy)/2;
-  if (reuseGeom) {
-    centerX = g_scache.centerX;
-    centerY = g_scache.centerY;
+  if (reuseGeometry) {
+    centerX = g_stage_cache.centerX;
+    centerY = g_stage_cache.centerY;
   }
   // Stage 28 P2: with auto_center=true the combined bbox is realigned to the origin (legacy). false (default) = keep the viewer XY coordinates and only seat Z.
-  //  G003: with reuseGeom the cached tris are already normalized — do not move again (avoids a double shift).
-  if (!reuseGeom) {
+  //  G003: with reuseGeometry the cached triangles are already normalized — do not move again (avoids a double shift).
+  if (!reuseGeometry) {
     if (params.auto_center) {
-      for (auto& triangle:tris) for (int k=0;k<3;++k){
+      for (auto& triangle:triangles) for (int k=0;k<3;++k){
         triangle.vertices[k].x-=centerX;
         triangle.vertices[k].y-=centerY;
         triangle.vertices[k].z-=minz;
       }
     } else {
-      for (auto& triangle:tris) for (int k=0;k<3;++k){ triangle.vertices[k].z-=minz; }
+      for (auto& triangle:triangles) for (int k=0;k<3;++k){ triangle.vertices[k].z-=minz; }
     }
   }
   double height;
-  if (reuseGeom) height = g_scache.height;
+  if (reuseGeometry) height = g_stage_cache.height;
   else height = maxz - minz;
   double modelWidth = maxx - minx, modelDepth = maxy - miny;
   // over_bed: too large || (viewer coordinate mode) the G-code position (+bed/2) leaves the bed [0,bed] (i.e. outside [-bed/2,bed/2] in raw coordinates)
@@ -66,7 +66,7 @@ ModelPrep prepare_model(std::vector<Triangle>& tris, const Params& params, bool 
   bool over_bed = (modelWidth > params.bed_width) || (modelDepth > params.bed_depth) || (params.bed_height > 0 && height > params.bed_height);
   if (!params.auto_center) over_bed = over_bed || maxx > params.bed_width*0.5 || minx < -params.bed_width*0.5
                                           || maxy > params.bed_depth*0.5 || miny < -params.bed_depth*0.5;
-  if (reuseGeom) over_bed = g_scache.over_bed;
+  if (reuseGeometry) over_bed = g_stage_cache.over_bed;
   return { centerX, centerY, height, over_bed };
 }
 
@@ -137,7 +137,7 @@ static void classic_walls(LayerData& layer, const Params& params, int i, int lay
 
 bool pass1_run(SliceContext& context) {
   const Params& params = *context.params;
-  std::vector<Triangle>& tris = *context.triangles;
+  std::vector<Triangle>& triangles = *context.triangles;
   std::vector<LayerData>& layers = *context.layers;
   auto& isCanceled = context.isCanceled;
   auto& report = context.report;
@@ -154,14 +154,14 @@ bool pass1_run(SliceContext& context) {
     //  order in ascending triangle index (same as the old full scan) -> the chain_polygons input is unchanged = byte-identical.
     // MESH (contour_phase.h): the GPU cuts and chains the layers; hand it the triangles as seated and the planes as cut
     if (contour_phase::mode == contour_phase::MESH) {
-      static_assert(sizeof(Triangle) == 9 * sizeof(float), "mesh_tris copies Triangle as 9 packed floats");
+      static_assert(sizeof(Triangle) == 9 * sizeof(float), "mesh_triangles copies Triangle as 9 packed floats");
       contour_phase::mesh_planes = planes;
-      contour_phase::mesh_tris.resize(tris.size() * 9);
-      if (!tris.empty()) std::memcpy(contour_phase::mesh_tris.data(), tris.data(), tris.size() * sizeof(Triangle));
+      contour_phase::mesh_triangles.resize(triangles.size() * 9);
+      if (!triangles.empty()) std::memcpy(contour_phase::mesh_triangles.data(), triangles.data(), triangles.size() * sizeof(Triangle));
       contour_phase::captured = true;
       return false;
     }
-    std::vector<std::vector<SliceSegment>> layerSegs(layerCount);
+    std::vector<std::vector<SliceSegment>> layerSegments(layerCount);
     // The union done outside the kernel (contour_phase.h). OFF leaves every line below as it was.
     const bool captureLoops = contour_phase::mode == contour_phase::CAPTURE;
     const bool injectContours = contour_phase::mode == contour_phase::INJECT && (int)contour_phase::contours.size() == layerCount;
@@ -170,7 +170,7 @@ bool pass1_run(SliceContext& context) {
       auto collect = [&](size_t firstTriangle, size_t endTriangle, std::vector<std::vector<SliceSegment>>& out){
         SliceSegment segment;
         for (size_t triangleIndex = firstTriangle; triangleIndex < endTriangle; ++triangleIndex) {
-          const Triangle& triangle = tris[triangleIndex];
+          const Triangle& triangle = triangles[triangleIndex];
           double zmin=std::min({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z}), zmax=std::max({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z});
           for (auto it = std::lower_bound(planes.begin(), planes.end(), zmin); it != planes.end() && *it < zmax; ++it)
             if (intersect_triangle_with_plane(triangle, *it, segment)) out[(size_t)(it - planes.begin())].push_back(segment);
@@ -179,14 +179,14 @@ bool pass1_run(SliceContext& context) {
 #ifdef __EMSCRIPTEN_PTHREADS__
       unsigned hardwareThreads = std::thread::hardware_concurrency();
       if (!hardwareThreads) hardwareThreads = 4;
-      unsigned threadCount = (unsigned)std::min<size_t>(hardwareThreads, std::max<size_t>(1, tris.size() / 4096));
+      unsigned threadCount = (unsigned)std::min<size_t>(hardwareThreads, std::max<size_t>(1, triangles.size() / 4096));
       if (threadCount > 1) {
         std::vector<std::vector<std::vector<SliceSegment>>> threadBuckets(threadCount, std::vector<std::vector<SliceSegment>>(layerCount));
-        size_t chunkSize = (tris.size() + threadCount - 1) / threadCount;
+        size_t chunkSize = (triangles.size() + threadCount - 1) / threadCount;
         std::vector<std::thread> threads;
         threads.reserve(threadCount);
         for (unsigned threadIndex = 0; threadIndex < threadCount; ++threadIndex) {
-          size_t rangeBegin = threadIndex*chunkSize, rangeEnd = std::min(tris.size(), rangeBegin+chunkSize);
+          size_t rangeBegin = threadIndex*chunkSize, rangeEnd = std::min(triangles.size(), rangeBegin+chunkSize);
           if (rangeBegin >= rangeEnd) break;
           // an empty pthread pool refuses the thread (PTHREAD_POOL_SIZE_STRICT=2): the caller sweeps the range itself,
           //  into the same bucket, so the segment order is unchanged
@@ -199,15 +199,15 @@ bool pass1_run(SliceContext& context) {
         for (int layerIndex = 0; layerIndex < layerCount; ++layerIndex) {
           size_t segmentTotal = 0;
           for (auto& bucket : threadBuckets) segmentTotal += bucket[layerIndex].size();
-          layerSegs[layerIndex].reserve(segmentTotal);
+          layerSegments[layerIndex].reserve(segmentTotal);
           for (auto& bucket : threadBuckets) {
-            layerSegs[layerIndex].insert(layerSegs[layerIndex].end(), bucket[layerIndex].begin(), bucket[layerIndex].end());
+            layerSegments[layerIndex].insert(layerSegments[layerIndex].end(), bucket[layerIndex].begin(), bucket[layerIndex].end());
             std::vector<SliceSegment>().swap(bucket[layerIndex]);
           }
         }
       } else
 #endif
-      collect(0, tris.size(), layerSegs);
+      collect(0, triangles.size(), layerSegments);
     }
     auto computeLayer = [&](int i) {
       const double z = layerPlan.top[i];
@@ -217,7 +217,7 @@ bool pass1_run(SliceContext& context) {
       if (i==0) layer.thickness=params.first_layer_height;
       else layer.thickness=params.layer_height;
       std::vector<SliceSegment> segments;
-      segments.swap(layerSegs[i]);
+      segments.swap(layerSegments[i]);
       if (captureLoops) {
         contour_phase::loops[i] = chain_polygons(segments);
         contour_phase::cancel_coincident(contour_phase::loops[i]);
@@ -272,31 +272,31 @@ bool pass1_run(SliceContext& context) {
           //  Matching the upstream rules, hygiene runs in 3 steps: (1) a 10µm Clean (collapsing µm edges) (2) a re-Simplify (resolving
           //  self-intersections Clean can create, re-establishing strict simplicity) (3) removal of sub-nozzle slivers (<0.02mm²).
           //  Normal contours (including the golden fixtures) pass all 3 steps unchanged.
-          Paths arachneSrc = layer.contour;
-          CleanPolygons(arachneSrc, SCALE * 0.01);
-          arachneSrc = SimplifyPolygons(arachneSrc, pftEvenOdd);
+          Paths arachneContour = layer.contour;
+          CleanPolygons(arachneContour, SCALE * 0.01);
+          arachneContour = SimplifyPolygons(arachneContour, pftEvenOdd);
           {
             const double minArea = 0.02 * SCALE * SCALE;
-            arachneSrc.erase(std::remove_if(arachneSrc.begin(), arachneSrc.end(),
-              [&](const Path& path){ return path.size() < 3 || std::fabs(Area(path)) < minArea; }), arachneSrc.end());
+            arachneContour.erase(std::remove_if(arachneContour.begin(), arachneContour.end(),
+              [&](const Path& path){ return path.size() < 3 || std::fabs(Area(path)) < minArea; }), arachneContour.end());
           }
-          std::vector<std::vector<std::pair<double,double>>> polys;
-          for (const Path& path : arachneSrc) {
-            std::vector<std::pair<double,double>> poly;
-            poly.reserve(path.size());
-            for (const IntPoint& point : path) poly.push_back({point.x()*INV, point.y()*INV});
-            if (poly.size() >= 3) polys.push_back(std::move(poly));
+          std::vector<std::vector<std::pair<double,double>>> polygons;
+          for (const Path& path : arachneContour) {
+            std::vector<std::pair<double,double>> polygon;
+            polygon.reserve(path.size());
+            for (const IntPoint& point : path) polygon.push_back({point.x()*INV, point.y()*INV});
+            if (polygon.size() >= 3) polygons.push_back(std::move(polygon));
           }
           if (params.arachne_dump) {   // temporary diagnostic: capture the input right before a crash (the last output = the dying layer)
-            fprintf(stderr, "ARACHNE_IN L=%d npolys=%d\n", i, (int)polys.size());
-            for (size_t polyIndex=0; polyIndex<polys.size(); ++polyIndex) {
-              fprintf(stderr, "P%d[%d]:", (int)polyIndex, (int)polys[polyIndex].size());
-              for (auto& point : polys[polyIndex]) fprintf(stderr, " %.6f,%.6f", point.first, point.second);
+            fprintf(stderr, "ARACHNE_IN L=%d npolys=%d\n", i, (int)polygons.size());
+            for (size_t polygonIndex=0; polygonIndex<polygons.size(); ++polygonIndex) {
+              fprintf(stderr, "P%d[%d]:", (int)polygonIndex, (int)polygons[polygonIndex].size());
+              for (auto& point : polygons[polygonIndex]) fprintf(stderr, " %.6f,%.6f", point.first, point.second);
               fprintf(stderr, "\n");
             }
             fflush(stderr);
           }
-          layer.arachneWalls = arachne_bridge::generate_walls(polys, lineWidth, params.wall_loops, layer.thickness);
+          layer.arachneWalls = arachne_bridge::generate_walls(polygons, lineWidth, params.wall_loops, layer.thickness);
         }
         }
       }

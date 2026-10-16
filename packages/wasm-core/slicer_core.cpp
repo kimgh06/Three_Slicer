@@ -95,33 +95,36 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   auto report = [&](int done, int total){ if (!onProgress.isUndefined() && !onProgress.isNull()) onProgress(done, total); };
   Params params = parse_params(params_json);
   if (params.spiral_mode) params.wall_loops = 1;                 // vase: a single outer wall
-  g_seg_tool = 0;                                      // the toolpath tool channel is thread_local and outlives a slice
+  g_segment_tool = 0;                                      // the toolpath tool channel is thread_local and outlives a slice
   // G002: cancel flag — the UI writes 1 via SAB. Reset to 0 on entry; the loops poll it per iteration.
   auto* cancelFlag = (std::atomic<unsigned>*)(uintptr_t)treesupport_bridge::cancel_addr();
   cancelFlag->store(0);
   auto isCanceled = [cancelFlag]{ return cancelFlag->load(std::memory_order_relaxed) != 0; };
   // G003 incremental: reuse decision (viewer first, layerKey as the second line of defense). Not supported for MM.
   const std::string layerKey = make_layer_key(params);
-  const bool reuseGeom = params.reuse_stages >= 1 && g_scache.valid && params.extruder_count < 2;
-  const bool reuseSup  = params.reuse_stages >= 2 && g_scache.valid && g_scache.layerKey == layerKey && params.extruder_count < 2;
-  std::vector<Triangle> trisOwn;
-  if (!reuseGeom) {
+  const bool reuseGeometry = params.reuse_stages >= 1 && g_stage_cache.valid && params.extruder_count < 2;
+  const bool reuseSupport  = params.reuse_stages >= 2 && g_stage_cache.valid && g_stage_cache.layerKey == layerKey && params.extruder_count < 2;
+  std::vector<Triangle> ownedTriangles;
+  if (!reuseGeometry) {
     std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl_bytes);
-    trisOwn = parse_stl(bytes);
+    ownedTriangles = parse_stl(bytes);
   }
-  std::vector<Triangle>& tris = [&]() -> std::vector<Triangle>& {
-    if (reuseGeom) return g_scache.triangles;
-    return trisOwn;
-  }();
+  std::vector<Triangle>* triangleSource = nullptr;
+  if (reuseGeometry) {
+    triangleSource = &g_stage_cache.triangles;
+  } else {
+    triangleSource = &ownedTriangles;
+  }
+  std::vector<Triangle>& triangles = *triangleSource;
 
   em::val result = em::val::object();
-  if (tris.empty()) {
+  if (triangles.empty()) {
     result.set("error", std::string("STL parse failed or 0 triangles"));
     return result;
   }
 
   // Model preparation (bbox -> center/seat -> over_bed) -> pass1.cpp
-  ModelPrep modelPrep = prepare_model(tris, params, reuseGeom);
+  ModelPrep modelPrep = prepare_model(triangles, params, reuseGeometry);
   double centerX = modelPrep.centerX, centerY = modelPrep.centerY, height = modelPrep.height;
   bool over_bed = modelPrep.over_bed;
 
@@ -135,7 +138,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   // Multi-material (stretch goal): with two or more groups, branch to the separate-slice + tool change + prime
   //  tower path. Either boundary form gets there — mm_group_splits carries N groups, mm_group_split just one.
-  auto usable = [&](int boundary){ return boundary > 0 && boundary < (int)tris.size(); };
+  auto usable = [&](int boundary){ return boundary > 0 && boundary < (int)triangles.size(); };
   bool hasGroups = usable(params.mm_group_split);
   for (double boundary : params.mm_group_splits) if (usable((int)boundary)) hasGroups = true;
   // Painting is the other way a model becomes multi-tool, and the only way a SINGLE object can be: there is no
@@ -162,7 +165,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
                                params.sparse_infill_filament_id >= 2 || params.top_surface_filament_id >= 2 ||
                                params.bottom_surface_filament_id >= 2 || params.internal_solid_filament_id >= 2;
   if (params.extruder_count >= 2 && (hasGroups || hasPaintedTools || hasFeatureTools))
-    return slice_multimaterial(tris, params, onProgress, height, over_bed);
+    return slice_multimaterial(triangles, params, onProgress, height, over_bed);
 
   // A single-material slice on a filament other than the first (every object of the plate on filament 4): that
   //  filament's values replace the scalars, as slice_multimaterial reloads them on a T change. Upstream switches to
@@ -177,7 +180,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     params.retract_speed     = Params::forTool(params.extruder_retract_speed, singleTool, params.retract_speed);
     params.z_hop             = Params::forTool(params.extruder_z_hop, singleTool, params.z_hop);
   }
-  g_seg_tool = singleTool;                             // the preview's tool channel: the filament the model prints with
+  g_segment_tool = singleTool;                             // the preview's tool channel: the filament the model prints with
 
   // Count the z levels (the progress total)
   const int layerCount = (int)plan_layers(params.first_layer_height, params.layer_height, height).top.size();
@@ -185,31 +188,34 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   // Phase timing (exposed only through stats — no effect on g-code, golden-safe)
   double timeStart = emscripten_get_now(), timePass1 = 0, timePass15 = 0, timeSupport = 0;
-  double timeFlush = 0;          // accumulated flush_layer time (the JS boundary: to_f32/layersArr/sink + feeding the estimator) — the rest is G1 formatting
+  double timeFlush = 0;          // accumulated flush_layer time (the JS boundary: to_f32/layersArray/sink + feeding the estimator) — the rest is G1 formatting
 
   // ---- PASS 1: per-layer contours, walls and infill regions ----
-  //  No inter-layer dependencies (reads: the shared immutable tris/params, writes: an independent layers[i]) -> layers run in parallel in -pthread builds.
+  //  No inter-layer dependencies (reads: the shared immutable triangles/params, writes: an independent layers[i]) -> layers run in parallel in -pthread builds.
   //  z is precomputed serially exactly like the old accumulating loop (z+=layer_height) — preserving FP accumulation order (golden-safe).
-  const bool keepStages = (params.keep_stages || reuseSup) && params.extruder_count < 2;
+  const bool keepStages = (params.keep_stages || reuseSupport) && params.extruder_count < 2;
   g_keep_island = keepStages;
   // stage 19: tree support z alignment diagnostics (G003: hoisted)
-  double treeZMaxResid = -1.0;
-  int treeSupLayers = 0;
+  double treeZMaxResidual = -1.0;
+  int treeSupportLayers = 0;
   std::vector<LayerData> layersOwn;
-  if (!reuseSup) layersOwn.resize(layerCount);
-  std::vector<LayerData>& layers = [&]() -> std::vector<LayerData>& {
-    if (reuseSup) return g_scache.layers;
-    return layersOwn;
-  }();
+  if (!reuseSupport) layersOwn.resize(layerCount);
+  std::vector<LayerData>* layerSource = nullptr;
+  if (reuseSupport) {
+    layerSource = &g_stage_cache.layers;
+  } else {
+    layerSource = &layersOwn;
+  }
+  std::vector<LayerData>& layers = *layerSource;
   // Phase context: exactly the slice()-scope state the moved phase bodies used to capture.
   SliceContext context;
   context.params=&params;
-  context.triangles=&tris;
+  context.triangles=&triangles;
   context.layers=&layers;
   context.isCanceled=isCanceled;
   context.report=report;
-  context.treeZMaxResid=&treeZMaxResid;
-  context.treeSupLayers=&treeSupLayers;
+  context.treeZMaxResidual=&treeZMaxResidual;
+  context.treeSupportLayers=&treeSupportLayers;
   context.layerCount=layerCount;
   context.total=total;
   context.height=height;
@@ -219,11 +225,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   context.sparse_spacing=sparse_spacing;
   context.solid_spacing=solid_spacing;
   context.support_spacing=support_spacing;
-  if (reuseSup) {
+  if (reuseSupport) {
     // G003: geometry and support settings unchanged — PASS1, surfaces and support all come from the cache; only emission re-runs.
     timePass1 = timePass15 = emscripten_get_now();
-    treeSupLayers = g_scache.treeSupLayers;
-    treeZMaxResid = g_scache.treeZMaxResid;
+    treeSupportLayers = g_stage_cache.treeSupportLayers;
+    treeZMaxResidual = g_stage_cache.treeZMaxResidual;
     report(layerCount, total);
     report(layerCount+1, total);
   } else {
@@ -252,7 +258,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   support_run(context);
 
   // ---- Preamble ----
-  }                                              // G003: end of the reuseSup skip block (only PASS1~1.6 is skipped — preamble, raft and emission are shared)
+  }                                              // G003: end of the reuseSupport skip block (only PASS1~1.6 is skipped — preamble, raft and emission are shared)
 
   // Issue 63: with the flattened settings present, the printer's custom start G-code is expanded here, before
   //  anything is emitted, so a template error fails the slice with no feeder or thread started yet.
@@ -272,11 +278,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   GcodeWriter writer;
   writer.gcode.reserve(1<<17);
-  EmitFlags emitFlags = gcode_writer_setup_preamble(writer, params, treeSupLayers, treeZMaxResid, startBlock);
+  EmitFlags emitFlags = gcode_writer_setup_preamble(writer, params, treeSupportLayers, treeZMaxResidual, startBlock);
   writer.current_tool = singleTool;                      // loaded by the start template, so a support T change returns to it
   bool realPE = emitFlags.realPE, ironOn = emitFlags.ironOn, scarfOn = emitFlags.scarfOn;
   int  seamMode = emitFlags.seamMode;
-  SeamContext seamCtx;
+  SeamContext seamContext;
   // Upstream's cooling filter (cooling_bridge.h) runs with the printer's settings: it then owns the fan and the
   //  layer-time slowdown, and every layer passes through it in print order (flush_layer, flushJob). Not with the PE
   //  tags on: the PE post-process reads the ;_EXTRUDE_SET_SPEED markers the filter removes (ponytail: both together
@@ -324,7 +330,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   int travelFeed = (int)std::llround(params.travel_speed*60);
   int firstLayerFeed  = (int)std::llround(params.first_layer_speed*60);
-  em::val layersArr = em::val::array();
+  em::val layersArray = em::val::array();
 
   // Stage 30: streaming setup — streaming (release writer.gcode after emitting each chunk) only when a layer sink is registered and the real PE
   //  (whole-string cross-layer smoothing) is not in use. realPE needs the entire g-code, so it falls back to batch (opt-in, outside the golden path).
@@ -353,7 +359,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 #else
   if (streamTime) gcodeproc_bridge::estimate_begin(processorLimits, nullptr);
 #endif
-  // Layer emission: batch accumulates into layersArr; streaming emits a chunk (everything in writer.gcode since the last flush) plus the toolpaths, then releases writer.gcode.
+  // Layer emission: batch accumulates into layersArray; streaming emits a chunk (everything in writer.gcode since the last flush) plus the toolpaths, then releases writer.gcode.
   //  The preamble goes into the first flush chunk and the footer into the last -> concatenating the chunks is byte-identical to the batch writer.gcode.
   // The cooling filter's input is one printed layer's text: what writer.gcode gained since the last flush (coolStart).
   size_t coolStart = 0;
@@ -377,7 +383,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       layerObject.set("z",z);
       layerObject.set("paths",to_f32(toolpath));
       layerObject.set("widths",to_f32(widths));
-      layersArr.call<void>("push", layerObject);
+      layersArray.call<void>("push", layerObject);
 #ifdef __EMSCRIPTEN_PTHREADS__
       if (overlapBatch) feed_batch_tail();               // feed the estimator worker incrementally at each layer boundary (aligned to '\n')
 #endif
@@ -393,22 +399,23 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 #else
     if (streamTime) gcodeproc_bridge::estimate_feed(chunk);
 #endif
-    em::val paths = [&]() {
-      if (economy) return em::val::array();
-      return to_f32(toolpath);
-    }();
-    em::val widthArray = [&]() {
-      if (economy) return em::val::array();
-      return to_f32(widths);
-    }();
+    em::val paths = em::val::undefined();
+    em::val widthArray = em::val::undefined();
+    if (economy) {
+      paths = em::val::array();
+      widthArray = em::val::array();
+    } else {
+      paths = to_f32(toolpath);
+      widthArray = to_f32(widths);
+    }
     sink(z, layerIndex, chunk, paths, widthArray);
   };
 
   // ---- Raft (inserted below the model, shifting the model in z) ----
   coolStart = writer.gcode.size();                       // the preamble is not a layer: the filter starts after it
   int raftLayers = std::max(0, params.raft_layers);
-  double zShift = raft_emit(writer, params, layers, lineWidth, raftLayers, travelFeed, firstLayerFeed, seamCtx, flush_layer);
-  // finalize the phase context for compute_pre
+  double zShift = raft_emit(writer, params, layers, lineWidth, raftLayers, travelFeed, firstLayerFeed, seamContext, flush_layer);
+  // finalize the phase context for precomputeLayer
   context.raftLayerCount = raftLayers;
   context.zShift = zShift;
   context.ironOn = ironOn;
@@ -423,51 +430,51 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
 
   // ---- PASS 2 precomputation: per-layer geometry separation and infill line generation (split out of the emission loop below) ----
   //  A verbatim move of the computation block from inside the old emission loop — formulas and call order unchanged (verified byte-identical against golden).
-  auto compute_pre = [&](int i) -> EmitPrecompute { return precompute_layer_emit(context, i); };
+  auto precomputeLayer = [&](int i) -> EmitPrecompute { return precompute_layer_emit(context, i); };
 
 #ifdef __EMSCRIPTEN_PTHREADS__
-  // (mt) The PASS2 computation runs in parallel — workers precompute up to PRE_WINDOW layers ahead of the consumer (emission).
+  // (mt) The PASS2 computation runs in parallel — workers precompute up to PRECOMPUTE_WINDOW layers ahead of the consumer (emission).
   //  Safety: while the consumer is on i, in-flight workers are always on k>i (they complete in the order they were claimed), and
   //  the L[j] a worker reads satisfies j >= k−bottom_shell+1 > the early-release point old=i−max(bsl,1)−1 -> no conflict with the release.
   //  The window bounds resident memory (W layers' worth of lines) — keeping the early-release OOM mitigation.
-  std::vector<EmitPrecompute> preBuf(layerCount);
-  std::vector<uint8_t> preDone(layerCount, 0);
-  std::mutex preMutex;
-  std::condition_variable cv_done, cv_room;
-  int preNext = 0, preConsumed = -1;
-  unsigned preHardwareThreads = std::thread::hardware_concurrency();
-  if (!preHardwareThreads) preHardwareThreads = 4;
+  std::vector<EmitPrecompute> precomputeBuffer(layerCount);
+  std::vector<uint8_t> precomputeDone(layerCount, 0);
+  std::mutex precomputeMutex;
+  std::condition_variable precomputeDoneCondition, precomputeRoomCondition;
+  int nextPrecompute = 0, lastConsumedPrecompute = -1;
+  unsigned precomputeHardwareThreads = std::thread::hardware_concurrency();
+  if (!precomputeHardwareThreads) precomputeHardwareThreads = 4;
   const bool parallelEmit = !params.spiral_mode && !scarfOn && writer.pe_slope <= 0.0 && !writer.emit_pe_tags
                        && !realPE;   // conditions under which G003 parallel emission is possible (otherwise serial fallback)
   //  Arachne walls emit through the writer's own GcodeWriter and the thread_local width state like every other role, so arachne is
   //  not among them: it was, and a 1.13M-facet hybrid plate with arachne walls emitted on one thread (emit 3.2 -> 1.7 s
   //  threaded; G-code, toolpaths and widths byte-identical to st on it and on a 3M-facet arachne model).
-  unsigned preThreadWanted;
-  if (parallelEmit) preThreadWanted = preHardwareThreads / 2;
-  else preThreadWanted = preHardwareThreads - 1;
-  unsigned preThreadCount = std::min<unsigned>(std::max(1u, preThreadWanted), (unsigned)std::max(1, layerCount));
-  const int PRE_WINDOW = (int)preThreadCount * 2 + 4;
-  auto preWork = [&]{
+  unsigned precomputeThreadsWanted;
+  if (parallelEmit) precomputeThreadsWanted = precomputeHardwareThreads / 2;
+  else precomputeThreadsWanted = precomputeHardwareThreads - 1;
+  unsigned precomputeThreadCount = std::min<unsigned>(std::max(1u, precomputeThreadsWanted), (unsigned)std::max(1, layerCount));
+  const int PRECOMPUTE_WINDOW = (int)precomputeThreadCount * 2 + 4;
+  auto precomputeWork = [&]{
     for (;;) {
       int k = -1;
       {
-        std::unique_lock<std::mutex> lock(preMutex);
-        cv_room.wait(lock, [&]{ return preNext >= layerCount || preNext <= preConsumed + PRE_WINDOW; });
-        if (preNext >= layerCount) break;
-        k = preNext++;
+        std::unique_lock<std::mutex> lock(precomputeMutex);
+        precomputeRoomCondition.wait(lock, [&]{ return nextPrecompute >= layerCount || nextPrecompute <= lastConsumedPrecompute + PRECOMPUTE_WINDOW; });
+        if (nextPrecompute >= layerCount) break;
+        k = nextPrecompute++;
       }
-      EmitPrecompute emitPre = compute_pre(k);
+      EmitPrecompute layerPrecompute = precomputeLayer(k);
       {
-        std::lock_guard<std::mutex> lock(preMutex);
-        preBuf[k] = std::move(emitPre);
-        preDone[k] = 1;
+        std::lock_guard<std::mutex> lock(precomputeMutex);
+        precomputeBuffer[k] = std::move(layerPrecompute);
+        precomputeDone[k] = 1;
       }
-      cv_done.notify_all();
+      precomputeDoneCondition.notify_all();
     }
   };
-  std::vector<std::thread> preThreads;
-  preThreads.reserve(preThreadCount);
-  for (unsigned threadIndex=0; threadIndex<preThreadCount; ++threadIndex) preThreads.emplace_back(preWork);
+  std::vector<std::thread> precomputeThreads;
+  precomputeThreads.reserve(precomputeThreadCount);
+  for (unsigned threadIndex=0; threadIndex<precomputeThreadCount; ++threadIndex) precomputeThreads.emplace_back(precomputeWork);
 #endif
 
   // ---- PASS 2: solid/sparse infill separation + support + emission ----
@@ -480,7 +487,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     struct Cursor {
       double positionX, positionY;
       int currentFeed, lastFan;
-      unsigned lastAccel, lastTravelAccel;
+      unsigned lastAcceleration, lastTravelAcceleration;
       double lastJerk;
       SeamContext seam;
     };
@@ -511,7 +518,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     unsigned writerHardwareThreads = std::thread::hardware_concurrency();
     if (!writerHardwareThreads) writerHardwareThreads = 4;
     unsigned writerCount = std::max(1u, writerHardwareThreads / 2);
-    auto writerFn = [&]{
+    auto writerWork = [&]{
       for (;;) {
         int k = -1;
         {
@@ -522,13 +529,13 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         }
         EmitJob& job = *jobs[k];
         GcodeWriter layerWriter = base;
-        g_seg_tool = singleTool;   // thread_local: a pool thread keeps the tool the previous slice left on it
+        g_segment_tool = singleTool;   // thread_local: a pool thread keeps the tool the previous slice left on it
         layerWriter.position_x = job.entry.positionX;
         layerWriter.position_y = job.entry.positionY;
         layerWriter.current_feed = job.entry.currentFeed;
         layerWriter.lastFan = job.entry.lastFan;
-        layerWriter.last_accel = job.entry.lastAccel;
-        layerWriter.last_travel_accel = job.entry.lastTravelAccel;
+        layerWriter.last_acceleration = job.entry.lastAcceleration;
+        layerWriter.last_travel_acceleration = job.entry.lastTravelAcceleration;
         layerWriter.last_jerk = job.entry.lastJerk;
         layerWriter.island = std::move(job.island);
         SeamContext seam = job.entry.seam;
@@ -545,7 +552,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     std::vector<std::thread> writerThreads;
     writerThreads.reserve(writerCount);
     for (unsigned threadIndex = 0; threadIndex < writerCount; ++threadIndex) {
-      try { writerThreads.emplace_back(writerFn); } catch (...) { break; }
+      try { writerThreads.emplace_back(writerWork); } catch (...) { break; }
     }
     const int flushWindow = (int)std::max<size_t>(1, writerThreads.size()) * 2 + 2;
     int nextFlush = 0;
@@ -557,8 +564,8 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         layerWriter.position_y=job.entry.positionY;
         layerWriter.current_feed=job.entry.currentFeed;
         layerWriter.lastFan=job.entry.lastFan;
-        layerWriter.last_accel=job.entry.lastAccel;
-        layerWriter.last_travel_accel=job.entry.lastTravelAccel;
+        layerWriter.last_acceleration=job.entry.lastAcceleration;
+        layerWriter.last_travel_acceleration=job.entry.lastTravelAcceleration;
         layerWriter.last_jerk=job.entry.lastJerk;
         layerWriter.island = std::move(job.island);
         SeamContext seam = job.entry.seam;
@@ -586,7 +593,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         layerObject.set("z", jobZ);
         layerObject.set("paths", to_f32(job.toolpath));
         layerObject.set("widths", to_f32(job.widths));
-        layersArr.call<void>("push", layerObject);
+        layersArray.call<void>("push", layerObject);
         writer.gcode += job.gcode;
         if (overlapBatch) feed_batch_tail();
       } else {
@@ -597,14 +604,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         chunk.swap(writer.gcode);
         chunk += job.gcode;
         if (streamTime) feeder.feed(chunk);
-        em::val paths = [&]() {
-          if (economy) return em::val::array();
-          return to_f32(job.toolpath);
-        }();
-        em::val widthArray = [&]() {
-          if (economy) return em::val::array();
-          return to_f32(job.widths);
-        }();
+        em::val paths = em::val::undefined();
+        em::val widthArray = em::val::undefined();
+        if (economy) {
+          paths = em::val::array();
+          widthArray = em::val::array();
+        } else {
+          paths = to_f32(job.toolpath);
+          widthArray = to_f32(job.widths);
+        }
         sink(jobZ, k, chunk, paths, widthArray);
       }
       job.gcode = std::string();
@@ -625,21 +633,21 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
         dispatchCanceled = true;
         break;
       }
-      EmitPrecompute pre;
+      EmitPrecompute precompute;
       {
-        std::unique_lock<std::mutex> lock(preMutex);
-        cv_done.wait(lock, [&]{ return preDone[i] != 0; });
-        pre = std::move(preBuf[i]);
-        preConsumed = i;
+        std::unique_lock<std::mutex> lock(precomputeMutex);
+        precomputeDoneCondition.wait(lock, [&]{ return precomputeDone[i] != 0; });
+        precompute = std::move(precomputeBuffer[i]);
+        lastConsumedPrecompute = i;
       }
-      cv_room.notify_all();
+      precomputeRoomCondition.notify_all();
       LayerData& layerData = layers[i];
       EmitJob& job = *jobs[i];
-      job.entry = { writer.position_x, writer.position_y, writer.current_feed, writer.lastFan, writer.last_accel, writer.last_travel_accel, writer.last_jerk, seamCtx };
+      job.entry = { writer.position_x, writer.position_y, writer.current_feed, writer.lastFan, writer.last_acceleration, writer.last_travel_acceleration, writer.last_jerk, seamContext };
       if (g_keep_island) job.island = layerData.island;   // G003
       else job.island = std::move(layerData.island);
-      emit_layer_any(writer, dryToolpath, dryWidths, i, layerData, pre, params, layerData.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamCtx);
-      job.precomputed = std::move(pre);
+      emit_layer_any(writer, dryToolpath, dryWidths, i, layerData, precompute, params, layerData.z + zShift, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamContext);
+      job.precomputed = std::move(precompute);
       {
         std::lock_guard<std::mutex> lock(emitMutex);
         dispatched = i + 1;
@@ -671,17 +679,17 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       int releaseLayer = i - std::max(params.bottom_shell_layers, 1) - 1;
       if (releaseLayer >= 0) layers[releaseLayer] = LayerData{};
     }
-    EmitPrecompute pre;
+    EmitPrecompute precompute;
 #ifdef __EMSCRIPTEN_PTHREADS__
     {
-      std::unique_lock<std::mutex> lock(preMutex);
-      cv_done.wait(lock, [&]{ return preDone[i] != 0; });
-      pre = std::move(preBuf[i]);
-      preConsumed = i;
+      std::unique_lock<std::mutex> lock(precomputeMutex);
+      precomputeDoneCondition.wait(lock, [&]{ return precomputeDone[i] != 0; });
+      precompute = std::move(precomputeBuffer[i]);
+      lastConsumedPrecompute = i;
     }
-    cv_room.notify_all();
+    precomputeRoomCondition.notify_all();
 #else
-    pre = compute_pre(i);
+    precompute = precomputeLayer(i);
 #endif
     LayerData& layerData = layers[i];
     double layerZ = layerData.z + zShift;
@@ -694,9 +702,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       writer.pe_reset();
       if (g_keep_island) writer.island = layerData.island;   // G003
       else writer.island = std::move(layerData.island);
-      seamCtx.randomState = 2654435761u * (uint32_t)(i+1);
-      g_seg_w = &widths;
-      g_seg_w_cur = (float)lineWidth;
+      seamContext.randomState = 2654435761u * (uint32_t)(i+1);
+      g_segment_widths = &widths;
+      g_current_segment_width = (float)lineWidth;
       char layerComment[72];
       std::snprintf(layerComment,sizeof layerComment,"; LAYER %d Z%.3f",i,layerZ);
       writer.layer_begin(layerComment);
@@ -713,20 +721,20 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
       if (!layerData.walls.empty()) outerWall = layerData.walls[0];
       emit_spiral(writer, toolpath, outerWall, layerZ, layerData.thickness, spiralFeed, travelFeed);
     } else {
-      emit_layer_any(writer, toolpath, widths, i, layerData, pre, params, layerZ, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamCtx);
+      emit_layer_any(writer, toolpath, widths, i, layerData, precompute, params, layerZ, lineWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamContext);
     }
     flush_layer(layerZ, i, toolpath, widths);
     report(layerCount+2+i+1, total);
   }
 #ifdef __EMSCRIPTEN_PTHREADS__
   {   // wake the remaining workers -> they exit
-    std::lock_guard<std::mutex> lock(preMutex);
-    preNext = std::max(preNext, layerCount);
+    std::lock_guard<std::mutex> lock(precomputeMutex);
+    nextPrecompute = std::max(nextPrecompute, layerCount);
   }
-  cv_room.notify_all();
-  for (auto& thread : preThreads) thread.join();
+  precomputeRoomCondition.notify_all();
+  for (auto& thread : precomputeThreads) thread.join();
 #endif
-  g_seg_w = nullptr;   // stage 7: stop width tracking (the local widths goes out of scope)
+  g_segment_widths = nullptr;   // stage 7: stop width tracking (the local widths goes out of scope)
   if (isCanceled()) {          // G002: all threads joined — just clean up the feeder and return canceled
 #ifdef __EMSCRIPTEN_PTHREADS__
     if (streamTime || overlapBatch) (void)feeder.finish();
@@ -859,23 +867,23 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   result.set("stats", stats);
   // G003: update the stage cache — keep it when requested (for reuse by the next slice), otherwise invalidate the stale cache with the new geometry.
   if (keepStages && !isCanceled()) {
-    if (!reuseSup) {
-      if (!reuseGeom) g_scache.triangles = std::move(trisOwn);
-      g_scache.height = height;
-      g_scache.centerX = centerX;
-      g_scache.centerY = centerY;
-      g_scache.over_bed = over_bed;
-      g_scache.layerCount = layerCount;
-      g_scache.layerKey = layerKey;
-      g_scache.layers = std::move(layersOwn);
-      g_scache.treeSupLayers = treeSupLayers;
-      g_scache.treeZMaxResid = treeZMaxResid;
+    if (!reuseSupport) {
+      if (!reuseGeometry) g_stage_cache.triangles = std::move(ownedTriangles);
+      g_stage_cache.height = height;
+      g_stage_cache.centerX = centerX;
+      g_stage_cache.centerY = centerY;
+      g_stage_cache.over_bed = over_bed;
+      g_stage_cache.layerCount = layerCount;
+      g_stage_cache.layerKey = layerKey;
+      g_stage_cache.layers = std::move(layersOwn);
+      g_stage_cache.treeSupportLayers = treeSupportLayers;
+      g_stage_cache.treeZMaxResidual = treeZMaxResidual;
     }
-    g_scache.valid = true;
-  } else if (!reuseSup && !reuseGeom) g_scache.valid = false;
+    g_stage_cache.valid = true;
+  } else if (!reuseSupport && !reuseGeometry) g_stage_cache.valid = false;
   if (!streaming) {   // streaming does not emit resident copies
     result.set("gcode", writer.gcode);
-    result.set("layers", layersArr);
+    result.set("layers", layersArray);
   }
   return result;
 }

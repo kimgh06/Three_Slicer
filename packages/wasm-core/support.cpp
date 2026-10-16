@@ -17,8 +17,8 @@ void support_run(SliceContext& context) {
   const double modelCenterX = context.centerX;
   const double modelCenterY = context.centerY;
   const double support_spacing = context.support_spacing;
-  double& treeZMaxResid = *context.treeZMaxResid;
-  int&    treeSupLayers = *context.treeSupLayers;
+  double& treeZMaxResidual = *context.treeZMaxResidual;
+  int&    treeSupportLayers = *context.treeSupportLayers;
   // ---- PASS 1.6: support (overhang detection -> vertical projection -> interface/base) ----
   // (G003: used in the preamble outside the skip block -> hoisted above)
   if (params.enable_support) {
@@ -88,7 +88,7 @@ void support_run(SliceContext& context) {
     treeParams.branch_distance_mm=params.tree_support_branch_distance;
     treeParams.branch_diameter_angle_deg=params.tree_support_branch_diameter_angle;
     treeParams.tip_diameter_mm=params.tree_support_tip_diameter;
-    treeParams.top_rate_pct=params.tree_support_top_rate;
+    treeParams.top_rate_percent=params.tree_support_top_rate;
     treeParams.wall_count=params.tree_support_wall_count;
     treeParams.interface_pattern=params.support_interface_pattern;              // WP1: interface/base patterns and spacing
     treeParams.base_pattern=params.support_base_pattern;
@@ -103,14 +103,14 @@ void support_run(SliceContext& context) {
     treeParams.resolution_mm=params.gcode_resolution;   // stage 33: path simplification tolerance for the tree path (the upstream print_config "resolution")
     std::vector<treesupport_bridge::LayerOut> treeLayers;
     if (portNormal) {
-      // WP2: the upstream normal (grid/snug) support — supplies the PASS 1.5 surfaces (topSurf/botSurf) as stTop/stBottom
+      // WP2: the upstream normal (grid/snug) support — supplies the PASS 1.5 surfaces (topSurface/bottomSurface) as stTop/stBottom
       //  (so upstream bottom-contact detection and sharp-tail handling work as-is). Coordinates are shifted by −treeShiftX/−treeShiftY exactly like the slices.
       treeParams.normal_style = params.support_style;                           // grid|snug → smsGrid|smsSnug
       treeParams.support_expansion_mm = params.support_expansion;
       treeParams.bridge_no_support    = params.bridge_no_support;
       treeParams.remove_small_overhang= params.support_remove_small_overhang;
-      treeParams.threshold_overlap_pct= params.support_threshold_overlap * 100.0; // kernel fraction (0.5) -> upstream percentage (50)
-      std::vector<treesupport_bridge::LayerSurf> layerSurfaces(layerCount);
+      treeParams.threshold_overlap_percent= params.support_threshold_overlap * 100.0; // kernel fraction (0.5) -> upstream percentage (50)
+      std::vector<treesupport_bridge::LayerSurfaces> layerSurfaces(layerCount);
       auto toRings=[&](const Paths& rawPaths, std::vector<treesupport_bridge::Ring>& out){
         Paths paths = sanitized(rawPaths);               // surfaces get the same guard (reduction on large models only)
         for (const Path& contourPath : paths) {
@@ -121,8 +121,8 @@ void support_run(SliceContext& context) {
         }
       };
       for (int j=0;j<layerCount;++j) {
-        toRings(layers[j].topSurf, layerSurfaces[j].top);
-        toRings(layers[j].botSurf, layerSurfaces[j].bottom);
+        toRings(layers[j].topSurface, layerSurfaces[j].top);
+        toRings(layers[j].bottomSurface, layerSurfaces[j].bottom);
       }
       treeLayers = treesupport_bridge::generate_normal(slices, layerZs, layerSurfaces, treeParams);
     } else {
@@ -131,7 +131,7 @@ void support_run(SliceContext& context) {
     for (const treesupport_bridge::LayerOut& treeLayer : treeLayers) {
       // Stage 19 z alignment: support layers are synchronized with the object layers (layer_z uses the same slicing_params), so
       //  print_z lands exactly on the object z grid. Each is bound to the object layer with the smallest residual and the residual is recorded
-      //  -> treeZMaxResid≈0 proves that "nearest" is in fact "exact" (zero error). The emitted Z is that object layer's print_z.
+      //  -> treeZMaxResidual≈0 proves that "nearest" is in fact "exact" (zero error). The emitted Z is that object layer's print_z.
       int bestLayer=-1;
       double bestDistance=1e18;
       for (int j=0;j<layerCount;++j){
@@ -142,14 +142,14 @@ void support_run(SliceContext& context) {
         }
       }
       if (bestLayer<0) continue;
-      treeZMaxResid = std::max(treeZMaxResid, bestDistance);
-      ++treeSupLayers;
+      treeZMaxResidual = std::max(treeZMaxResidual, bestDistance);
+      ++treeSupportLayers;
       for (const treesupport_bridge::Line& line : treeLayer.lines) {
         Path polyline;
         polyline.reserve(line.points.size());
-        for (const auto& xy : line.points)
-          polyline.push_back(IntPoint((cInt)std::llround((xy.first+treeShiftX)*SCALE),(cInt)std::llround((xy.second+treeShiftY)*SCALE)));  // stage 28: shift back to the model position
-        if (polyline.size()>=2) layers[bestLayer].supTree.push_back({std::move(polyline), (float)line.width,
+        for (const auto& point : line.points)
+          polyline.push_back(IntPoint((cInt)std::llround((point.first+treeShiftX)*SCALE),(cInt)std::llround((point.second+treeShiftY)*SCALE)));  // stage 28: shift back to the model position
+        if (polyline.size()>=2) layers[bestLayer].supportTree.push_back({std::move(polyline), (float)line.width,
                               line.role, (float)line.height, (float)line.mm3_per_mm});  // WP3: preserve role/height/mm3
       }
     }
@@ -179,7 +179,7 @@ void support_run(SliceContext& context) {
       for (int j=0;j<layerCount && j<(int)projected.size();++j) for (auto& ring:projected[j]) {
         Path path;
         path.reserve(ring.size());
-        for (auto& xy:ring) path.push_back(IntPoint((cInt)std::llround(xy.first*SCALE),(cInt)std::llround(xy.second*SCALE)));
+        for (auto& point:ring) path.push_back(IntPoint((cInt)std::llround(point.first*SCALE),(cInt)std::llround(point.second*SCALE)));
         if (path.size()>=3) out[j].push_back(std::move(path));
       }
       return out;
@@ -209,10 +209,10 @@ void support_run(SliceContext& context) {
       Paths layerOverhang = clip_paths(layers[i].contour, offset_paths(lower, maxStep), ctDifference);
       if (layerOverhang.empty()) continue;
       // Stage 33: bridge_no_support — no support is created under regions that will be bridged (the upstream option of the same name).
-      //  Bridge candidates = this layer's exposed bottom surfaces (botSurf, from PASS 1.5). The kernel already handled the opposite direction
+      //  Bridge candidates = this layer's exposed bottom surfaces (bottomSurface, from PASS 1.5). The kernel already handled the opposite direction
       //  (a support contact surface is not a bridge); this direction was missing.
-      if (params.bridge_no_support && !layers[i].botSurf.empty()) {
-        layerOverhang = clip_paths(layerOverhang, layers[i].botSurf, ctDifference);
+      if (params.bridge_no_support && !layers[i].bottomSurface.empty()) {
+        layerOverhang = clip_paths(layerOverhang, layers[i].bottomSurface, ctDifference);
         if (layerOverhang.empty()) continue;
       }
       // Stage 33: support_expansion — widens the overhang region to enlarge the contact area (upstream xy_expansion).
@@ -262,7 +262,7 @@ void support_run(SliceContext& context) {
     //   overhangs_projection = diff(overhangs, trimming);   // <- the projection itself is carved before being passed down
     //   ...  out.second (the carved projection) becomes the next (lower) layer's overhangs_projection
     // So a projection that touches the model dies there permanently (= that point is a bottom contact, where support lands on the model).
-    // The old implementation only accumulated into accum without subtracting the model and clipped "per layer afterwards", so
+    // The old implementation only accumulated into accumulatedSupport without subtracting the model and clipped "per layer afterwards", so
     //  a region erased behind the model on layer j came back on j-1 where the model disappears, producing **support floating in mid-air**.
     // Note: upstream's "stop propagating thinned columns" (an opening by column_propagation_filtering_radius) is in fact
     //   commented out and inactive (SupportMaterial.cpp:2701). We do not do it either —
@@ -281,29 +281,32 @@ void support_run(SliceContext& context) {
       }
     }
     std::vector<Paths> column(layerCount);
-    Paths accum;
+    Paths accumulatedSupport;
     for (int j=layerCount-1;j>=0;--j) {
-      if (treeLite) accum = tree_taper(accum, params.tree_lite_shrink, params.tree_lite_min_radius);  // per-layer taper (keeping the minimum pillar)
+      if (treeLite) accumulatedSupport = tree_taper(accumulatedSupport, params.tree_lite_shrink, params.tree_lite_min_radius);  // per-layer taper (keeping the minimum pillar)
       int sourceLayer=j+topGapLayers;
-      if (sourceLayer<layerCount) accum = union_paths(accum, overhang[sourceLayer]);
+      if (sourceLayer<layerCount) accumulatedSupport = union_paths(accumulatedSupport, overhang[sourceLayer]);
       // * Upstream diff(overhangs, trimming): subtract this layer's model from the projection, and the result continues downward.
       //   This one line is what makes "support that lands on the model ends there" (bottom contact).
-      const Paths& trimming = [&]() -> const Paths& {
-        if (params.support_on_build_plate_only) return covered[j];
-        return layers[j].contour;
-      }();
-      if (!trimming.empty()) accum = clip_paths(accum, offset_paths(trimming, params.support_xy_distance), ctDifference);
-      column[j]=accum;
+      const Paths* trimmingSource = nullptr;
+      if (params.support_on_build_plate_only) {
+        trimmingSource = &covered[j];
+      } else {
+        trimmingSource = &layers[j].contour;
+      }
+      const Paths& trimming = *trimmingSource;
+      if (!trimming.empty()) accumulatedSupport = clip_paths(accumulatedSupport, offset_paths(trimming, params.support_xy_distance), ctDifference);
+      column[j]=accumulatedSupport;
     }
     // Stage 32 Fix B: bottom z gap (support_bottom_z_distance) — the gap between a model top surface and the support bottom resting on it.
-    //  botGap layers = round(dist/lh). With the default 0.2/0.2=1 the extra clip loop below does not run -> identical to today (golden byte-identical).
-    int botGap = std::max(1, (int)std::llround(params.support_bottom_z_distance / params.layer_height));
+    //  bottomGapLayers = round(support_bottom_z_distance / layer_height). With the default 0.2/0.2=1 the extra clip loop below does not run -> identical to today (golden byte-identical).
+    int bottomGapLayers = std::max(1, (int)std::llround(params.support_bottom_z_distance / params.layer_height));
     // Per-layer interface (solid) / base (sparse) split + model avoidance
     for (int j=0;j<layerCount;++j) {
       if (column[j].empty()) continue;
       Paths modelClear = offset_paths(layers[j].contour, params.support_xy_distance);
-      // Bottom z gap: also remove support above the model top surface on the (botGap-1) layers directly below -> the support starts botGap above the model top surface.
-      for (int k=1;k<botGap;++k){
+      // Bottom z gap: also remove support above the model top surface on the (bottomGapLayers-1) layers directly below -> the support starts bottomGapLayers above the model top surface.
+      for (int k=1;k<bottomGapLayers;++k){
         int belowLayer=j-k;
         if (belowLayer>=0 && !layers[belowLayer].contour.empty()) modelClear = union_paths(modelClear, offset_paths(layers[belowLayer].contour, params.support_xy_distance));
       }
@@ -326,10 +329,10 @@ void support_run(SliceContext& context) {
       // Stage 33: support_interface_bottom_layers — the interface on the side where support rests on a model top surface
       //  (bottom contact). Upstream generate_interface_layers builds top and bottom interfaces separately
       //  (SupportParameters.hpp:37 num_bottom_interface_layers). We only had top.
-      //  Test: if there is model near the point directly below this layer's support (botGap down), that part is a bottom contact surface.
+      //  Test: if there is model near the point directly below this layer's support (bottomGapLayers down), that part is a bottom contact surface.
       if (params.support_interface_bottom_layers > 0) {
         Paths under;
-        for (int k=botGap;k<botGap+params.support_interface_bottom_layers;++k) {
+        for (int k=bottomGapLayers;k<bottomGapLayers+params.support_interface_bottom_layers;++k) {
           int belowLayer=j-k;
           if (belowLayer>=0 && !layers[belowLayer].contour.empty()) under = union_paths(under, offset_paths(layers[belowLayer].contour, params.support_xy_distance));
         }
@@ -338,8 +341,8 @@ void support_run(SliceContext& context) {
           if (!bottomInterface.empty()) interfacePaths = union_paths(interfacePaths, bottomInterface);
         }
       }
-      layers[j].supIface = interfacePaths;
-      layers[j].supBase  = clip_paths(columnPaths, interfacePaths, ctDifference);
+      layers[j].supportInterface = interfacePaths;
+      layers[j].supportBase  = clip_paths(columnPaths, interfacePaths, ctDifference);
     }
    }
   }

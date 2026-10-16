@@ -12,7 +12,7 @@ void surfaces_run(SliceContext& context) {
   std::vector<LayerData>& layers = *context.layers;
   const int layerCount = context.layerCount;
   // ---- PASS 1.5: surface detection (this layer's fill − the neighboring contour) ----
-  //  Per-layer independent (reads: immutable neighboring contours, writes: its own topSurf/botSurf) -> the same layer parallelism as PASS1.
+  //  Per-layer independent (reads: immutable neighboring contours, writes: its own topSurface/bottomSurface) -> the same layer parallelism as PASS1.
   {
     auto detectLayerSurfaces = [&](int i){
       if (layers[i].fill.empty()) return;
@@ -20,8 +20,8 @@ void surfaces_run(SliceContext& context) {
       if (i+1<layerCount) above = layers[i+1].contour;
       Paths below;
       if (i-1>=0) below = layers[i-1].contour;
-      layers[i].topSurf = clip_paths(layers[i].fill, above, ctDifference);  // nothing above -> a top surface
-      layers[i].botSurf = clip_paths(layers[i].fill, below, ctDifference);  // nothing below -> a bottom surface
+      layers[i].topSurface = clip_paths(layers[i].fill, above, ctDifference);     // nothing above -> a top surface
+      layers[i].bottomSurface = clip_paths(layers[i].fill, below, ctDifference);  // nothing below -> a bottom surface
     };
 #ifdef __EMSCRIPTEN_PTHREADS__
     {
