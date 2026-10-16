@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.5 — 2026-10-16
+
+### Fixed
+
+- The real wipe tower (`wipe_tower_real: true`) read past the end of its filament table on a tool change to or from
+  T2 or above (#69). The kernel registered filaments for tools 0 and 1 only, so the third tool's wipe moves took
+  their feedrate from whatever memory followed: `F0` or a value that changed from one slice to the next, and the
+  toolchange comment named no material. Every tool the change involves is now registered. On a three-extruder
+  slice the wipe moves went from 114 `F0` lines to none, and three runs give the same G-code. Each block now has the
+  shape the two-extruder tower always had. The default tower (the ring) and two-extruder slices are unchanged.
+  `wipe_tower_real` still defaults to `false`.
+
+### Changed
+
+- The kernel's own C++ and its tests were rewritten for readability: abbreviated names written out, one statement
+  per line, no ternaries, and one shared module for the test meshes. The kernel's output is unchanged, checked with
+  the golden G-code dump and a per-call hash of every kernel result in the test suite. Parameter keys, `stats`
+  fields and the worker protocol are unchanged.
+
 ## 0.3.4 — 2026-10-11
 
 ### Added
