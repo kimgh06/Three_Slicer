@@ -30,8 +30,8 @@ static std::string config_option_default(const std::string& key) { return config
 // coordinates match the slices. The viewer calls selector_prepare(stl) once on load -> selector_paint per drag -> slice().
 static bool prepare_selector(em::val stl, bool keep_paint) {
   std::vector<uint8_t> bytes = em::convertJSArrayToNumberVector<uint8_t>(stl);
-  std::vector<Triangle> tris = parse_stl(bytes);
-  if (tris.empty()) {
+  std::vector<Triangle> triangles = parse_stl(bytes);
+  if (triangles.empty()) {
     selector_bridge::construct({}, {});
     return false;
   }
@@ -41,7 +41,7 @@ static bool prepare_selector(em::val stl, bool keep_paint) {
   double maxx=-1e18;
   double maxy=-1e18;
   double maxz=-1e18;
-  for (auto& triangle:tris) for (int k=0;k<3;++k){
+  for (auto& triangle:triangles) for (int k=0;k<3;++k){
     minx=std::min(minx,(double)triangle.vertices[k].x);
     maxx=std::max(maxx,(double)triangle.vertices[k].x);
     miny=std::min(miny,(double)triangle.vertices[k].y);
@@ -66,7 +66,7 @@ static bool prepare_selector(em::val stl, bool keep_paint) {
     vertexIdByKey[key]=vertexId;
     return vertexId;
   };
-  for (auto& triangle:tris) for (int k=0;k<3;++k)
+  for (auto& triangle:triangles) for (int k=0;k<3;++k)
     indices.push_back(addVertex(triangle.vertices[k].x, triangle.vertices[k].y, triangle.vertices[k].z-minz));   // stage 28: XY as-is (viewer coordinates), Z seated
   if (keep_paint) return selector_bridge::reconstruct_keeping_paint(vertices, indices);
   selector_bridge::construct(vertices, indices);
@@ -138,8 +138,8 @@ static void selector_bucket_fill_erase(int facet, float hitX,float hitY,float hi
 // purpose: embind cannot pass a std::vector<std::string> without registering a vector type, and the JS side already
 // has to build the parallel facet-index array — a single join() there costs one allocation and keeps the binding
 // layer free of an extra registered type nothing else would use.
-static int selector_import_paint(em::val facets_val, std::string hex_joined) {
-  std::vector<int> facets = em::convertJSArrayToNumberVector<int>(facets_val);
+static int selector_import_paint(em::val facets_array, std::string hex_joined) {
+  std::vector<int> facets = em::convertJSArrayToNumberVector<int>(facets_array);
   if (facets.empty()) return 0;
   std::vector<std::string> hex;
   hex.reserve(facets.size());
@@ -211,7 +211,7 @@ static void contour_phase_mode(int mode) {
     contour_phase::contours.clear();
     contour_phase::result.clear();
     contour_phase::input = contour_phase::GpuInput();
-    std::vector<float>().swap(contour_phase::mesh_tris);
+    std::vector<float>().swap(contour_phase::mesh_triangles);
     std::vector<double>().swap(contour_phase::mesh_planes);
     contour_phase::open_layers.clear();
   }
@@ -241,7 +241,7 @@ static em::val contour_result_buffer(int pieceCount) {
 // MESH: views of the seated triangles and the layer planes (valid until the next contour_phase call)
 static em::val contour_mesh() {
   em::val out = em::val::object();
-  out.set("tris", em::val(em::typed_memory_view(contour_phase::mesh_tris.size(), contour_phase::mesh_tris.data())));
+  out.set("tris", em::val(em::typed_memory_view(contour_phase::mesh_triangles.size(), contour_phase::mesh_triangles.data())));
   out.set("planes", em::val(em::typed_memory_view(contour_phase::mesh_planes.size(), contour_phase::mesh_planes.data())));
   return out;
 }

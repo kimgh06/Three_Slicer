@@ -60,7 +60,7 @@ custom_gcode_bridge::Facts single_material_facts(const Params& params, const std
     return facts;
   const double lineWidth = params.line_width;
   const LayerData& first = layers[0];
-  Paths objectAndSupport = union_paths(union_paths(first.contour, first.supIface), first.supBase);
+  Paths objectAndSupport = union_paths(union_paths(first.contour, first.supportInterface), first.supportBase);
   const int raftLayers = std::max(0, params.raft_layers);
   const bool raft = raftLayers > 0 && !first.contour.empty();   // raft_emit's own condition
   Paths firstLayer = objectAndSupport;
@@ -88,8 +88,8 @@ custom_gcode_bridge::Facts single_material_facts(const Params& params, const std
   for (const LayerData& layer : layers)
     for (const Path& path : layer.contour)
       everyLayer.push_back(path);
-  append_bounding_box(facts.object_bboxes, everyLayer, offsetX, offsetY);
-  append_bounding_box(facts.object_first_layer_bboxes, first.contour, offsetX, offsetY);
+  append_bounding_box(facts.object_bounding_boxes, everyLayer, offsetX, offsetY);
+  append_bounding_box(facts.object_first_layer_bounding_boxes, first.contour, offsetX, offsetY);
   facts.total_layer_count = layerCount;
   if (raft)
     facts.total_layer_count += raftLayers;
@@ -187,9 +187,9 @@ void fill_slot(std::string& text, const char* slot, const std::string& replaceme
 }  // namespace
 
 bool custom_gcode_layer_slots() {
-  const bool bbl = custom_gcode_bridge::is_bbl_printer();
+  const bool isBambuLab = custom_gcode_bridge::is_bbl_printer();
   return custom_gcode_bridge::has_template("before_layer_change_gcode") || custom_gcode_bridge::has_template("layer_change_gcode") ||
-         (!bbl && custom_gcode_bridge::has_template("time_lapse_gcode")) || (!bbl && custom_gcode_bridge::has_template("filament_start_gcode"));
+         (!isBambuLab && custom_gcode_bridge::has_template("time_lapse_gcode")) || (!isBambuLab && custom_gcode_bridge::has_template("filament_start_gcode"));
 }
 
 void custom_gcode_layers_begin() {
@@ -202,7 +202,7 @@ std::string custom_gcode_layer(std::string text, int layer, double layer_z, int 
   using custom_gcode_bridge::Variable;
   g_max_layer_z = std::max(g_max_layer_z, layer_z);
   custom_gcode_bridge::set_extruded_volumes(extruded_mm3);
-  const bool bbl = custom_gcode_bridge::is_bbl_printer();
+  const bool isBambuLab = custom_gcode_bridge::is_bbl_printer();
   auto first = [](const std::vector<std::string>& values) {
     if (values.empty()) return std::string();
     return values.front();
@@ -225,7 +225,7 @@ std::string custom_gcode_layer(std::string text, int layer, double layer_z, int 
   // After it: the timelapse (Bambu Lab printers insert theirs elsewhere), then layer_change_gcode with the printed
   //  mass and the Y acceleration it implies (mass_load_limited_machine_acceleration).
   std::string after;
-  if (!bbl)
+  if (!isBambuLab)
     expand("time_lapse_gcode", first(custom_gcode_bridge::strings("time_lapse_gcode")),
            { { "layer_num", (double)layer, true }, { "layer_z", layer_z, false }, { "max_layer_z", g_max_layer_z, false } }, after);
   {
@@ -244,7 +244,7 @@ std::string custom_gcode_layer(std::string text, int layer, double layer_z, int 
   }
   // The first layer's filament: upstream's set_extruder writes filament_start_gcode as the first tool is selected
   //  (GCode.cpp:8736); a Bambu Lab printer's start block carries it instead (custom_gcode_start).
-  if (layer == 0 && !bbl) {
+  if (layer == 0 && !isBambuLab) {
     std::vector<std::string> starts = custom_gcode_bridge::strings("filament_start_gcode");
     std::string templateText;
     if (tool >= 0 && tool < (int)starts.size()) templateText = starts[tool];

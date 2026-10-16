@@ -25,11 +25,11 @@ struct Facts {
   double max_print_z = 0.0;                 // top of the print, mm
   std::vector<double> first_layer_points;   // x,y pairs: every first-layer extrusion outline (objects, support,
                                             //  skirt, brim) — the convex hull of these is first_layer_print_convex_hull
-  std::vector<double> object_bboxes;        // min x, min y, max x, max y per object (in_head_wrap_detect_zone)
-  std::vector<double> object_first_layer_bboxes;  // the same four per object, first layer only (no wipe tower)
+  std::vector<double> object_bounding_boxes;        // min x, min y, max x, max y per object (in_head_wrap_detect_zone)
+  std::vector<double> object_first_layer_bounding_boxes;  // the same four per object, first layer only (no wipe tower)
   double first_layer_area_mm2 = 0.0;        // objects + support + brim on the first layer (hold_chamber_temp_for_flat_print)
   bool has_wipe_tower = false;
-  double wipe_tower_bbox[4] = {0, 0, 0, 0}; // min x, min y, max x, max y
+  double wipe_tower_bounding_box[4] = {0, 0, 0, 0}; // min x, min y, max x, max y
   int total_toolchanges = 0;
 };
 
@@ -46,13 +46,13 @@ struct Expanded {
 // `current_extruder` is the filament the template runs for. layer_num/layer_z/max_layer_z are set for the end
 // G-code (GCode.cpp:3905-3910) when layer_num >= 0, and filament_extruder_id with current_filament_id,
 // current_extruder_id and current_nozzle_id for a filament_end_gcode (GCode.cpp:3913-3927) when it is >= 0.
-Expanded expand(const std::string& key, const std::string& templ, int current_extruder,
+Expanded expand(const std::string& key, const std::string& gcode_template, int current_extruder,
                 int layer_num = -1, double layer_z = 0.0, double max_layer_z = 0.0, int filament_extruder_id = -1);
 
 // A template with named variables on top of the session's: GCode::placeholder_parser_process's config_override,
 //  for the templates whose variables are not the end G-code's (the layer change, the filament start).
 struct Variable { std::string name; double value; bool integer; };
-Expanded expand_with(const std::string& key, const std::string& templ, int current_extruder, const std::vector<Variable>& variables);
+Expanded expand_with(const std::string& key, const std::string& gcode_template, int current_extruder, const std::vector<Variable>& variables);
 // PlaceholderParserIntegration::update_from_gcodewriter's totals before a template runs: the extruded volume (mm3)
 //  per filament so far, from which extruded_weight(_total) follow by filament_density.
 void set_extruded_volumes(const std::vector<double>& mm3_by_filament);

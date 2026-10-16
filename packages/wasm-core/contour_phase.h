@@ -6,10 +6,10 @@
 //   INJECT   the GPU's pieces, copied into result_buffer(), are walked into contours (assemble()); the next slice() skips
 //            the segment sweep and the union and reads them. A layer the GPU left with an open loop gets the kernel's own
 //            union, so the slice never depends on the GPU being right.
-//   MESH     pass1 stops before the segment sweep and keeps the seated triangles and the layer planes (mesh_tris,
+//   MESH     pass1 stops before the segment sweep and keeps the seated triangles and the layer planes (mesh_triangles,
 //            mesh_planes), so the GPU can cut and chain the layers itself (engine/src/contour_front_gpu.js). The GPU
 //            marks the layers whose chains it did not close (open_layers); assemble() treats them like a layer whose
-//            pieces do not close and cuts, chains and unions those layers itself from mesh_tris.
+//            pieces do not close and cuts, chains and unions those layers itself from mesh_triangles.
 // OFF is the kernel as it was: nothing here is reached, which is what keeps the golden output byte-identical.
 //
 // The result is the same region as the CPU's union (measured: area within 2e-10 relative) with different vertices, so the
@@ -24,7 +24,7 @@ enum Mode { OFF = 0, CAPTURE = 1, INJECT = 2, MESH = 3 };
 extern int mode;
 extern bool captured;                       // the last CAPTURE slice reached pass1 (false: it took another route)
 extern std::vector<Paths> loops, contours;  // per layer
-extern std::vector<float> mesh_tris;         // MESH: 9 floats per triangle, seated as pass1 slices them
+extern std::vector<float> mesh_triangles;     // MESH: 9 floats per triangle, seated as pass1 slices them
 extern std::vector<double> mesh_planes;      // MESH: the z of every layer plane, as pass1 cuts them
 extern std::vector<unsigned char> open_layers;   // MESH: 1 for a layer the caller says to rebuild on the CPU
 

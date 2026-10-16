@@ -14,7 +14,7 @@ Paths morph_open(const Paths& in, double radius);
 std::vector<Paths> split_components(const Paths& in);
 Paths grid_snap(const Paths& region, double cell);
 Paths tree_taper(const Paths& in, double shrink, double minRadius);
-Paths build_sparse(const Paths& region, const std::string& pattern, double base, double spacing, int layerIdx, double z, double lineW, double density);
+Paths build_sparse(const Paths& region, const std::string& pattern, double base, double spacing, int layerIndex, double z, double lineWidth, double density);
 double paths_length(const Paths& paths, bool closed);
 double walls_length(const std::vector<Paths>& walls);
 int fan_S(int layerIndex, const Params& params);

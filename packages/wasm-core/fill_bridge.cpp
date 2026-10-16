@@ -14,8 +14,8 @@ using namespace Slic3r;
 
 namespace fill_bridge {
 
-static inline coord_t scale_to_coord(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
-static inline double  unscale_to_mm(coord_t coord) { return double(coord) * SCALING_FACTOR; }
+static inline coord_t scale_to_coordinate(double millimetres) { return (coord_t) std::llround(millimetres / SCALING_FACTOR); }
+static inline double  unscale_to_mm(coord_t scaled) { return double(scaled) * SCALING_FACTOR; }
 
 static InfillPattern pat_from_name(const std::string& name) {
     if (name=="gyroid")       return ipGyroid;
@@ -26,10 +26,10 @@ static InfillPattern pat_from_name(const std::string& name) {
     return ipCount; // unknown
 }
 
-static Polygon to_polygon(const MillimetrePath& poly_mm) {
+static Polygon to_polygon(const MillimetrePath& polygon_mm) {
     Polygon polygon;
-    polygon.points.reserve(poly_mm.size());
-    for (const auto& xy : poly_mm) polygon.points.emplace_back(scale_to_coord(xy.first), scale_to_coord(xy.second));
+    polygon.points.reserve(polygon_mm.size());
+    for (const auto& point : polygon_mm) polygon.points.emplace_back(scale_to_coordinate(point.first), scale_to_coordinate(point.second));
     return polygon;
 }
 
@@ -69,10 +69,10 @@ std::vector<MillimetrePath> generate_fill(const std::vector<MillimetrePath>& reg
     catch (...) { return out; }
 
     for (const Polyline& polyline : polylines) {
-        MillimetrePath poly;
-        poly.reserve(polyline.points.size());
-        for (const Point& point : polyline.points) poly.push_back({ unscale_to_mm(point.x()), unscale_to_mm(point.y()) });
-        if (poly.size() >= 2) out.push_back(std::move(poly));
+        MillimetrePath path_mm;
+        path_mm.reserve(polyline.points.size());
+        for (const Point& point : polyline.points) path_mm.push_back({ unscale_to_mm(point.x()), unscale_to_mm(point.y()) });
+        if (path_mm.size() >= 2) out.push_back(std::move(path_mm));
     }
     return out;
 }
@@ -90,7 +90,7 @@ double chain_reorder_kept_length() {
     auto path_of_length = [](double length_mm) {
         ExtrusionPath path(erSupportMaterial, 0.1, 0.42f, 0.2f);
         Polyline line;
-        line.points = { Point(0, 0), Point(scale_to_coord(length_mm), 0) };
+        line.points = { Point(0, 0), Point(scale_to_coordinate(length_mm), 0) };
         path.polyline = Polyline3(line);
         return path;
     };

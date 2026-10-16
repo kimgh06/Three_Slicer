@@ -128,8 +128,8 @@ static Paths zigzag_connect(Paths lines, double angleDeg) {
   return out;
 }
 // Stage 8: call the real ported OrcaSlicer Fill patterns (per component ExPolygon -> fill_bridge -> open paths).
-//  region = ClipperLib Paths (scaled by SCALE). density = fraction, lineW = line width (mm), angleDeg, z (mm).
-static Paths real_fill(const Paths& region, const std::string& pattern, double density, double lineW, double angleDeg, double z, int layerIdx) {
+//  region = ClipperLib Paths (scaled by SCALE). density = fraction, lineWidth (mm), angleDeg, z (mm).
+static Paths real_fill(const Paths& region, const std::string& pattern, double density, double lineWidth, double angleDeg, double z, int layerIndex) {
   Paths out;
   for (const Paths& component : split_components(region)) {   // component[0] = outline, [1..] = holes
     std::vector<std::vector<std::pair<double,double>>> polygons;
@@ -140,18 +140,18 @@ static Paths real_fill(const Paths& region, const std::string& pattern, double d
       if (polygon.size() >= 3) polygons.push_back(std::move(polygon));
     }
     if (polygons.empty() || polygons[0].size() < 3) continue;
-    auto lines = fill_bridge::generate_fill(polygons, pattern, density, lineW, angleDeg, z, layerIdx);
+    auto lines = fill_bridge::generate_fill(polygons, pattern, density, lineWidth, angleDeg, z, layerIndex);
     for (const auto& polyline : lines) {
       Path path;
       path.reserve(polyline.size());
-      for (const auto& xy : polyline) path.push_back(IntPoint((cInt)std::llround(xy.first*SCALE),(cInt)std::llround(xy.second*SCALE)));
+      for (const auto& point : polyline) path.push_back(IntPoint((cInt)std::llround(point.first*SCALE),(cInt)std::llround(point.second*SCALE)));
       if (path.size() >= 2) out.push_back(std::move(path));
     }
   }
   return out;
 }
-// Sparse pattern dispatch (returns open paths). lineW = line width, density = fraction (for the real ported Fill patterns).
-Paths build_sparse(const Paths& region, const std::string& pattern, double base, double spacing, int layerIdx, double z, double lineW, double density) {
+// Sparse pattern dispatch (returns open paths). density = fraction (for the real ported Fill patterns).
+Paths build_sparse(const Paths& region, const std::string& pattern, double base, double spacing, int layerIndex, double z, double lineWidth, double density) {
   if (region.empty()||spacing<=1e-6) return {};
   if (pattern=="grid") {
     Paths lines = infill_lines(region, base, spacing*2.0);
@@ -166,12 +166,12 @@ Paths build_sparse(const Paths& region, const std::string& pattern, double base,
   }
   // Stage 8: the real ported Fill patterns (gyroid is replaced by the real TPMS; the old sine approximation is preserved as gyroid_approx)
   if (pattern=="gyroid"||pattern=="honeycomb"||pattern=="3dhoneycomb"||pattern=="crosshatch"||pattern=="concentric") {
-    Paths realLines = real_fill(region, pattern, density, lineW, base, z, layerIdx);
+    Paths realLines = real_fill(region, pattern, density, lineWidth, base, z, layerIndex);
     if (!realLines.empty()) return realLines;   // on failure, fall through to rectilinear below
   }
   if (pattern=="gyroid_approx") return clip_open(gyroid_lines(region, spacing, z), region);  // backwards compatible: the old sine approximation
   double alternateOffset = 0.0;
-  if (layerIdx%2) alternateOffset = 90.0;
+  if (layerIndex%2) alternateOffset = 90.0;
   double angle = base + alternateOffset;         // alternate per layer
   if (pattern=="zigzag")  return zigzag_connect(infill_clipped(region, angle, spacing), angle);
   return infill_clipped(region, angle, spacing);           // rectilinear (default)

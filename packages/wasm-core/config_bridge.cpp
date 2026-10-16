@@ -45,14 +45,14 @@ static std::string shift_axis(std::string line, char axis, double offset) {
     return line;
 }
 
-WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_w, double bed_d, double first_layer_h, double layer_h,
+WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_width, double bed_depth, double first_layer_height, double layer_height,
                                 double z, bool is_first_layer, int old_tool, int new_tool,
                                 double tower_x, double tower_y, double tower_width,
                                 double filament_diameter, double purge_volume_mm3) {
     WipeTowerBlock out;
     try {
         PrintConfig config; // real StaticPrintConfig from print_config_def defaults
-        config.printable_area.values = { Vec2d(bed_x0,bed_y0), Vec2d(bed_x0+bed_w,bed_y0), Vec2d(bed_x0+bed_w,bed_y0+bed_d), Vec2d(bed_x0,bed_y0+bed_d) };
+        config.printable_area.values = { Vec2d(bed_x0,bed_y0), Vec2d(bed_x0+bed_width,bed_y0), Vec2d(bed_x0+bed_width,bed_y0+bed_depth), Vec2d(bed_x0,bed_y0+bed_depth) };
         config.nozzle_diameter.values = { 0.4, 0.4 };
         config.single_extruder_multi_material.value = true;
         config.wipe_tower_x.values = { tower_x };
@@ -68,23 +68,23 @@ WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_w, doub
         config.extruder_max_nozzle_count.values = { 1, 1 };
         config.extruder_printable_height.values = {};
 
-        const float height = (float)std::max(z + layer_h, 2.0);
+        const float height = (float)std::max(z + layer_height, 2.0);
         WipeTower wipe_tower(config, 0, Vec3d(0,0,0), (size_t)old_tool, height,
                      std::vector<unsigned int>{ (unsigned)old_tool, (unsigned)new_tool });
         wipe_tower.set_extruder(0, config);
         wipe_tower.set_extruder(1, config);
-        wipe_tower.set_layer((float)z, (float)layer_h, 1, is_first_layer, false);
+        wipe_tower.set_layer((float)z, (float)layer_height, 1, is_first_layer, false);
         // 100 was a placeholder standing in for "some purge". Upstream feeds plan_toolchange the volume its
         //  flush matrix computed for exactly this pair (ToolOrdering.cpp get_flush_volume), which is what makes a
         //  white->black change cost more than white->white.
         float wipe_volume = 100.0f;
         if (purge_volume_mm3 >= 0) wipe_volume = (float)purge_volume_mm3;
-        wipe_tower.plan_toolchange((float)z, (float)layer_h, (unsigned)old_tool, (unsigned)new_tool, wipe_volume, 0.0f);
+        wipe_tower.plan_toolchange((float)z, (float)layer_height, (unsigned)old_tool, (unsigned)new_tool, wipe_volume, 0.0f);
 
         std::vector<std::vector<WipeTower::ToolChangeResult>> result;
         wipe_tower.generate(result);
 
-        const double offset_x = bed_x0 + bed_w * 0.5, offset_y = bed_y0 + bed_d * 0.5;   // the bed centre (Params::bed_center_x/y)
+        const double offset_x = bed_x0 + bed_width * 0.5, offset_y = bed_y0 + bed_depth * 0.5;   // the bed centre (Params::bed_center_x/y)
         std::ostringstream gcode_stream;
         for (auto& layer : result) {
             for (auto& toolchange : layer) {

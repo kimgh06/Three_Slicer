@@ -387,7 +387,7 @@ void reorder_inner_outer_inner(ExtrusionEntityCollection& entities)
     }
 }
 
-IntegerPath to_ipath(const Points& points)
+IntegerPath to_integer_path(const Points& points)
 {
     IntegerPath out;
     out.reserve(points.size());
@@ -395,7 +395,7 @@ IntegerPath to_ipath(const Points& points)
     return out;
 }
 
-IntegerPath to_ipath(const Polyline3& polyline)
+IntegerPath to_integer_path(const Polyline3& polyline)
 {
     IntegerPath out;
     out.reserve(polyline.points.size());
@@ -411,27 +411,27 @@ void flatten_wall(const ExtrusionEntity* entity, std::vector<Extrusion>& out)
         const ExtrusionLoop* loop = static_cast<const ExtrusionLoop*>(entity);
         int kind = InnerWall;
         if (loop->paths.front().role() == erExternalPerimeter) kind = OuterWall;
-        out.push_back({ to_ipath(loop->polygon().points), true, kind, loop->inset_idx, double(loop->paths.front().width) });
+        out.push_back({ to_integer_path(loop->polygon().points), true, kind, loop->inset_idx, double(loop->paths.front().width) });
         return;
     }
     if (entity->is_loop()) {
         for (const ExtrusionPath& path : static_cast<const ExtrusionLoop*>(entity)->paths)
-            out.push_back({ to_ipath(path.polyline), false, ThinWall, -1, double(path.width) });
+            out.push_back({ to_integer_path(path.polyline), false, ThinWall, -1, double(path.width) });
         return;
     }
     const ExtrusionPath* path = static_cast<const ExtrusionPath*>(entity);
-    out.push_back({ to_ipath(path->polyline), false, ThinWall, -1, double(path->width) });
+    out.push_back({ to_integer_path(path->polyline), false, ThinWall, -1, double(path->width) });
 }
 
 void flatten_gap_fill(const ExtrusionEntity* entity, std::vector<Extrusion>& out)
 {
     if (entity->is_loop()) {
         for (const ExtrusionPath& path : static_cast<const ExtrusionLoop*>(entity)->paths)
-            out.push_back({ to_ipath(path.polyline), false, GapFill, -1, double(path.width) });
+            out.push_back({ to_integer_path(path.polyline), false, GapFill, -1, double(path.width) });
         return;
     }
     const ExtrusionPath* path = static_cast<const ExtrusionPath*>(entity);
-    out.push_back({ to_ipath(path->polyline), false, GapFill, -1, double(path->width) });
+    out.push_back({ to_integer_path(path->polyline), false, GapFill, -1, double(path->width) });
 }
 
 } // namespace
@@ -762,9 +762,9 @@ Result generate(const std::vector<IntegerPath>& contour, const Config& config)
             float(-inset - min_perimeter_infill_spacing / 2.),
             float(min_perimeter_infill_spacing / 2.));
         for (const ExPolygon& expolygon : infill_exp) {
-            result.fill.push_back(to_ipath(expolygon.contour.points));
+            result.fill.push_back(to_integer_path(expolygon.contour.points));
             for (const Polygon& hole : expolygon.holes)
-                result.fill.push_back(to_ipath(hole.points));
+                result.fill.push_back(to_integer_path(hole.points));
         }
     } // for each island
     return result;

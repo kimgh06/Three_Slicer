@@ -14,21 +14,21 @@ namespace arachne_bridge {
 
 int cgal_planar_check_count() { return Slic3r::Geometry::g_cgal_planar_angle_calls; }
 
-static inline coord_t to_scaled(double mm) { return (coord_t) std::llround(mm / SCALING_FACTOR); }
-static inline double  to_mm(coord_t coord) { return double(coord) * SCALING_FACTOR; }
+static inline coord_t to_scaled(double millimetres) { return (coord_t) std::llround(millimetres / SCALING_FACTOR); }
+static inline double  to_mm(coord_t scaled) { return double(scaled) * SCALING_FACTOR; }
 
-std::vector<WallLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polys_mm,
+std::vector<WallLine> generate_walls(const std::vector<std::vector<std::pair<double,double>>>& polygons_mm,
                                   double line_width_mm, int wall_count, double layer_height_mm)
 {
     std::vector<WallLine> out;
-    if (polys_mm.empty() || wall_count <= 0) return out;
+    if (polygons_mm.empty() || wall_count <= 0) return out;
 
     Polygons outline;
-    for (const auto& poly : polys_mm) {
-        if (poly.size() < 3) continue;
+    for (const auto& polygon_mm : polygons_mm) {
+        if (polygon_mm.size() < 3) continue;
         Polygon polygon;
-        polygon.points.reserve(poly.size());
-        for (const auto& xy : poly) polygon.points.emplace_back(to_scaled(xy.first), to_scaled(xy.second));
+        polygon.points.reserve(polygon_mm.size());
+        for (const auto& point : polygon_mm) polygon.points.emplace_back(to_scaled(point.first), to_scaled(point.second));
         outline.emplace_back(std::move(polygon));
     }
     if (outline.empty()) return out;

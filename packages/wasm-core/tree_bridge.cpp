@@ -15,10 +15,10 @@ std::vector<Edge> branch_mst(const std::vector<std::pair<double,double>>& points
     for (const auto& point : points_mm)
         vertices.emplace_back((coord_t)std::llround(point.first / SCALING_FACTOR),
                               (coord_t)std::llround(point.second / SCALING_FACTOR));
-    MinimumSpanningTree mst(vertices);
+    MinimumSpanningTree spanning_tree(vertices);
     std::set<std::pair<long long,long long>> seen;
-    for (const Point& vertex : mst.vertices())
-        for (const Point& neighbor : mst.adjacent_nodes(vertex)) {
+    for (const Point& vertex : spanning_tree.vertices())
+        for (const Point& neighbor : spanning_tree.adjacent_nodes(vertex)) {
             long long vertex_key = (long long)vertex.x() * 1000003LL + vertex.y();
             long long neighbor_key = (long long)neighbor.x() * 1000003LL + neighbor.y();
             auto key = std::minmax(vertex_key, neighbor_key);

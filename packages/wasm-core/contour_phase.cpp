@@ -14,7 +14,7 @@ namespace contour_phase {
 int mode = OFF;
 bool captured = false;
 std::vector<Paths> loops, contours;
-std::vector<float> mesh_tris;
+std::vector<float> mesh_triangles;
 std::vector<double> mesh_planes;
 std::vector<unsigned char> open_layers;
 GpuInput input;
@@ -365,8 +365,8 @@ namespace {
 struct MeshWork { const std::vector<int>* layers; };
 void mesh_layer_loops(int index, void* context) {
   const int layer = (*((MeshWork*)context)->layers)[index];
-  const Triangle* triangles = reinterpret_cast<const Triangle*>(mesh_tris.data());
-  const size_t triangleCount = mesh_tris.size() / 9;
+  const Triangle* triangles = reinterpret_cast<const Triangle*>(mesh_triangles.data());
+  const size_t triangleCount = mesh_triangles.size() / 9;
   const double z = mesh_planes[layer];
   std::vector<SliceSegment> segments;
   SliceSegment segment;
@@ -418,7 +418,7 @@ Assembled assemble() {
   const double fallbackStarted = emscripten_get_now();
   for (int layer = 0; layer < layerCount; ++layer) if (work.layerUnclosed[layer] || (layer < (int)open_layers.size() && open_layers[layer])) out.fallbackLayers.push_back(layer);
   if ((int)loops.size() != layerCount) {   // MESH: nothing captured; the fallback layers are cut from the mesh here
-    if (!out.fallbackLayers.empty() && (mesh_tris.empty() || (int)mesh_planes.size() != layerCount)) {
+    if (!out.fallbackLayers.empty() && (mesh_triangles.empty() || (int)mesh_planes.size() != layerCount)) {
       out.unavailable = true;
       out.fallbackMs = emscripten_get_now() - fallbackStarted;
       return out;
@@ -427,7 +427,7 @@ Assembled assemble() {
     MeshWork meshWork{ &out.fallbackLayers };
     parallel((int)out.fallbackLayers.size(), mesh_layer_loops, &meshWork);
   }
-  std::vector<float>().swap(mesh_tris);   // nothing reads the mesh after the contours are known
+  std::vector<float>().swap(mesh_triangles);   // nothing reads the mesh after the contours are known
   parallel((int)out.fallbackLayers.size(), [](int index, void* context) {
     const int layer = (*(std::vector<int>*)context)[index];
     contours[layer] = SimplifyPolygons(loops[layer], pftNonZero);
