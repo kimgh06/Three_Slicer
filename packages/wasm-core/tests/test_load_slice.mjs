@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import createSlicer from '../../engine/src/slicer_core.js'
 import { loadModel, SUPPORTED_EXT } from 'three-slicer-viewer/loaders'   // the built package, like test_gcode_parse.mjs
+import { positionsToSTL } from './stl_fixtures.mjs'
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
 // cube20.stl sits at the package root, the rest under testing_files/ — both are committed fixtures.
@@ -18,24 +19,6 @@ const fixture = (name) => {
   const inFolder = join(here, 'testing_files', name)
   if (existsSync(inFolder)) return readFileSync(inFolder)
   return readFileSync(join(here, name))
-}
-
-function modelToSTL(positions) {   // N*9 z-up model -> binary STL
-  const triangles = positions.length / 9
-  const buffer = Buffer.alloc(84 + triangles * 50)
-  buffer.writeUInt32LE(triangles, 80)
-  let offset = 84, readIndex = 0
-  for (let triangleIndex = 0; triangleIndex < triangles; triangleIndex++) {
-    offset += 12                                     // the stored normal stays zero; the kernel recomputes it
-    for (let corner = 0; corner < 3; corner++) {
-      buffer.writeFloatLE(positions[readIndex++], offset)
-      buffer.writeFloatLE(positions[readIndex++], offset + 4)
-      buffer.writeFloatLE(positions[readIndex++], offset + 8)
-      offset += 12
-    }
-    offset += 2
-  }
-  return buffer
 }
 
 const params = {
@@ -74,7 +57,7 @@ for (const name of ['cube20.stl', 'cube.obj', 'cube.ply']) {
   check(`${name}: one object of 12 triangles`, objects.length === 1 && positions.length / 9 === 12, `${objects.length} objects, ${positions.length / 9} triangles`)
   check(`${name}: a 20mm cube, z still up`, Math.abs(span(0) - 20) < 0.1 && Math.abs(span(2) - 20) < 0.1,
     `x ${span(0).toFixed(2)}, z ${span(2).toFixed(2)}`)
-  const result = slicer.slice(new Uint8Array(modelToSTL(positions)), JSON.stringify(params), () => {})
+  const result = slicer.slice(new Uint8Array(positionsToSTL(positions)), JSON.stringify(params), () => {})
   const layers = result.layers?.length ?? 0
   check(`${name}: the kernel slices it into ~99 layers of real G-code`, layers >= 90 && layers <= 105 && (result.gcode || '').length > 1000,
     `${layers} layers, ${(result.gcode || '').length} bytes`)

@@ -4,6 +4,7 @@
 //   Run: node packages/wasm-core/tests/test_machine_gcode.mjs
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
+import { boxTrianglesWithInwardBottom, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 let failures = 0
 const ok = (condition, message) => {
@@ -11,31 +12,9 @@ const ok = (condition, message) => {
   if (!condition) failures++
 }
 
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
-  const quad = (first,second,third,fourth) => [[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length*50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const point of triangle) {
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset += 2
-  }
-  return new Uint8Array(buffer)
-}
-const cube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 2))
-const leftBox = boxTris(-13, -5, 0, 10, 10, 2), rightBox = boxTris(3, -5, 0, 10, 10, 2)
-const twoBoxes = trisToSTL([...leftBox, ...rightBox])
+const cube = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-10, -10, 0, 20, 20, 2))
+const leftBox = boxTrianglesWithInwardBottom(-13, -5, 0, 10, 10, 2), rightBox = boxTrianglesWithInwardBottom(3, -5, 0, 10, 10, 2)
+const twoBoxes = trianglesToSTLBytes([...leftBox, ...rightBox])
 
 const base = { layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2, infill_density: 0.15,
                nozzle_temp: 210, bed_temp: 60, bed_width: 200, bed_depth: 200, skirt_loops: 1, skirt_distance: 2 }
@@ -65,8 +44,8 @@ ok(/^G1 Z[\d.]+ F\d+\nM104 S210 ; set nozzle temperature\nM140 S60 ; set bed tem
    'the second layer sets the print temperatures right after its Z move')
 ok(count(switched.gcode, /; set nozzle temperature$/gm) === 1 && count(switched.gcode, /; set bed temperature$/gm) === 1,
    'the switch is written once')
-const sameTemps = slice({ ...base, first_layer_nozzle_temp: 210, first_layer_bed_temp: 60 })
-ok(!/set nozzle temperature|set bed temperature/.test(sameTemps.gcode), 'equal temperatures write no switch')
+const sameTemperatures = slice({ ...base, first_layer_nozzle_temp: 210, first_layer_bed_temp: 60 })
+ok(!/set nozzle temperature|set bed temperature/.test(sameTemperatures.gcode), 'equal temperatures write no switch')
 
 console.log('[temperatures: with a raft the raft\'s second layer is the second layer]')
 const rafted = slice({ ...firstLayer, raft_layers: 2 })
@@ -81,14 +60,14 @@ const mach3 = slice({ ...firstLayer, gcode_flavor: 'mach3' })
 ok(layerText(mach3.gcode, '; LAYER 1 ').includes('M104 P210 ; set nozzle temperature'), 'Mach3 takes the temperature as P')
 
 console.log('[temperatures: multi-material]')
-const mmParams = { ...base, extruder_count: 2, mm_group_split: leftBox.length, extruder_nozzle_temp: [210, 230],
+const multiMaterialParams = { ...base, extruder_count: 2, mm_group_split: leftBox.length, extruder_nozzle_temp: [210, 230],
                    extruder_first_layer_temp: [215, 235], first_layer_nozzle_temp: 215 }
-const oneNozzle = slice(mmParams, twoBoxes)
+const oneNozzle = slice(multiMaterialParams, twoBoxes)
 ok(!oneNozzle.error, `slices (${oneNozzle.error ?? 'no error'})`)
 const oneNozzleLayer1 = layerText(oneNozzle.gcode, '; LAYER 1 ')
 ok(/M104 S\d+ ; set nozzle temperature/.test(oneNozzleLayer1) && !/ ; set nozzle temperature[\s\S]* ; set nozzle temperature/.test(oneNozzleLayer1)
    && !/M104 S\d+ T\d/.test(oneNozzleLayer1), 'one nozzle: only the loaded tool switches, without a tool word')
-const multi = slice({ ...mmParams, single_extruder_multi_material: false }, twoBoxes)
+const multi = slice({ ...multiMaterialParams, single_extruder_multi_material: false }, twoBoxes)
 const multiLayer1 = layerText(multi.gcode, '; LAYER 1 ')
 ok(multiLayer1.includes('M104 S210 T0 ; set nozzle temperature') && multiLayer1.includes('M104 S230 T1 ; set nozzle temperature'),
    'separate extruders: every used tool switches, named')
@@ -201,7 +180,7 @@ const feedsByType = (gcode, marker) => {
   }
   return feeds
 }
-const tall = trisToSTL(boxTris(-10, -10, 0, 20, 20, 6))
+const tall = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-10, -10, 0, 20, 20, 6))
 const roles = { ...base, gcode_role_tags: true, wall_loops: 2, print_speed: 50, first_layer_speed: 20, slow_down_layer_time: 0,
                 inner_wall_speed: 100, sparse_infill_speed: 200, internal_solid_infill_speed: 150, initial_layer_infill_speed: 40 }
 const roleSlice = slice(roles, tall)
@@ -220,7 +199,7 @@ ok(rampWalls.includes(2100) && rampWalls.includes(3600), `slow_down_layers ramps
 
 console.log('[speeds: small perimeters]')
 // A 3mm column's wall loops (~12mm) are within 2*pi*4 = 25mm: they print at small_perimeter_speed (20 mm/s).
-const column = trisToSTL(boxTris(-1.5, -1.5, 0, 3, 3, 3))
+const column = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-1.5, -1.5, 0, 3, 3, 3))
 const small = slice({ ...roles, small_perimeter_speed: 20, small_perimeter_threshold: 4 }, column)
 const smallWalls = feedsByType(small.gcode, '; LAYER 5 ')['Outer wall'] ?? new Set()
 ok([...smallWalls].every(feed => feed === 1200) && smallWalls.size > 0, `small loops at 20 mm/s (${[...smallWalls]})`)
@@ -271,7 +250,7 @@ ok(slowFeeds.length > 0 && slowFeeds.every(feed => feed < 3000), `a short layer 
 // Two legs and a slab across them: the slab's underside is a bridge, which opens the overhang fan region. The
 //  overhang fan only takes over when it is faster than the layer's own fan (CoolingBuffer: overhang_fan_speed >
 //  fan_speed_new), so the layer fan is capped at 50% here.
-const bridgeModel = trisToSTL([...boxTris(-12, -4, 0, 4, 8, 3), ...boxTris(8, -4, 0, 4, 8, 3), ...boxTris(-12, -4, 3, 24, 8, 1.2)])
+const bridgeModel = trianglesToSTLBytes([...boxTrianglesWithInwardBottom(-12, -4, 0, 4, 8, 3), ...boxTrianglesWithInwardBottom(8, -4, 0, 4, 8, 3), ...boxTrianglesWithInwardBottom(-12, -4, 3, 24, 8, 1.2)])
 const bridged = slice(coolingTemplate({ enable_overhang_bridge_fan: ['1'], overhang_fan_speed: ['77'], fan_max_speed: ['50'] }), bridgeModel)
 ok(!bridged.error && /^M106 S196 ; enable fan$/m.test(bridged.gcode), 'the bridge prints under overhang_fan_speed (77% = S196)')
 const noBridgeFan = slice(coolingTemplate({ enable_overhang_bridge_fan: ['0'], overhang_fan_speed: ['77'], fan_max_speed: ['50'] }), bridgeModel)
@@ -359,12 +338,12 @@ console.log('[overhang fan: a wall that leaves the layer below]')
 function frustum(bottom, top, height) {
   const halfBottom = bottom / 2, halfTop = top / 2
   const low = [[-halfBottom,-halfBottom,0],[halfBottom,-halfBottom,0],[halfBottom,halfBottom,0],[-halfBottom,halfBottom,0]], high = [[-halfTop,-halfTop,height],[halfTop,-halfTop,height],[halfTop,halfTop,height],[-halfTop,halfTop,height]]
-  const tris = [[low[0],low[2],low[1]],[low[0],low[3],low[2]],[high[0],high[1],high[2]],[high[0],high[2],high[3]]]
+  const triangles = [[low[0],low[2],low[1]],[low[0],low[3],low[2]],[high[0],high[1],high[2]],[high[0],high[2],high[3]]]
   for (let k = 0; k < 4; k++) {
     const next = (k+1)%4
-    tris.push([low[k],low[next],high[next]],[low[k],high[next],high[k]])
+    triangles.push([low[k],low[next],high[next]],[low[k],high[next],high[k]])
   }
-  return trisToSTL(tris)
+  return trianglesToSTLBytes(triangles)
 }
 const overhangConfig = (threshold) => ({ ...base, gcode_role_tags: true, machine_start_gcode: '; start', enable_arc_fitting: true,
   placeholder_config: JSON.stringify({ machine_start_gcode: '; start', printable_area: ['0x0', '200x0', '200x200', '0x200'],
@@ -394,7 +373,7 @@ const slicerMtOverhang = await createSlicerMt()
 ok(slicerMtOverhang.slice(frustum(10, 18, 2), JSON.stringify(overhangConfig('50%')), () => {}).gcode === widening.gcode, 'st == mt with the overhang fan')
 
 console.log('[reduce_infill_retraction: no retraction for a travel inside the infill]')
-const sparseCube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 4))
+const sparseCube = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-10, -10, 0, 20, 20, 4))
 const infillTravels = (reduce) => slice({ ...base, infill_density: 0.15, machine_start_gcode: '; start', reduce_infill_retraction: reduce,
   placeholder_config: JSON.stringify({ machine_start_gcode: '; start', printable_area: ['0x0', '200x0', '200x200', '0x200'] }) }, sparseCube)
 const retractions = (gcode) => (gcode.match(/^G1 E-/gm) ?? []).length

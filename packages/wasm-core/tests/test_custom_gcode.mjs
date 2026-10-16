@@ -8,6 +8,7 @@ import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
 import { CUSTOM_GCODE_KEYS } from '../../../viewer-package/src/settings/settings_core.js'
 import { schema } from '../../engine/src/data.js'
+import { boxTrianglesWithInwardBottom, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 let failures = 0
 const ok = (condition, message) => {
@@ -15,31 +16,9 @@ const ok = (condition, message) => {
   if (!condition) failures++
 }
 
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
-  const quad = (first,second,third,fourth) => [[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length*50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const point of triangle) {
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset += 2
-  }
-  return new Uint8Array(buffer)
-}
 // A cube centred on the plate-local origin, as the viewer sends it.
 const CUBE_SIZE = 20
-const cube = trisToSTL(boxTris(-CUBE_SIZE / 2, -CUBE_SIZE / 2, 0, CUBE_SIZE, CUBE_SIZE, 4))
+const cube = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-CUBE_SIZE / 2, -CUBE_SIZE / 2, 0, CUBE_SIZE, CUBE_SIZE, 4))
 
 const START = [
   'M140 S[bed_temperature_initial_layer_single]',
@@ -96,9 +75,9 @@ const expectedMin = params.bed_width / 2 - skirtReach, expectedMax = params.bed_
 ok(Math.abs(minX - expectedMin) < 0.01 && Math.abs(minY - expectedMin) < 0.01 && Math.abs(maxX - expectedMax) < 0.01,
    `first_layer_print_min/max hold the skirt's extent (min ${minX}, ${minY}, max ${maxX}; expected ${expectedMin}..${expectedMax})`)
 ok(!/\[[a-z_][a-z_0-9]*\]|\{[^}\n]*\}/.test(startBlock), 'nothing is left unexpanded in the start block')
-const preStart = gcode.slice(0, gcode.indexOf('; machine_start_gcode (printer profile, expanded)'))
-ok(!/^M140 |^M190 /m.test(preStart), 'the start G-code sets the bed, so no bed temperature is written before it')
-ok(/^M104 S220 ; set nozzle temperature$/m.test(preStart), 'the nozzle is not set by the template, so M104 S220 precedes it (upstream text)')
+const beforeStart = gcode.slice(0, gcode.indexOf('; machine_start_gcode (printer profile, expanded)'))
+ok(!/^M140 |^M190 /m.test(beforeStart), 'the start G-code sets the bed, so no bed temperature is written before it')
+ok(/^M104 S220 ; set nozzle temperature$/m.test(beforeStart), 'the nozzle is not set by the template, so M104 S220 precedes it (upstream text)')
 ok(!/^M109 /m.test(gcode.slice(gcode.indexOf('; machine_start_gcode'), gcode.indexOf('G21 ; mm'))), 'no M109 after the start block for a non-Bambu printer')
 ok(gcode.indexOf('G21 ; mm') > gcode.indexOf('; machine_start_gcode'), "the writer's modes follow the start block")
 ok(gcode.includes('; filament end 0 of 0'), 'filament_end_gcode sees filament_extruder_id and current_filament_id')
@@ -123,7 +102,7 @@ console.log('[CUSTOM_GCODE_KEYS] every key the host gates on is one the kernel e
 // settings_core.js decides when to send the settings by these keys and custom_gcode.cpp names the templates it
 //  expands; the two sides are in different languages, so this is what keeps them the same list.
 // change_filament_gcode runs at a tool change, so it is checked on the two-box multi-material slice.
-const mmBoxes = trisToSTL([...boxTris(-13, -5, 0, 10, 10, 4), ...boxTris(3, -5, 0, 10, 10, 4)])
+const multiMaterialBoxes = trianglesToSTLBytes([...boxTrianglesWithInwardBottom(-13, -5, 0, 10, 10, 4), ...boxTrianglesWithInwardBottom(3, -5, 0, 10, 10, 4)])
 for (const key of CUSTOM_GCODE_KEYS) {
   const template = `; marker ${key} [total_layer_count]`
   const toolChange = key === 'change_filament_gcode'
@@ -137,7 +116,7 @@ for (const key of CUSTOM_GCODE_KEYS) {
   let stl = cube
   if (toolChange) {
     Object.assign(keyParams, { extruder_count: 2, mm_group_split: 12 })
-    stl = mmBoxes
+    stl = multiMaterialBoxes
   }
   const run = slice(keyParams, stl)
   ok(new RegExp(`; marker ${key} \\d+`).test(run.gcode ?? ''), `${key} is expanded by the kernel`)
@@ -145,8 +124,8 @@ for (const key of CUSTOM_GCODE_KEYS) {
 
 console.log('[upstream temperature rule] template without temperatures')
 const bare = slice(withConfig({ machine_start_gcode: 'G28' }))
-const barePre = bare.gcode.slice(0, bare.gcode.indexOf('; machine_start_gcode'))
-ok(/^M190 S65 ; set bed temperature and wait for it to be reached$/m.test(barePre), 'M190 with the first-layer bed temperature is written before it')
+const bareBeforeStart = bare.gcode.slice(0, bare.gcode.indexOf('; machine_start_gcode'))
+ok(/^M190 S65 ; set bed temperature and wait for it to be reached$/m.test(bareBeforeStart), 'M190 with the first-layer bed temperature is written before it')
 
 console.log('[Bambu Lab] printer_model "Bambu Lab ..." waits for the nozzle after the start block')
 const bambuLab = slice(withConfig({ printer_model: 'Bambu Lab A1 mini', machine_start_gcode: 'G28' }))
@@ -162,11 +141,11 @@ const afterError = slice(withConfig({}))
 ok(afterError.gcode === gcode, 'the next slice is byte-identical to the one before the error')
 
 console.log('[multi-material] the start block is spliced in after emission, with the real tool changes')
-const leftBox = boxTris(-13, -5, 0, 10, 10, 4), rightBox = boxTris(3, -5, 0, 10, 10, 4)
-const twoBoxes = trisToSTL([...leftBox, ...rightBox])
-const mmSettings = { ...settings, filament_type: ['PLA', 'PETG'], nozzle_temperature_initial_layer: ['210', '230'], nozzle_temperature: ['210', '230'],
+const leftBox = boxTrianglesWithInwardBottom(-13, -5, 0, 10, 10, 4), rightBox = boxTrianglesWithInwardBottom(3, -5, 0, 10, 10, 4)
+const twoBoxes = trianglesToSTLBytes([...leftBox, ...rightBox])
+const multiMaterialSettings = { ...settings, filament_type: ['PLA', 'PETG'], nozzle_temperature_initial_layer: ['210', '230'], nozzle_temperature: ['210', '230'],
                      filament_end_gcode: ['; end A', '; end B'], machine_start_gcode: '; changes [total_toolchanges] used {is_extruder_used[1]}' }
-const multiMaterial = slice(withConfig(mmSettings, { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
+const multiMaterial = slice(withConfig(multiMaterialSettings, { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
 ok(!multiMaterial.error, `multi-material slices (${multiMaterial.error ?? 'no error'})`)
 const changes = Number(/; changes (\d+) used (\w+)/.exec(multiMaterial.gcode ?? '')?.[1])
 const toolChanges = (multiMaterial.gcode.match(/^T\d+$/gm) ?? []).length - 1   // the first selection is a T command too
@@ -184,10 +163,10 @@ const onOneNozzle = slice(withConfig({ ...twoNozzles, filament_map: ['1'] }))
 ok(!onOneNozzle.error, `a two-nozzle template slices (${String(onOneNozzle.error).split('\n')[0]})`)
 ok((onOneNozzle.gcode ?? '').includes('; first -1 0 non-support -1 0 tools 0'),
    `filament 0 on logical extruder 0 lands at physical index 1 (${/; first .*/.exec(onOneNozzle.gcode ?? '')?.[0]})`)
-const onTwoNozzles = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_map: ['1', '2'] }, { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
+const onTwoNozzles = slice(withConfig({ ...multiMaterialSettings, ...twoNozzles, filament_map: ['1', '2'] }, { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
 ok((onTwoNozzles.gcode ?? '').includes('; first 1 0 non-support 1 0 tools 0'),
    `one filament per nozzle, swapped by the physical map (${/; first .*/.exec(onTwoNozzles.gcode ?? '')?.[0]})`)
-const supportFirst = slice(withConfig({ ...mmSettings, ...twoNozzles, filament_map: ['1', '1'], filament_is_support: ['1', '0'] },
+const supportFirst = slice(withConfig({ ...multiMaterialSettings, ...twoNozzles, filament_map: ['1', '1'], filament_is_support: ['1', '0'] },
                                       { extruder_count: 2, mm_group_split: leftBox.length }), twoBoxes)
 ok((supportFirst.gcode ?? '').includes('; first -1 0 non-support -1 1 tools 0'),
    `a support filament is skipped for first_non_support_filaments only (${/; first .*/.exec(supportFirst.gcode ?? '')?.[0]})`)

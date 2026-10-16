@@ -2,6 +2,7 @@
 // without the key: a key the host does not send changes nothing (golden pins that), a key it sends scales exactly the
 // paths upstream scales. E per millimetre is read back from the G-code text, per ;TYPE: role and layer.
 import createSlicer from '../../engine/src/slicer_core.js'
+import { boxTrianglesWithInwardBottom, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 let failures = 0
 const ok = (condition, message) => {
@@ -10,31 +11,9 @@ const ok = (condition, message) => {
 }
 const near = (actual, expected, tolerance = 0.002) => Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected))
 
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
-  const quad = (first,second,third,fourth) => [[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length*50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const point of triangle) {
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset += 2
-  }
-  return new Uint8Array(buffer)
-}
-const cube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 4))
+const cube = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-10, -10, 0, 20, 20, 4))
 // A 6 mm post under a 20 mm slab: the slab's underside is a bridge.
-const table = trisToSTL([...boxTris(-3, -3, 0, 6, 6, 10), ...boxTris(-10, -10, 10, 20, 20, 4)])
+const table = trianglesToSTLBytes([...boxTrianglesWithInwardBottom(-3, -3, 0, 6, 6, 10), ...boxTrianglesWithInwardBottom(-10, -10, 10, 20, 20, 4)])
 const base = { layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2, infill_density: 0.15,
   nozzle_diameter: 0.4, filament_diameter: 1.75, nozzle_temp: 210, bed_temp: 60, bed_width: 220, bed_depth: 220,
   skirt_loops: 1, skirt_distance: 2, gcode_role_tags: true, wall_generator: 'classic' }
@@ -152,8 +131,8 @@ console.log('[set_other_flow_ratios] per-role ratios and the first layer, off un
 
 console.log('[multi-material] the same multipliers on the multi-material path')
 {
-  const leftBox = boxTris(-13, -5, 0, 10, 10, 4), rightBox = boxTris(3, -5, 0, 10, 10, 4)
-  const twoBoxes = trisToSTL([...leftBox, ...rightBox])
+  const leftBox = boxTrianglesWithInwardBottom(-13, -5, 0, 10, 10, 4), rightBox = boxTrianglesWithInwardBottom(3, -5, 0, 10, 10, 4)
+  const twoBoxes = trianglesToSTLBytes([...leftBox, ...rightBox])
   const multiMaterial = { ...base, extruder_count: 2, mm_group_split: leftBox.length, wall_generator: 'arachne' }
   const plain = slice(twoBoxes, multiMaterial), scaled = slice(twoBoxes, { ...multiMaterial, print_flow_ratio: 0.9, filament_max_volumetric_speed: [2, 2] })
   ok(scaled.result.stats.filament_mm < plain.result.stats.filament_mm * 0.95, 'print_flow_ratio scales it')
