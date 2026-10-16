@@ -13,20 +13,21 @@
 
 namespace tbb_stub {
 
-inline std::atomic<bool>& enabled() { static std::atomic<bool> v{false}; return v; }
+inline std::atomic<bool>& enabled() { static std::atomic<bool> flag{false}; return flag; }
 
 // Slice cancel flag — the UI thread writes it directly via SAB (observable even while the worker/wasm is blocked).
 //  Kernel loops and the ports' canceled() poll it per iteration. Reset to 0 when slice() is entered.
-inline std::atomic<unsigned>& cancel() { static std::atomic<unsigned> v{0}; return v; }
+inline std::atomic<unsigned>& cancel() { static std::atomic<unsigned> flag{0}; return flag; }
 
+// Width hw-1 — the early crashes were resolved by disabling task_group threading (large models are st==mt byte-identical), and
+//  the parallel_for-only full-width configuration is verified with golden plus a g-code comparison on large models.
+inline int initial_budget() {
+  if (std::thread::hardware_concurrency() > 1) return (int)(std::thread::hardware_concurrency() - 1);
+  return 0;
+}
 inline std::atomic<int>& budget() {
-  // Width hw-1 — the early crashes were resolved by disabling task_group threading (large models are st==mt byte-identical), and
-  //  the parallel_for-only full-width configuration is verified with golden plus a g-code comparison on large models.
-  static std::atomic<int> b([]() -> int {
-    if (std::thread::hardware_concurrency() > 1) return (int)(std::thread::hardware_concurrency() - 1);
-    return 0;
-  }());
-  return b;
+  static std::atomic<int> available_threads(initial_budget());
+  return available_threads;
 }
 inline int take(int want) {
   int available = budget().load(std::memory_order_relaxed);
@@ -37,11 +38,11 @@ inline int take(int want) {
   }
   return 0;
 }
-inline void give(int k) { budget().fetch_add(k); }
+inline void give(int count) { budget().fetch_add(count); }
 
 // Real support progress counter — raised by completed parallel_for indices and completed task_group runs.
 //  The UI (main thread) polls it directly via SAB (progress display for stretches where callbacks are impossible). Unit: roughly "one layer processed".
-inline std::atomic<uint32_t>& prog() { static std::atomic<uint32_t> v{0}; return v; }
+inline std::atomic<uint32_t>& prog() { static std::atomic<uint32_t> counter{0}; return counter; }
 
 // RAII wrapper the bridge uses around a parallel-capable scope — resets the progress counter on entry
 struct ParallelScope {

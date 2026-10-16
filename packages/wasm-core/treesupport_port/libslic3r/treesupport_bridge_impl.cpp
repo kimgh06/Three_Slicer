@@ -146,7 +146,7 @@ void build_facade(Print &facade_print, PrintRegion &facade_region, PrintObject &
     print_object.m_config.tree_support_branch_distance_organic.value = params.branch_distance_mm;
     print_object.m_config.tree_support_branch_diameter_angle.value   = params.branch_diameter_angle_deg;
     print_object.m_config.tree_support_tip_diameter.value            = params.tip_diameter_mm;
-    print_object.m_config.tree_support_top_rate.value                = params.top_rate_pct;
+    print_object.m_config.tree_support_top_rate.value                = params.top_rate_percent;
     print_object.m_config.tree_support_wall_count.value              = params.wall_count;
     // The twin keys read by the non-organic (slim/strong/hybrid) path (TreeSupport.cpp:651/2657/3405) get the same values
     print_object.m_config.tree_support_branch_angle.value    = params.branch_angle_deg;
@@ -156,7 +156,7 @@ void build_facade(Print &facade_print, PrintRegion &facade_region, PrintObject &
     print_object.m_config.support_expansion.value             = params.support_expansion_mm;
     print_object.m_config.bridge_no_support.value             = params.bridge_no_support;
     print_object.m_config.support_remove_small_overhang.value = params.remove_small_overhang;
-    print_object.m_config.support_threshold_overlap.value     = params.threshold_overlap_pct;
+    print_object.m_config.support_threshold_overlap.value     = params.threshold_overlap_percent;
     print_object.m_config.support_threshold_overlap.percent   = true;
 
     // Stage 31: the kernel hands over a model centered on the origin (bbox center = 0; small coordinates = the safe zone). Leaving printable_area in the
@@ -234,7 +234,7 @@ void build_facade(Print &facade_print, PrintRegion &facade_region, PrintObject &
     coord_t min_y = 0;
     coord_t max_x = 0;
     coord_t max_y = 0;
-    bool bbox_init = false;
+    bool has_bounding_box = false;
     Layer *previous_layer = nullptr;
     for (size_t i = 0; i < layer_count; ++i) {
         const double print_z = layer_print_z_mm[i];
@@ -253,10 +253,10 @@ void build_facade(Print &facade_print, PrintRegion &facade_region, PrintObject &
         Polygons polygons = rings_to_polygons(object_slices_mm[i]);
         for (const Polygon &polygon : polygons)
             for (const Point &point : polygon.points) {
-                if (!bbox_init) {
+                if (!has_bounding_box) {
                     min_x = max_x = point.x();
                     min_y = max_y = point.y();
-                    bbox_init = true;
+                    has_bounding_box = true;
                 } else {
                     min_x = std::min(min_x, point.x());
                     max_x = std::max(max_x, point.x());
@@ -269,7 +269,7 @@ void build_facade(Print &facade_print, PrintRegion &facade_region, PrintObject &
         layer->lslices_extrudable = layer_expolygons;
         previous_layer = layer;
     }
-    if (bbox_init) print_object.m_bbox = BoundingBox(Point(min_x, min_y), Point(max_x, max_y));
+    if (has_bounding_box) print_object.m_bbox = BoundingBox(Point(min_x, min_y), Point(max_x, max_y));
     if (layer_count > 0) {   // WP1: matches object_print_z_max (object height) in upstream create_from_config
         print_object.m_slicing_params.object_print_z_max = layer_print_z_mm[layer_count-1];
         print_object.m_slicing_params.valid = true;
@@ -334,7 +334,7 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
 
 std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& object_slices_mm,
                                       const std::vector<double>&            layer_print_z_mm,
-                                      const std::vector<LayerSurf>&         surfs,
+                                      const std::vector<LayerSurfaces>&     layer_surfaces,
                                       const Params&                         params)
 {
     const size_t layer_count = object_slices_mm.size();
@@ -367,16 +367,18 @@ std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& obje
         layer_region->raw_slices = layer->lslices;
         ExPolygons top;
         ExPolygons bottom;
-        if (i < surfs.size()) {
-            top = union_ex(rings_to_polygons(surfs[i].top));
-            bottom = union_ex(rings_to_polygons(surfs[i].bottom));
+        if (i < layer_surfaces.size()) {
+            top = union_ex(rings_to_polygons(layer_surfaces[i].top));
+            bottom = union_ex(rings_to_polygons(layer_surfaces[i].bottom));
         }
         Polygons top_and_bottom = to_polygons(top);
         polygons_append(top_and_bottom, to_polygons(bottom));
-        ExPolygons rest = [&]() -> ExPolygons {
-            if (top_and_bottom.empty()) return layer->lslices;
-            return diff_ex(layer->lslices, top_and_bottom);
-        }();
+        ExPolygons rest;
+        if (top_and_bottom.empty()) {
+            rest = layer->lslices;
+        } else {
+            rest = diff_ex(layer->lslices, top_and_bottom);
+        }
         Surfaces surfaces;
         for (ExPolygon &expolygon : top)    surfaces.emplace_back(stTop, std::move(expolygon));
         for (ExPolygon &expolygon : bottom) surfaces.emplace_back(stBottom, std::move(expolygon));

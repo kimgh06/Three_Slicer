@@ -374,21 +374,21 @@ void set_start_variables(Session& session) {
   parser.set("current_object_idx", 0);
   parser.set("has_wipe_tower", facts.has_wipe_tower);
 
-  BoundingBoxf printer_bed_bbox(config.option<ConfigOptionPoints>("printable_area")->values);
+  BoundingBoxf printer_bed_bounding_box(config.option<ConfigOptionPoints>("printable_area")->values);
   Vec2f wipe_tower_center = Vec2f::Zero();
   bool wipe_tower_center_valid = false;
   if (facts.has_wipe_tower) {
-    const Vec2d tower_min(facts.wipe_tower_bbox[0], facts.wipe_tower_bbox[1]);
-    const Vec2d tower_max(facts.wipe_tower_bbox[2], facts.wipe_tower_bbox[3]);
+    const Vec2d tower_min(facts.wipe_tower_bounding_box[0], facts.wipe_tower_bounding_box[1]);
+    const Vec2d tower_max(facts.wipe_tower_bounding_box[2], facts.wipe_tower_bounding_box[3]);
     const double tower_center_x = (tower_min.x() + tower_max.x()) * 0.5;
     const float tower_center_y = float((tower_min.y() + tower_max.y()) * 0.5);
-    if (tower_center_x < printer_bed_bbox.center().x())
+    if (tower_center_x < printer_bed_bounding_box.center().x())
       wipe_tower_center = Vec2f(float(tower_max.x() + 2.f), tower_center_y);
     else
       wipe_tower_center = Vec2f(float(tower_min.x() - 2.f), tower_center_y);
     // The shared printable polygon of every extruder is the printable area for single- and dual-extruder printers.
-    if (wipe_tower_center.x() < printer_bed_bbox.min[0]) wipe_tower_center.x() = float(printer_bed_bbox.min[0]);
-    if (wipe_tower_center.x() > printer_bed_bbox.max[0]) wipe_tower_center.x() = float(printer_bed_bbox.max[0]);
+    if (wipe_tower_center.x() < printer_bed_bounding_box.min[0]) wipe_tower_center.x() = float(printer_bed_bounding_box.min[0]);
+    if (wipe_tower_center.x() > printer_bed_bounding_box.max[0]) wipe_tower_center.x() = float(printer_bed_bounding_box.max[0]);
     wipe_tower_center_valid = true;
   }
   parser.set("wipe_tower_center_pos_x", new ConfigOptionFloat(wipe_tower_center.x()));
@@ -407,7 +407,7 @@ void set_start_variables(Session& session) {
   parser.set("is_extruder_used", new ConfigOptionBools(is_extruder_used));
 
   {
-    BoundingBoxf bbox_bed = printer_bed_bbox;
+    BoundingBoxf bbox_bed = printer_bed_bounding_box;
     parser.set("print_bed_min", new ConfigOptionFloats({ bbox_bed.min.x(), bbox_bed.min.y() }));
     parser.set("print_bed_max", new ConfigOptionFloats({ bbox_bed.max.x(), bbox_bed.max.y() }));
     parser.set("print_bed_size", new ConfigOptionFloats({ bbox_bed.size().x(), bbox_bed.size().y() }));
@@ -430,9 +430,9 @@ void set_start_variables(Session& session) {
     {
       // use first layer convex_hull union with each object's bbox to check whether in head detect zone
       Polygons object_projections;
-      for (size_t i = 0; i + 3 < facts.object_bboxes.size(); i += 4) {
-        Point min_point{ coord_t(scale_(facts.object_bboxes[i])), coord_t(scale_(facts.object_bboxes[i + 1])) };
-        Point max_point{ coord_t(scale_(facts.object_bboxes[i + 2])), coord_t(scale_(facts.object_bboxes[i + 3])) };
+      for (size_t i = 0; i + 3 < facts.object_bounding_boxes.size(); i += 4) {
+        Point min_point{ coord_t(scale_(facts.object_bounding_boxes[i])), coord_t(scale_(facts.object_bounding_boxes[i + 1])) };
+        Point max_point{ coord_t(scale_(facts.object_bounding_boxes[i + 2])), coord_t(scale_(facts.object_bounding_boxes[i + 3])) };
         Polygon instance_projection = { {min_point.x(), min_point.y()}, {max_point.x(), min_point.y()},
                                         {max_point.x(), max_point.y()}, {min_point.x(), max_point.y()} };
         object_projections.emplace_back(std::move(instance_projection));
@@ -449,11 +449,11 @@ void set_start_variables(Session& session) {
     set_bed_mesh_variables(parser, config, bbox, session.flavor);
 
     // get center without wipe tower
-    BoundingBoxf bbox_without_wipe_tower;
-    for (size_t i = 0; i + 3 < facts.object_first_layer_bboxes.size(); i += 4)
-      bbox_without_wipe_tower.merge(BoundingBoxf(Vec2d(facts.object_first_layer_bboxes[i], facts.object_first_layer_bboxes[i + 1]),
-                                    Vec2d(facts.object_first_layer_bboxes[i + 2], facts.object_first_layer_bboxes[i + 3])));
-    auto center = bbox_without_wipe_tower.center();
+    BoundingBoxf bounding_box_without_wipe_tower;
+    for (size_t i = 0; i + 3 < facts.object_first_layer_bounding_boxes.size(); i += 4)
+      bounding_box_without_wipe_tower.merge(BoundingBoxf(Vec2d(facts.object_first_layer_bounding_boxes[i], facts.object_first_layer_bounding_boxes[i + 1]),
+                                    Vec2d(facts.object_first_layer_bounding_boxes[i + 2], facts.object_first_layer_bounding_boxes[i + 3])));
+    auto center = bounding_box_without_wipe_tower.center();
     parser.set("first_layer_center_no_wipe_tower", new ConfigOptionFloats{ {center.x(), center.y()} });
   }
 
@@ -549,14 +549,14 @@ void set_start_variables(Session& session) {
   {
     const size_t num_filaments = config.option<ConfigOptionStrings>("filament_type")->values.size();
     bool use_fast_flush = config.opt_enum<PrimeVolumeMode>("prime_volume_mode") == pvmFast;
-    std::string flush_temp_key = "filament_flush_temp";
+    std::string flush_temperature_key = "filament_flush_temp";
     if (use_fast_flush)
-      flush_temp_key = "filament_flush_temp_fast";
+      flush_temperature_key = "filament_flush_temp_fast";
     std::vector<double> flush_volumetric_speeds(num_filaments);
     std::vector<int> flush_temps(num_filaments);
     for (size_t i = 0; i < num_filaments; ++i) {
       flush_volumetric_speeds[i] = config.option<ConfigOptionFloats>("filament_flush_volumetric_speed")->get_at(i);
-      flush_temps[i] = config.option<ConfigOptionInts>(flush_temp_key)->get_at(i);
+      flush_temps[i] = config.option<ConfigOptionInts>(flush_temperature_key)->get_at(i);
       if (flush_volumetric_speeds[i] == 0)
         flush_volumetric_speeds[i] = config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(i);
       if (flush_temps[i] == 0)
@@ -638,10 +638,10 @@ Expanded expand(const std::string& key, const std::string& gcode_template, int c
     config_override.set_key_value("current_nozzle_id", new ConfigOptionInt(extruder_id));
   }
   try {
-    const DynamicConfig* override_ptr = nullptr;
+    const DynamicConfig* override_config = nullptr;
     if (layer_num >= 0 || filament_extruder_id >= 0)
-      override_ptr = &config_override;
-    out.text = g_session->parser.process(gcode_template, (unsigned int)std::max(0, current_extruder), override_ptr,
+      override_config = &config_override;
+    out.text = g_session->parser.process(gcode_template, (unsigned int)std::max(0, current_extruder), override_config,
                                          &g_session->output_config, &g_session->context);
   } catch (const std::exception& error) {
     out.text.clear();
@@ -889,7 +889,7 @@ float wipe_avoid_pos_x(float tower_min_x, float tower_max_x, float offset) {
 
 // get_path_of_change_filament, GCode.cpp:230: the path a cutter printer's head takes to its cutter, around the
 //  objects' x ranges. The objects are the facts' bounding boxes.
-std::vector<Vec2d> path_of_change_filament(const DynamicPrintConfig& config, const std::vector<double>& object_bboxes) {
+std::vector<Vec2d> path_of_change_filament(const DynamicPrintConfig& config, const std::vector<double>& object_bounding_boxes) {
   std::vector<Vec2d> out_points = { Vec2d(54, 0), Vec2d(54, 0), Vec2d(54, 245) };
   const Pointfs& points = config.option<ConfigOptionPoints>("start_end_points")->values;
   if (points.size() != 2) return out_points;
@@ -903,10 +903,10 @@ std::vector<Vec2d> path_of_change_filament(const DynamicPrintConfig& config, con
   const double end_y_position = end_point.y();
   bool can_travel_form_left = true;
   std::vector<std::pair<double, double>> object_intervals;
-  for (size_t k = 0; k + 3 < object_bboxes.size(); k += 4) {
-    const double min_x = object_bboxes[k];
-    const double min_y = object_bboxes[k + 1];
-    const double max_x = object_bboxes[k + 2];
+  for (size_t k = 0; k + 3 < object_bounding_boxes.size(); k += 4) {
+    const double min_x = object_bounding_boxes[k];
+    const double min_y = object_bounding_boxes[k + 1];
+    const double max_x = object_bounding_boxes[k + 2];
     if (min_x < start_x_position && min_y < cutter_area_y) can_travel_form_left = false;
     std::pair<double, double> object_scope = std::make_pair(min_x - 2, max_x + 2);
     if (object_intervals.empty()) {
@@ -1178,7 +1178,7 @@ ToolchangeText expand_toolchange(const Toolchange& change) {
   toolchange_config.set_key_value("old_filament_e_feedrate", new ConfigOptionInt(old_filament_e_feedrate));
   toolchange_config.set_key_value("new_filament_e_feedrate", new ConfigOptionInt(new_filament_e_feedrate));
   {
-    const std::vector<Vec2d> travel = path_of_change_filament(config, session.facts.object_bboxes);
+    const std::vector<Vec2d> travel = path_of_change_filament(config, session.facts.object_bounding_boxes);
     const char* names[3][2] = { { "travel_point_1_x", "travel_point_1_y" }, { "travel_point_2_x", "travel_point_2_y" },
                                 { "travel_point_3_x", "travel_point_3_y" } };
     for (int point = 0; point < 3; ++point) {
@@ -1189,11 +1189,11 @@ ToolchangeText expand_toolchange(const Toolchange& change) {
   {
     float avoid_x = 110.f;
     if (change.tower && session.facts.has_wipe_tower) {
-      const double* tower_bbox = session.facts.wipe_tower_bbox;
-      avoid_x = wipe_avoid_pos_x(float(tower_bbox[0]), float(tower_bbox[2]), 3.f);
+      const double* tower_bounding_box = session.facts.wipe_tower_bounding_box;
+      avoid_x = wipe_avoid_pos_x(float(tower_bounding_box[0]), float(tower_bounding_box[2]), 3.f);
       // The nozzle heats just outside the tower (append_tcr :1100), clamped to the bed.
       float stop_x = float(change.tower_x);
-      if (stop_x < (tower_bbox[0] + tower_bbox[2]) / 2) stop_x -= 2.f;
+      if (stop_x < (tower_bounding_box[0] + tower_bounding_box[2]) / 2) stop_x -= 2.f;
       else stop_x += 2.f;
       BoundingBoxf bed(config.option<ConfigOptionPoints>("printable_area")->values);
       stop_x = std::clamp(stop_x, float(bed.min.x()), float(bed.max.x()));

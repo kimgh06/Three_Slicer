@@ -52,7 +52,7 @@ struct Params {
     double branch_distance_mm      = 1.0;  // tree_support_branch_distance_organic
     double branch_diameter_angle_deg = 5.0;// tree_support_branch_diameter_angle
     double tip_diameter_mm         = 0.8;  // tree_support_tip_diameter
-    double top_rate_pct            = 30.0; // tree_support_top_rate (%)
+    double top_rate_percent        = 30.0; // tree_support_top_rate (%)
     int    wall_count              = 0;    // tree_support_wall_count (organic applies max(1,·) internally)
     std::string interface_pattern  = "auto";    // auto|rectilinear|concentric|rectilinear_interlaced|grid
     std::string base_pattern       = "default"; // default|rectilinear|rectilinear-grid|honeycomb|lightning|none
@@ -71,7 +71,7 @@ struct Params {
     double support_expansion_mm    = 0.0;     // support_expansion (detect_overhangs xy_expansion)
     bool   bridge_no_support       = false;   // bridge_no_support (effectively a no-op while perimeters are not supplied — documented)
     bool   remove_small_overhang   = true;    // support_remove_small_overhang
-    double threshold_overlap_pct   = 50.0;    // support_threshold_overlap (%, the overlap criterion when θ=0)
+    double threshold_overlap_percent = 50.0;  // support_threshold_overlap (%, the overlap criterion when θ=0)
     // Stage 33: print_config "resolution" (path simplification tolerance, mm). Upstream TreeSupportCommon.hpp:56 takes
     //  TreeSupportSettings::resolution from here and uses it in TreeSupport3D's polygons_simplify.
     //  If the bridge does not pass it, the PrintConfig default (0.01) applies — a chord length of ≈0.4mm on curved branches.
@@ -93,17 +93,17 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
                                const Params&                         params);
 
 // WP2: per-layer surface data (mm) — supplies stTop/stBottom surfaces to the normal support port.
-//  top = faces exposed upward (upstream stTop, the kernel's topSurf), bottom = faces exposed downward (stBottom, the kernel's botSurf).
-struct LayerSurf { std::vector<Ring> top, bottom; };
+//  top = faces exposed upward (upstream stTop, the kernel's topSurface), bottom = faces exposed downward (stBottom, the kernel's bottomSurface).
+struct LayerSurfaces { std::vector<Ring> top, bottom; };
 
 // WP2: the upstream normal (grid/snug) support — PrintObjectSupportMaterial::generate() (a port of the upstream
 //  SupportMaterial.cpp; the stage-11 pipeline: top/bottom contact -> intermediate layers -> SupportGridPattern (AGG) -> interfaces -> toolpaths).
-//  surfs has the same length as the slices (when empty it runs without stTop/stBottom — no bottom contact is generated).
+//  layer_surfaces has the same length as the slices (when empty it runs without stTop/stBottom — no bottom contact is generated).
 //  The output is the same LayerOut as generate() (toolpaths preserving role/height/mm3).
 __attribute__((visibility("default")))
 std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& object_slices_mm,
                                       const std::vector<double>&            layer_print_z_mm,
-                                      const std::vector<LayerSurf>&         surfs,
+                                      const std::vector<LayerSurfaces>&     layer_surfaces,
                                       const Params&                         params);
 
 // wasm heap address of the real support progress counter (a tbb stub atomic) — under mt the UI thread polls it directly via SAB.

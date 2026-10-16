@@ -7,8 +7,8 @@
 #include <cmath>
 #include "../selector_bridge.h"
 
-// build a welded (verts,tris) table mesh like slicer_core::selector_prepare (XY-centered, z-min=0).
-static void weld_table(std::vector<float>& vertex_coords, std::vector<int>& triangle_indices) {
+// build a welded (verts,triangles) table mesh like slicer_core::selector_prepare (XY-centered, z-min=0).
+static void weld_table(std::vector<float>& vertex_coordinates, std::vector<int>& triangle_indices) {
     auto box=[&](std::vector<std::array<double,9>>& out,double origin_x,double origin_y,double origin_z,double size_x,double size_y,double size_z){
         double corners[8][3]={{0,0,0},{size_x,0,0},{size_x,size_y,0},{0,size_y,0},{0,0,size_z},{size_x,0,size_z},{size_x,size_y,size_z},{0,size_y,size_z}};
         int faces[12][3]={{0,1,2},{0,2,3},{4,6,5},{4,7,6},{0,1,5},{0,5,4},{1,2,6},{1,6,5},{2,3,7},{2,7,6},{3,0,4},{3,4,7}};
@@ -45,10 +45,10 @@ static void weld_table(std::vector<float>& vertex_coords, std::vector<int>& tria
         std::array<long long,3> key{(long long)std::llround(x*1e4),(long long)std::llround(y*1e4),(long long)std::llround(z*1e4)};
         auto it=vertex_ids.find(key);
         if(it!=vertex_ids.end())return it->second;
-        int id=(int)(vertex_coords.size()/3);
-        vertex_coords.push_back(x);
-        vertex_coords.push_back(y);
-        vertex_coords.push_back(z);
+        int id=(int)(vertex_coordinates.size()/3);
+        vertex_coordinates.push_back(x);
+        vertex_coordinates.push_back(y);
+        vertex_coordinates.push_back(z);
         vertex_ids[key]=id;
         return id;
     };
@@ -57,22 +57,22 @@ static void weld_table(std::vector<float>& vertex_coords, std::vector<int>& tria
 }
 
 int main() {
-    std::vector<float> vertex_coords;
+    std::vector<float> vertex_coordinates;
     std::vector<int> triangle_indices;
-    weld_table(vertex_coords, triangle_indices);
-    selector_bridge::construct(vertex_coords, triangle_indices);
-    printf("selector: facet_count=%d verts=%zu\n", selector_bridge::facet_count(), vertex_coords.size()/3);
+    weld_table(vertex_coordinates, triangle_indices);
+    selector_bridge::construct(vertex_coordinates, triangle_indices);
+    printf("selector: facet_count=%d verts=%zu\n", selector_bridge::facet_count(), vertex_coordinates.size()/3);
     selector_bridge::paint(12, 0,0,10, 0,0,-40, 20.f, selector_bridge::STATE_ENFORCER, selector_bridge::CURSOR_SPHERE);   // enforcer on cap underside
     printf("enforcer painted facets=%d\n", selector_bridge::painted_count(true));
-    std::vector<float> overlay_coords = selector_bridge::overlay(true);
-    printf("overlay tris=%zu\n", overlay_coords.size()/9);
-    std::vector<double> zs;
-    for(double z=0.1; z<14; z+=0.2) zs.push_back(z);
-    auto projected = selector_bridge::project_layers(zs, true);
+    std::vector<float> overlay_coordinates = selector_bridge::overlay(true);
+    printf("overlay tris=%zu\n", overlay_coordinates.size()/9);
+    std::vector<double> slice_heights;
+    for(double z=0.1; z<14; z+=0.2) slice_heights.push_back(z);
+    auto projected = selector_bridge::project_layers(slice_heights, true);
     int nonempty_layers=0;
     for(size_t i=0;i<projected.size();++i)
         if(!projected[i].empty()){
-            if(nonempty_layers<4) printf("  layer z=%.2f rings=%zu\n",zs[i],projected[i].size());
+            if(nonempty_layers<4) printf("  layer z=%.2f rings=%zu\n",slice_heights[i],projected[i].size());
             nonempty_layers++;
         }
     printf("footprint nonzero layers=%d\n", nonempty_layers);

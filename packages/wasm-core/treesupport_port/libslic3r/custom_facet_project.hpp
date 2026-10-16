@@ -13,14 +13,14 @@
 namespace Slic3r {
 
 inline std::vector<Polygons> project_custom_facets_footprint(const indexed_triangle_set &facets,
-                                                             const std::vector<float> &zs)
+                                                             const std::vector<float> &slice_heights)
 {
-    std::vector<Polygons> out(zs.size());
-    if (facets.indices.empty() || zs.empty()) return out;
+    std::vector<Polygons> out(slice_heights.size());
+    if (facets.indices.empty() || slice_heights.empty()) return out;
     // half the layer spacing (uniform layers) — tolerance so a flat face lands on its nearest plane.
     float half_gap;
-    if (zs.size() > 1)
-        half_gap = std::max(1e-4f, 0.5f * std::abs(zs[1] - zs[0]));
+    if (slice_heights.size() > 1)
+        half_gap = std::max(1e-4f, 0.5f * std::abs(slice_heights[1] - slice_heights[0]));
     else
         half_gap = 1e-3f;
     for (const auto &face : facets.indices) {
@@ -41,8 +41,8 @@ inline std::vector<Polygons> project_custom_facets_footprint(const indexed_trian
             triangle.points = Points{point_a, point_b, point_c};
         else
             triangle.points = Points{point_a, point_c, point_b};
-        for (size_t i = 0; i < zs.size(); ++i)
-            if (zs[i] >= z_min - half_gap && zs[i] <= z_max + half_gap)
+        for (size_t i = 0; i < slice_heights.size(); ++i)
+            if (slice_heights[i] >= z_min - half_gap && slice_heights[i] <= z_max + half_gap)
                 out[i].push_back(triangle);
     }
     for (Polygons &polygons : out)
