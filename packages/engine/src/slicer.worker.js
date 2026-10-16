@@ -27,7 +27,10 @@ import { FILL_TOOLS } from 'three-slicer-viewer/paint'
 //  and createSlicerClient both take an object and stringify it for you. One object, two shapes, and the difference
 //  showed up only at the boundary. The worker now accepts either; the SLA branch always did, which is what made
 //  the split arbitrary rather than principled.
-const paramsText = (params) => (typeof params === 'string' ? params : JSON.stringify(params ?? {}))
+const paramsText = (params) => {
+  if (typeof params === 'string') return params
+  return JSON.stringify(params ?? {})
+}
 
 let quiet = false
 const say = (level, ...args) => { if (!quiet) console[level](...args) }
@@ -120,7 +123,8 @@ const validatedPaintStates = (states) => {
 //  flow (viewer use_slicer.js) reads those two fields and nothing else.
 const reportedPaintStates = (message, paintedState) => {
   if (Array.isArray(message.states)) return validatedPaintStates(message.states)
-  return paintedState === null ? null : [paintedState]
+  if (paintedState === null) return null
+  return [paintedState]
 }
 
 // The state a paint message asks for: an explicit `state` wins, otherwise null meaning "use the legacy boolean path".
@@ -133,7 +137,10 @@ const explicitPaintState = (message) => {
 
 // Brush cursor shape (selector_bridge.h CURSOR_*). Sent as a name because the message is a protocol a host writes
 //  by hand; the integer stays on this side of it. Anything unknown is the sphere the brush has always used.
-const cursorShapeOf = (message) => (message.cursor === 'circle' ? 1 : 0)
+const cursorShapeOf = (message) => {
+  if (message.cursor === 'circle') return 1
+  return 0
+}
 
 // The tools that are not the radius brush: upstream's Smart fill and Bucket fill, plus its single-triangle POINTER
 //  cursor — which is literally bucket fill with propagation off, so the three share one dispatch. None of them takes
@@ -150,8 +157,15 @@ const strokeFrom = (message) =>
 // The fill modes the kernel's fill_preview takes (selector_bridge.h FILL_*), by the tool name the protocol uses.
 const FILL_PREVIEW_MODE = { smart: 0, bucket: 1, triangle: 2 }
 
+// A fill's angle limit in degrees, 30 when the message does not carry one. applyFill and the fill preview both
+//  read it here, so the preview selects what the fill will.
+const fillAngleOf = (message) => {
+  if (Number.isFinite(message.angle)) return message.angle
+  return 30
+}
+
 const applyFill = (Module, message, state) => {
-  const angle = Number.isFinite(message.angle) ? message.angle : 30
+  const angle = fillAngleOf(message)
   if (message.tool === 'smart') {
     if (state === null) Module.selector_seed_fill_erase(message.facet, message.hx, message.hy, message.hz, angle)
     else Module.selector_seed_fill(message.facet, message.hx, message.hy, message.hz, angle, state)
@@ -160,7 +174,8 @@ const applyFill = (Module, message, state) => {
   // Upstream passes -1 as the angle when it is not propagating (GLGizmoPainterBase.cpp ~861): with a single facet
   //  there is no neighbour to measure an angle against, and -1 is how that call says "no angle limit".
   const propagate = message.tool === 'bucket'
-  const bucketAngle = propagate ? angle : -1
+  let bucketAngle = -1
+  if (propagate) bucketAngle = angle
   if (state === null) Module.selector_bucket_fill_erase(message.facet, message.hx, message.hy, message.hz, bucketAngle, propagate)
   else Module.selector_bucket_fill(message.facet, message.hx, message.hy, message.hz, bucketAngle, propagate, state)
 }
@@ -276,7 +291,9 @@ const handleMessage = async (e) => {
     // `keepPaint` says the mesh is the same model in a new place, so the marks carry over — the reply reports whether
     //  they actually did, since a face-count change makes the kernel fall back to a clean registration.
     if (d.cmd === 'prepare') {
-      const kept = d.keepPaint ? Module.selector_reprepare(new Uint8Array(d.stl)) : (Module.selector_prepare(new Uint8Array(d.stl)), false)
+      let kept = false
+      if (d.keepPaint) kept = Module.selector_reprepare(new Uint8Array(d.stl))
+      else Module.selector_prepare(new Uint8Array(d.stl))
       reply({ type: 'prepared', facets: Module.selector_facet_count(), kept })
       return
     }
@@ -321,7 +338,8 @@ const handleMessage = async (e) => {
     //  A kernel built before this binding existed simply has no selector_import_paint; the reply says applied:0
     //  rather than throwing, because losing a 3mf's paint must not also lose its geometry.
     if (d.cmd === 'importPaint') {
-      const applied = Module.selector_import_paint ? Module.selector_import_paint(d.facets, d.hex ?? '') : 0
+      let applied = 0
+      if (Module.selector_import_paint) applied = Module.selector_import_paint(d.facets, d.hex ?? '')
       const importedReply = paintedReply(Module, d, null)
       importedReply.applied = applied
       reply(importedReply); return
@@ -332,7 +350,8 @@ const handleMessage = async (e) => {
     //  which objects were merged in what order is the viewer's knowledge. A kernel built before the binding existed
     //  reports supported:false rather than throwing — the save then falls back to the paint it imported.
     if (d.cmd === 'exportPaint') {
-      const exported = Module.selector_export_paint ? Module.selector_export_paint() : null
+      let exported = null
+      if (Module.selector_export_paint) exported = Module.selector_export_paint()
       reply({ type: 'paintExport', supported: !!Module.selector_export_paint,
                          facets: exported?.facets ?? [], hex: exported?.hex ?? '' })
       return
@@ -358,9 +377,11 @@ const handleMessage = async (e) => {
       // enf/blk stay unconditional for the listener that predates the per-state map. When the request names states,
       //  they are the ONLY ones read, so building the other two would be pure waste on the hot path.
       const wanted = states && !states.includes(PAINT_STATE_ENFORCER) && !states.includes(PAINT_STATE_BLOCKER)
-      const overlayReply = { type: 'overlay',
-        enf: wanted ? EMPTY_OVERLAY : Module.selector_overlay(true),
-        blk: wanted ? EMPTY_OVERLAY : Module.selector_overlay(false) }
+      const overlayReply = { type: 'overlay', enf: EMPTY_OVERLAY, blk: EMPTY_OVERLAY }
+      if (!wanted) {
+        overlayReply.enf = Module.selector_overlay(true)
+        overlayReply.blk = Module.selector_overlay(false)
+      }
       if (states) overlayReply.overlays = Object.fromEntries(states.map(state => [state, Module.selector_overlay_state(state)]))
       const transfer = [overlayReply.enf, overlayReply.blk, ...Object.values(overlayReply.overlays ?? {})]
         .filter(a => a?.buffer && a.byteLength > 0).map(a => a.buffer)
@@ -374,13 +395,15 @@ const handleMessage = async (e) => {
     if (d.cmd === 'fillPreview') {
       if (!Module.selector_fill_preview) { reply({ type: 'fillPreview', supported: false, tris: EMPTY_OVERLAY }); return }
       if (d.clear) { Module.selector_fill_preview_clear(); reply({ type: 'fillPreview', supported: true, tris: EMPTY_OVERLAY }); return }
-      const angle = Number.isFinite(d.angle) ? d.angle : 30
       const mode = FILL_PREVIEW_MODE[d.tool] ?? FILL_PREVIEW_MODE.smart
       // Upstream's -1 for the non-propagating case, the same value applyFill sends: one facet has no neighbour to
       //  measure an angle against.
-      const tris = Module.selector_fill_preview(d.facet, d.hx, d.hy, d.hz, mode === FILL_PREVIEW_MODE.triangle ? -1 : angle, mode)
-      reply({ type: 'fillPreview', supported: true, tris },
-                       tris?.buffer && tris.byteLength > 0 ? [tris.buffer] : [])
+      let previewAngle = fillAngleOf(d)
+      if (mode === FILL_PREVIEW_MODE.triangle) previewAngle = -1
+      const previewTriangles = Module.selector_fill_preview(d.facet, d.hx, d.hy, d.hz, previewAngle, mode)
+      const transfer = []
+      if (previewTriangles?.buffer && previewTriangles.byteLength > 0) transfer.push(previewTriangles.buffer)
+      reply({ type: 'fillPreview', supported: true, tris: previewTriangles }, transfer)
       return
     }
     // paintMode: the brush-wide options upstream keeps on the gizmo — the overhang restriction and the section
