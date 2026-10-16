@@ -15,15 +15,15 @@
 //  alone, so the default configuration still emits no T command and no tool bits at all.
 static void use_tool(GcodeWriter& writer, int tool) {
   writer.set_tool(tool);
-  if (tool >= 0) g_seg_tool = tool;
+  if (tool >= 0) g_segment_tool = tool;
 }
 
 // G003 step 1: the normal layer emission body extracted — a single implementation shared by the serial path and (in step 2) the parallel writer.
 //  Behavior unchanged (a pure move) — equivalence verified by the golden and st vs mt gates.
 static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, std::vector<float>& widths,
-                            int layerIndex, LayerData& layerData, EmitPrecompute& pre, const Params& params,
+                            int layerIndex, LayerData& layerData, EmitPrecompute& precompute, const Params& params,
                             double layerZ, double defaultWidth, int layerCount, int raftLayers, int travelFeed,
-                            int seamMode, bool scarfOn, bool ironOn, SeamContext& seamCtx) {
+                            int seamMode, bool scarfOn, bool ironOn, SeamContext& seamContext) {
     char comment[72];
     (void)comment;
     (void)widths;
@@ -31,17 +31,17 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
     writer.layer_z(layerZ, travelFeed);
     if (layerIndex + raftLayers == 1) writer.second_layer_begin();   // the second printed layer (the raft's layers come first)
 
-    // --- Emission path: unpack the compute_pre results (aliases so the emission code stays untouched) ---
-    Paths& gapLines = pre.gapLines;
-    Paths& solidLines = pre.solidLines;
-    Paths& topLines = pre.topLines;
-    Paths& bridgeLines = pre.bridgeLines;
-    Paths& sparseLines = pre.sparseLines;
-    Paths& supportInterfaceLines = pre.supI;
-    Paths& supportBaseLines = pre.supB;
-    Paths& skirtBrimLoops = pre.flExtra;
-    const bool brim = pre.brim;
-    const RoleFeeds& feeds = pre.feeds;   // the feed of each role (emit.cpp role_feeds; fPrint for all without per-role speeds)
+    // --- Emission path: unpack the precompute_layer_emit results (aliases so the emission code stays untouched) ---
+    Paths& gapLines = precompute.gapLines;
+    Paths& solidLines = precompute.solidLines;
+    Paths& topLines = precompute.topLines;
+    Paths& bridgeLines = precompute.bridgeLines;
+    Paths& sparseLines = precompute.sparseLines;
+    Paths& supportInterfaceLines = precompute.supportInterfaceLines;
+    Paths& supportBaseLines = precompute.supportBaseLines;
+    Paths& skirtBrimLoops = precompute.skirtBrimLoops;
+    const bool brim = precompute.brim;
+    const RoleFeeds& feeds = precompute.feeds;   // the feed of each role (emit.cpp role_feeds; printFeed for all without per-role speeds)
     // Stage 21: per-feature widths (the first layer uses the initial_layer values throughout) — scalars, so they are recomputed at emission (same formula).
     bool firstLayer = (layerIndex==0 && raftLayers==0);
     double outerWidth = params.outer_wall_line_width;
@@ -55,10 +55,10 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
     double sparseWidth = params.sparse_infill_line_width;
     if (firstLayer) sparseWidth = params.initial_layer_line_width;
 
-    // Stage 21: helper that applies a feature width — set_e_per_mm_width (E) and g_seg_w_cur (the ribbon) together. With the default (0.42) the values are unchanged.
+    // Stage 21: helper that applies a feature width — set_e_per_mm_width (E) and g_current_segment_width (the ribbon) together. With the default (0.42) the values are unchanged.
     auto setWidth = [&](double width){
       writer.set_e_per_mm_width(width, layerData.thickness, params);
-      g_seg_w_cur = (float)width;
+      g_current_segment_width = (float)width;
     };
   // Upstream's role flow ratio for the feature about to be emitted (emit.cpp role_flow_ratio), on the current width,
   //  and the role the writer's acceleration and jerk follow (GcodeWriter::set_feature).
@@ -84,31 +84,31 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
       }
       use_tool(writer, params.single_tool);
     }
-    if (params.enable_support && !layerData.supTree.empty()) {                    // stages 18/19: the real organic tree support (per-path width)
+    if (params.enable_support && !layerData.supportTree.empty()) {                    // stages 18/19: the real organic tree support (per-path width)
       writer.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(writer, supportTool);                                       // branches are one body: the base filament covers them
       writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_variable_width sets each branch's own section
       writer.set_feature((int)FlowRole::Support);
-      emit_lines_variable_width(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, feeds.of(FlowRole::Support), travelFeed);
+      emit_lines_variable_width(writer, toolpath, layerData.supportTree, layerZ, layerData.thickness, params, 5.0f, feeds.of(FlowRole::Support), travelFeed);
       use_tool(writer, params.single_tool);
     }
     if (!skirtBrimLoops.empty()) {
       flow(FlowRole::Skirt);
       if (brim) writer.raw("; skirt/brim");
       else writer.raw("; skirt");
-      emit_loops(writer, toolpath, skirtBrimLoops, layerZ, 4.0f, feeds.of(FlowRole::Skirt), travelFeed, -1, seamCtx);
+      emit_loops(writer, toolpath, skirtBrimLoops, layerZ, 4.0f, feeds.of(FlowRole::Skirt), travelFeed, -1, seamContext);
     }
-    if (!pre.brimLoops.empty()) {
+    if (!precompute.brimLoops.empty()) {
       flow(FlowRole::Brim);
       writer.raw("; brim");
-      emit_loops(writer, toolpath, pre.brimLoops, layerZ, 4.0f, feeds.of(FlowRole::Brim), travelFeed, -1, seamCtx);
+      emit_loops(writer, toolpath, precompute.brimLoops, layerZ, 4.0f, feeds.of(FlowRole::Brim), travelFeed, -1, seamContext);
     }
     if (params.wall_generator=="arachne" && !layerData.arachneWalls.empty()) {
       writer.raw("; walls (Arachne — real ported WallToolPaths, variable width)");
       emit_arachne_walls(writer, toolpath, layerData.arachneWalls, layerZ, layerData.thickness, params, feeds, travelFeed);
       writer.role_flow = 1.0;
       writer.set_e_per_mm(layerData.thickness, params);   // restore the default width/flow (for the infill that follows)
-      g_seg_w_cur=(float)defaultWidth;
+      g_current_segment_width=(float)defaultWidth;
     } else if (params.wall_generator != "arachne") {
       // The classic generator's walls in upstream's print order (classic_bridge.cpp): each loop at the width upstream
       //  gave it (BBS's narrow external loop is thinner than outer_wall_line_width), thin walls at their own width.
@@ -123,8 +123,8 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
           continue;
         }
         setWidth(wall.width);
-        if (wall.inset == 0 && scarfOn) emit_scarf_loop(writer, toolpath, wall.path, layerZ, layerData.thickness, wallFeed, travelFeed, seamMode, seamCtx);
-        else emit_loops(writer, toolpath, Paths{wall.path}, layerZ, 1.0f, wallFeed, travelFeed, seamMode, seamCtx, wall.inset == 0);  // record the seam only for the outer wall
+        if (wall.inset == 0 && scarfOn) emit_scarf_loop(writer, toolpath, wall.path, layerZ, layerData.thickness, wallFeed, travelFeed, seamMode, seamContext);
+        else emit_loops(writer, toolpath, Paths{wall.path}, layerZ, 1.0f, wallFeed, travelFeed, seamMode, seamContext, wall.inset == 0);  // record the seam only for the outer wall
       }
     } else {
       for (size_t wallIndex=0; wallIndex<layerData.walls.size(); ++wallIndex) {
@@ -137,9 +137,9 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
         if (wallIndex==0) wallWidth = outerWidth;
         setWidth(wallWidth);   // stage 21: outer wall (wallIndex==0) = outer_wall_line_width, inner walls = inner_wall_line_width
         if (wallIndex==0 && scarfOn) {
-          for (Path wallPath : layerData.walls[wallIndex]) emit_scarf_loop(writer, toolpath, wallPath, layerZ, layerData.thickness, wallFeed, travelFeed, seamMode, seamCtx);
+          for (Path wallPath : layerData.walls[wallIndex]) emit_scarf_loop(writer, toolpath, wallPath, layerZ, layerData.thickness, wallFeed, travelFeed, seamMode, seamContext);
         }
-        else emit_loops(writer, toolpath, layerData.walls[wallIndex], layerZ, 1.0f, wallFeed, travelFeed, seamMode, seamCtx, wallIndex==0);  // record the seam only for the outer wall (wallIndex==0)
+        else emit_loops(writer, toolpath, layerData.walls[wallIndex], layerZ, 1.0f, wallFeed, travelFeed, seamMode, seamContext, wallIndex==0);  // record the seam only for the outer wall (wallIndex==0)
       }
     }
     writer.role_flow = role_flow_ratio(params, FlowRole::GapFill, writer.on_first_layer);
@@ -172,11 +172,11 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
       setWidth(solidWidth);
       emit_lines(writer, toolpath, solidLines, layerZ, 3.0f, feeds.of(FlowRole::InternalSolid), travelFeed);
     }
-    if (!pre.bottomLines.empty()) {
+    if (!precompute.bottomLines.empty()) {
       writer.role_flow = role_flow_ratio(params, FlowRole::BottomSurface, writer.on_first_layer);
       writer.set_feature((int)FlowRole::BottomSurface);
       setWidth(solidWidth);
-      emit_lines(writer, toolpath, pre.bottomLines, layerZ, 3.0f, feeds.of(FlowRole::BottomSurface), travelFeed);
+      emit_lines(writer, toolpath, precompute.bottomLines, layerZ, 3.0f, feeds.of(FlowRole::BottomSurface), travelFeed);
     }
     // topLines is the top SHELL region split for its width (pass2.cpp), which upstream prints as solid infill.
     writer.role_flow = role_flow_ratio(params, FlowRole::InternalSolid, writer.on_first_layer);
@@ -185,11 +185,11 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
       setWidth(topWidth);
       emit_lines(writer, toolpath, topLines,   layerZ, 3.0f, feeds.of(FlowRole::InternalSolid), travelFeed);
     }
-    if (!pre.topExposedLines.empty()) {
+    if (!precompute.topExposedLines.empty()) {
       writer.role_flow = role_flow_ratio(params, FlowRole::TopSurface, writer.on_first_layer);
       writer.set_feature((int)FlowRole::TopSurface);
       setWidth(topWidth);
-      emit_lines(writer, toolpath, pre.topExposedLines, layerZ, 3.0f, feeds.of(FlowRole::TopSurface), travelFeed);
+      emit_lines(writer, toolpath, precompute.topExposedLines, layerZ, 3.0f, feeds.of(FlowRole::TopSurface), travelFeed);
     }
     writer.role_flow = role_flow_ratio(params, FlowRole::SparseInfill, writer.on_first_layer);
     writer.set_feature((int)FlowRole::SparseInfill);
@@ -198,9 +198,9 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
       emit_lines(writer, toolpath, sparseLines,layerZ, 2.0f, feeds.of(FlowRole::SparseInfill), travelFeed);
     }
 
-    // Ironing (type10): a low-flow second pass at the same z over exposed top solid (the lines come from compute_pre).
+    // Ironing (type10): a low-flow second pass at the same z over exposed top solid (the lines come from precompute_layer_emit).
     {
-      Paths& ironLines = pre.ironLines;
+      Paths& ironLines = precompute.ironLines;
       if (!ironLines.empty()) {
         writer.raw("; ironing");
         writer.set_feature((int)FlowRole::Ironing);
@@ -220,9 +220,9 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
 // G003 step 2: full emission of one layer (setup + the empty/normal branches) — a single implementation shared by the serial path and the parallel writer.
 //  Spiral mode is inlined at the call site (guarded out of parallelism), and scarf/PE tags/PE-lite/real PE also fall back to serial via the parEmit guard.
 void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vector<float>& widths,
-                           int layerIndex, LayerData& layerData, EmitPrecompute& pre, const Params& params,
+                           int layerIndex, LayerData& layerData, EmitPrecompute& precompute, const Params& params,
                            double layerZ, double defaultWidth, int layerCount, int raftLayers, int travelFeed,
-                           int seamMode, bool scarfOn, bool ironOn, SeamContext& seamCtx) {
+                           int seamMode, bool scarfOn, bool ironOn, SeamContext& seamContext) {
   writer.role_flow = 1.0;                              // no role ratio leaks across a layer boundary
   writer.on_first_layer = (layerIndex == 0 && raftLayers == 0);      // with a raft the first layer is the raft's (raft.cpp)
   writer.set_e_per_mm(layerData.thickness, params);
@@ -233,14 +233,14 @@ void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vect
     else writer.island = std::move(layerData.island);
   }
   if (!writer.dry_run) {
-    writer.overhang_area = std::move(pre.overhangArea);
-    writer.internal_area = std::move(pre.internalArea);
+    writer.overhang_area = std::move(precompute.overhangArea);
+    writer.internal_area = std::move(precompute.internalArea);
   }
-  seamCtx.randomState = 2654435761u * (uint32_t)(layerIndex+1);
+  seamContext.randomState = 2654435761u * (uint32_t)(layerIndex+1);
   std::vector<float>* segmentWidths = &widths;
   if (writer.dry_run) segmentWidths = nullptr;
-  g_seg_w = segmentWidths;
-  g_seg_w_cur = (float)defaultWidth;
+  g_segment_widths = segmentWidths;
+  g_current_segment_width = (float)defaultWidth;
   char comment[72];
   if (layerData.contour.empty()) {
     // Stage 33 [floating model fix] Support must be emitted even on layers with no model.
@@ -252,8 +252,8 @@ void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vect
     writer.set_e_per_mm(layerData.thickness, params);
     writer.pe_reset();
     writer.set_fan(fan_S(layerIndex, params));
-    Paths& supportInterfaceLines = pre.supI;
-    Paths& supportBaseLines = pre.supB;
+    Paths& supportInterfaceLines = precompute.supportInterfaceLines;
+    Paths& supportBaseLines = precompute.supportBaseLines;
     const int supportTool  = Params::support_tool_of(params.support_filament);
     const int interfaceTool = Params::support_tool_of(params.support_interface_filament);
     if (!supportInterfaceLines.empty() || !supportBaseLines.empty()) {
@@ -265,21 +265,21 @@ void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vect
       if (!supportInterfaceLines.empty()) {
         use_tool(writer, interfaceTool);
         supportFlow(FlowRole::SupportInterface);
-        emit_lines(writer, toolpath, supportInterfaceLines, layerZ, 5.0f, pre.feeds.of(FlowRole::SupportInterface), travelFeed);
+        emit_lines(writer, toolpath, supportInterfaceLines, layerZ, 5.0f, precompute.feeds.of(FlowRole::SupportInterface), travelFeed);
       }
       if (!supportBaseLines.empty()) {
         use_tool(writer, supportTool);
         supportFlow(FlowRole::Support);
-        emit_lines(writer, toolpath, supportBaseLines, layerZ, 5.0f, pre.feeds.of(FlowRole::Support), travelFeed);
+        emit_lines(writer, toolpath, supportBaseLines, layerZ, 5.0f, precompute.feeds.of(FlowRole::Support), travelFeed);
       }
       use_tool(writer, params.single_tool);
     }
-    if (params.enable_support && !layerData.supTree.empty()) {
+    if (params.enable_support && !layerData.supportTree.empty()) {
       writer.raw("; support (organic tree — real ported TreeSupport)");
       use_tool(writer, supportTool);
       writer.role_flow = role_flow_ratio(params, FlowRole::Support, writer.on_first_layer);   // emit_lines_variable_width sets each branch's section
       writer.set_feature((int)FlowRole::Support);
-      emit_lines_variable_width(writer, toolpath, layerData.supTree, layerZ, layerData.thickness, params, 5.0f, pre.feeds.of(FlowRole::Support), travelFeed);
+      emit_lines_variable_width(writer, toolpath, layerData.supportTree, layerZ, layerData.thickness, params, 5.0f, precompute.feeds.of(FlowRole::Support), travelFeed);
       use_tool(writer, params.single_tool);
     }
     return;
@@ -287,5 +287,5 @@ void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vect
   std::snprintf(comment,sizeof comment,"; LAYER %d Z%.3f",layerIndex,layerZ);
   writer.layer_begin(comment);
   writer.set_fan(fan_S(layerIndex, params));
-  emit_layer_full(writer, toolpath, widths, layerIndex, layerData, pre, params, layerZ, defaultWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamCtx);
+  emit_layer_full(writer, toolpath, widths, layerIndex, layerData, precompute, params, layerZ, defaultWidth, layerCount, raftLayers, travelFeed, seamMode, scarfOn, ironOn, seamContext);
 }
