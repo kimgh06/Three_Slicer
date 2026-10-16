@@ -13,7 +13,7 @@ static void set2(ConfigOptionFloats& option, float value) { option.values = { (d
 
 // Direct E-parse over one chunk, carrying M82/M83 (absolute/relative) + G92 E-reset state across calls
 //  so a whole-string parse and a sequence of line-aligned chunk parses yield the same total.
-static void parse_filament_chunk(const std::string& gcode, double& total, double& e_abs, bool& relative) {
+static void parse_filament_chunk(const std::string& gcode, double& total, double& e_absolute, bool& relative) {
     size_t i = 0, text_size = gcode.size();
     while (i < text_size) {
         size_t line_end = gcode.find('\n', i);
@@ -45,15 +45,15 @@ static void parse_filament_chunk(const std::string& gcode, double& total, double
             }
             if (e_position != std::string::npos) {
                 double value = std::atof(line.c_str() + e_position + 1);
-                if (isG92) { e_abs = value; }
+                if (isG92) { e_absolute = value; }
                 else if (relative) {
                     if (value > 0 && hasXY) total += value;
-                    else if (!hasXY) e_abs += value;
+                    else if (!hasXY) e_absolute += value;
                 }
                 else {
-                    double delta = value - e_abs;
+                    double delta = value - e_absolute;
                     if (delta > 0 && hasXY) total += delta;
-                    e_abs = value;
+                    e_absolute = value;
                 }
             }
         }
@@ -63,9 +63,9 @@ static void parse_filament_chunk(const std::string& gcode, double& total, double
 
 // Direct E-parse: sum positive extrusion, honoring M82/M83 (absolute/relative) + G92 E resets.
 static double parse_filament_mm(const std::string& gcode) {
-    double total = 0.0, e_abs = 0.0;
+    double total = 0.0, e_absolute = 0.0;
     bool relative = false;
-    parse_filament_chunk(gcode, total, e_abs, relative);
+    parse_filament_chunk(gcode, total, e_absolute, relative);
     return total;
 }
 // Inject the machine limits into a PrintConfig IN PLACE (shared by batch estimate + streaming begin).
@@ -100,7 +100,7 @@ static Result build_result(GCodeProcessor& processor, double filament_mm) {
     const int normal_mode = (int)PrintEstimatedStatistics::ETimeMode::Normal;
     out.total_seconds = processor_result.print_statistics.modes[normal_mode].time;
     out.moves   = (long)processor_result.moves.size();
-    std::map<long, double> layer_acc;   // key = round(position.z * 1000)
+    std::map<long, double> layer_time_by_z;   // key = round(position.z * 1000)
     for (const auto& move : processor_result.moves) {
         const float move_time = move.time[normal_mode];
         if (move.type == EMoveType::Extrude) {
@@ -108,10 +108,10 @@ static Result build_result(GCodeProcessor& processor, double filament_mm) {
             out.role_seconds[(int)move.extrusion_role] += move_time;
         }
         else if (move.type == EMoveType::Travel) out.travel_seconds += move_time;
-        if (move_time > 0.f) layer_acc[(long)std::lround((double)move.position.z() * 1000.0)] += move_time;
+        if (move_time > 0.f) layer_time_by_z[(long)std::lround((double)move.position.z() * 1000.0)] += move_time;
     }
-    out.layer_seconds.reserve(layer_acc.size());
-    for (auto& layer_entry : layer_acc) out.layer_seconds.push_back(layer_entry.second);
+    out.layer_seconds.reserve(layer_time_by_z.size());
+    for (auto& layer_entry : layer_time_by_z) out.layer_seconds.push_back(layer_entry.second);
     double first_layer_seconds = 0.0;
     if (!out.layer_seconds.empty()) first_layer_seconds = out.layer_seconds.front();
     out.first_layer_seconds = first_layer_seconds;
@@ -122,21 +122,21 @@ static Result build_result(GCodeProcessor& processor, double filament_mm) {
 
 // ---- streaming state (one active stream; file-static like the rest of the bridge) ----
 namespace {
-    GCodeProcessor* g_gp = nullptr;
-    double g_fil_total = 0.0, g_fil_e_abs = 0.0;
-    bool g_fil_relative = false;
+    GCodeProcessor* g_processor = nullptr;
+    double g_filament_total = 0.0, g_filament_e_absolute = 0.0;
+    bool g_filament_relative = false;
     // hand-over past the move cap: the text fed so far (kept only when a fallback was given — in batch mode the whole G-code is
     //  resident in GcodeWriter::gcode anyway, so this is at most one more copy of the part before the cap), and the transcribed estimator that
     //  takes over. Measured on a 774k-facet model (2.2M moves, 58.6MB): without the hand-over the feeder's work was discarded at
     //  the cap and the whole text was re-parsed serially after the last layer, 3.2-3.7s of a 6.8s mt slice.
     bool g_keep_text = false;
     std::string g_kept;
-    gcode_time::Limits g_fb_lim;
-    gcode_time::Estimator* g_fb = nullptr;
+    gcode_time::Limits g_fallback_limits;
+    gcode_time::Estimator* g_fallback_estimator = nullptr;
 
     void reset_fallback() {
-        delete g_fb;
-        g_fb = nullptr;
+        delete g_fallback_estimator;
+        g_fallback_estimator = nullptr;
         g_kept.clear();
         g_kept.shrink_to_fit();
         g_keep_text = false;
@@ -144,18 +144,18 @@ namespace {
 }
 
 void estimate_begin(const Limits& limits, const gcode_time::Limits* fallback) {
-    delete g_gp;
-    g_gp = new GCodeProcessor();
+    delete g_processor;
+    g_processor = new GCodeProcessor();
     PrintConfig config;
     fill_limits(config, limits);   // in-place (apply_config copies values out; no retained ref)
-    g_gp->apply_config(config);
-    g_fil_total = 0.0;
-    g_fil_e_abs = 0.0;
-    g_fil_relative = false;
+    g_processor->apply_config(config);
+    g_filament_total = 0.0;
+    g_filament_e_absolute = 0.0;
+    g_filament_relative = false;
     reset_fallback();
     if (fallback) {
         g_keep_text = true;
-        g_fb_lim = *fallback;
+        g_fallback_limits = *fallback;
     }
 }
 // ponytail: resident move cap — GCodeProcessor keeps ~100B per move resident in result.moves (measured at 4.45M moves,
@@ -167,30 +167,30 @@ static const size_t MOVES_CAP = 2000000;
 
 void estimate_feed(const std::string& chunk) {
     if (chunk.empty()) return;
-    if (g_fb) {
-        g_fb->feed(chunk);
+    if (g_fallback_estimator) {
+        g_fallback_estimator->feed(chunk);
         return;
     }
-    if (!g_gp) return;
-    try { g_gp->process_buffer(chunk); } catch (...) {}
-    if (g_gp->get_result().moves.size() > MOVES_CAP) {
-        delete g_gp;
-        g_gp = nullptr;
+    if (!g_processor) return;
+    try { g_processor->process_buffer(chunk); } catch (...) {}
+    if (g_processor->get_result().moves.size() > MOVES_CAP) {
+        delete g_processor;
+        g_processor = nullptr;
         if (!g_keep_text) return;
-        g_fb = new gcode_time::Estimator(g_fb_lim);      // the same input the whole-text fallback used to parse, in the same order
-        g_fb->feed(g_kept);
+        g_fallback_estimator = new gcode_time::Estimator(g_fallback_limits);      // the same input the whole-text fallback used to parse, in the same order
+        g_fallback_estimator->feed(g_kept);
         g_kept.clear();
         g_kept.shrink_to_fit();
-        g_fb->feed(chunk);
+        g_fallback_estimator->feed(chunk);
         return;
     }
-    parse_filament_chunk(chunk, g_fil_total, g_fil_e_abs, g_fil_relative);
+    parse_filament_chunk(chunk, g_filament_total, g_filament_e_absolute, g_filament_relative);
     if (g_keep_text) g_kept += chunk;
 }
 Result estimate_end() {
     Result out;
-    if (g_fb) {
-        gcode_time::Result transcribed = g_fb->end();
+    if (g_fallback_estimator) {
+        gcode_time::Result transcribed = g_fallback_estimator->end();
         out.total_seconds = transcribed.total_seconds;
         out.layer_seconds = std::move(transcribed.layer_seconds);
         out.first_layer_seconds = transcribed.first_layer_seconds;
@@ -204,17 +204,17 @@ Result estimate_end() {
         reset_fallback();
         return out;
     }
-    if (!g_gp) {
+    if (!g_processor) {
         reset_fallback();
         return out;
     }
     try {
-        g_gp->finalize(false);
-        out = build_result(*g_gp, g_fil_total);
+        g_processor->finalize(false);
+        out = build_result(*g_processor, g_filament_total);
     }
     catch (...) { out.ok = false; }
-    delete g_gp;
-    g_gp = nullptr;
+    delete g_processor;
+    g_processor = nullptr;
     reset_fallback();
     return out;
 }

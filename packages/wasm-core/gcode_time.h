@@ -48,8 +48,8 @@ public:
     void feed(const std::string& chunk) { feed(chunk.data(), chunk.size()); }
     Result end();
 private:
-    struct Impl;
-    Impl* impl_;
+    struct Implementation;
+    Implementation* implementation_;
 };
 
 } // namespace gcode_time

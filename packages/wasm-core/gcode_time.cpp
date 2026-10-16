@@ -143,10 +143,10 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
                      int move_type, int role, int layer_id)
 {
     auto is_extrusion_only_move = [](const float delta[4]){ return delta[AX]==0.f && delta[AY]==0.f && delta[AZ]==0.f && delta[AE]!=0.f; };
-    float sq_xyz = sqrf(delta_pos[AX])+sqrf(delta_pos[AY])+sqrf(delta_pos[AZ]);
+    float sq_xyz_length = sqrf(delta_pos[AX])+sqrf(delta_pos[AY])+sqrf(delta_pos[AZ]);
     float distance;
-    if (sq_xyz > 0.0f)
-        distance = std::sqrt(sq_xyz);
+    if (sq_xyz_length > 0.0f)
+        distance = std::sqrt(sq_xyz_length);
     else
         distance = std::abs(delta_pos[AE]);
     if (distance == 0.0f) return;
@@ -190,16 +190,16 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
     if ((prev.exit_direction[0]!=0.f || prev.exit_direction[1]!=0.f) &&
         (curr.enter_direction[0]!=0.f || curr.enter_direction[1]!=0.f)) {
         float exit_xy[2]={prev.exit_direction[0],prev.exit_direction[1]};
-        float exit_norm=std::sqrt(sqrf(exit_xy[0])+sqrf(exit_xy[1]));
-        if(exit_norm>0){
-            exit_xy[0]/=exit_norm;
-            exit_xy[1]/=exit_norm;
+        float exit_length=std::sqrt(sqrf(exit_xy[0])+sqrf(exit_xy[1]));
+        if(exit_length>0){
+            exit_xy[0]/=exit_length;
+            exit_xy[1]/=exit_length;
         }
         float enter_xy[2]={curr.enter_direction[0],curr.enter_direction[1]};
-        float enter_norm=std::sqrt(sqrf(enter_xy[0])+sqrf(enter_xy[1]));
-        if(enter_norm>0){
-            enter_xy[0]/=enter_norm;
-            enter_xy[1]/=enter_norm;
+        float enter_length=std::sqrt(sqrf(enter_xy[0])+sqrf(enter_xy[1]));
+        if(enter_length>0){
+            enter_xy[0]/=enter_length;
+            enter_xy[1]/=enter_length;
         }
         float norm_diff = std::sqrt(sqrf(enter_xy[0]-exit_xy[0])+sqrf(enter_xy[1]-exit_xy[1]));
         if (norm_diff < 0.5f && norm_diff > 0.00001f) {
@@ -241,9 +241,9 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
     else
         acceleration = limits.accel_print;
     for (int axis=AX; axis<=AE; ++axis) {
-        float axis_max_acc = limits.max_accel[axis];
-        if (axis_max_acc>0.f && acceleration * std::abs(delta_pos[axis]) * inv_distance > axis_max_acc)
-            acceleration = axis_max_acc / (std::abs(delta_pos[axis]) * inv_distance);
+        float axis_max_acceleration = limits.max_accel[axis];
+        if (axis_max_acceleration>0.f && acceleration * std::abs(delta_pos[axis]) * inv_distance > axis_max_acceleration)
+            acceleration = axis_max_acceleration / (std::abs(delta_pos[axis]) * inv_distance);
     }
     block.acceleration = acceleration;
 
@@ -255,10 +255,10 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
     }
     block.feedrate_profile.exit = curr.safe_feedrate;
 
-    static const float PREV_THRESH = 0.0001f;
+    static const float PREVIOUS_FEEDRATE_THRESHOLD = 0.0001f;
     // entry feedrate via jerk junction (L5134-5214)
     float vmax_junction = curr.safe_feedrate;
-    if (!blocks.empty() && prev.feedrate > PREV_THRESH) {
+    if (!blocks.empty() && prev.feedrate > PREVIOUS_FEEDRATE_THRESHOLD) {
         bool prev_speed_larger = prev.feedrate > block.feedrate_profile.cruise;
         float smaller_speed_factor;
         if (prev_speed_larger) {
@@ -342,7 +342,7 @@ static void add_move(std::vector<TimeBlock>& blocks, State& curr, State& prev,
 enum { PX=0, PY=1, PZ=2, PE=3, PF=4, PI=5, PJ=6, PN=7 };
 struct AxisValues { double values[PN]; bool has[PN]; };
 
-static const double kPow10[23] = { 1e0,1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,1e11,1e12,1e13,1e14,1e15,1e16,1e17,1e18,1e19,1e20,1e21,1e22 };
+static const double kPowersOfTen[23] = { 1e0,1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,1e11,1e12,1e13,1e14,1e15,1e16,1e17,1e18,1e19,1e20,1e21,1e22 };
 
 // Decimal fast path with strtod's answer: [+-]digits[.digits] with at most 15 significant digits and at most 22 fraction digits,
 //  not followed by anything strtod would keep reading (a digit, '.', 'e', 'E', 'x', 'X'). An integer below 2^53 and a power of ten
@@ -383,7 +383,7 @@ static bool fast_decimal(const char* text_begin, const char* text_end, double& o
         char next_char = *cursor;
         if (next_char == '.' || next_char == 'e' || next_char == 'E' || next_char == 'x' || next_char == 'X' || (next_char >= '0' && next_char <= '9')) return false;
     }
-    double value = (double)mantissa / kPow10[fraction_digits];
+    double value = (double)mantissa / kPowersOfTen[fraction_digits];
     if (negative) value = -value;
     out = value;
     end = cursor;
@@ -437,7 +437,7 @@ static inline bool gword(const char* text, size_t length, char digit) {   // "G<
     return length >= 2 && text[0] == 'G' && text[1] == digit && (length < 3 || !std::isalnum((unsigned char)text[2]));
 }
 
-struct Estimator::Impl {
+struct Estimator::Implementation {
     Limits limits;
     Result result;
     std::vector<TimeBlock> blocks;
@@ -447,10 +447,10 @@ struct Estimator::Impl {
     bool e_relative = true;             // kernel emits M83
     bool xyz_absolute = true;           // kernel emits G90
     int  layer_id = -1;                 // -1 = preamble; increments on "; LAYER"
-    int  cur_role = -1;
+    int  current_role = -1;
     std::string carry;                  // a line split across feeds
 
-    explicit Impl(const Limits& machineLimits) : limits(machineLimits) {}
+    explicit Implementation(const Limits& machineLimits) : limits(machineLimits) {}
 
     void line(const char* text, size_t len) {
         if (len == 0) return;
@@ -467,7 +467,7 @@ struct Estimator::Impl {
             if (length > sizeof role_text - 1) length = sizeof role_text - 1;
             memcpy(role_text, text + 17, length);
             role_text[length] = '\0';
-            cur_role = std::atoi(role_text);
+            current_role = std::atoi(role_text);
             return;
         }
         // mode changes
@@ -539,9 +539,9 @@ struct Estimator::Impl {
             } else {
                 if (sweep < 0) sweep += 2*M_PI;
             }
-            double arc_len = std::abs(sweep) * radius;
+            double arc_length = std::abs(sweep) * radius;
             // treat arc as a single planar move of arc length in X (direction chord); good enough for estimate
-            delta[AX] = (float)arc_len;
+            delta[AX] = (float)arc_length;
             delta[AY] = 0.f;
             delta[AZ] = 0.f;
             delta[AE] = (float)delta_e;
@@ -571,7 +571,7 @@ struct Estimator::Impl {
 
         if (move_type != 0) {
             int role = -1;
-            if (move_type == 1) role = cur_role;
+            if (move_type == 1) role = current_role;
             add_move(blocks, curr, prev, delta, (float)m_feedrate, limits, move_type, role, std::max(0, layer_id));
             ++result.moves;
         }
@@ -632,10 +632,10 @@ struct Estimator::Impl {
     }
 };
 
-Estimator::Estimator(const Limits& limits) : impl_(new Impl(limits)) {}
-Estimator::~Estimator() { delete impl_; }
-void Estimator::feed(const char* data, size_t len) { impl_->feed(data, len); }
-Result Estimator::end() { return impl_->finish(); }
+Estimator::Estimator(const Limits& limits) : implementation_(new Implementation(limits)) {}
+Estimator::~Estimator() { delete implementation_; }
+void Estimator::feed(const char* data, size_t len) { implementation_->feed(data, len); }
+Result Estimator::end() { return implementation_->finish(); }
 
 Result estimate(const std::string& gcode, const Limits& limits) {
     Estimator estimator(limits);

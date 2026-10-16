@@ -20,7 +20,7 @@ void strip_pe_tags(std::string& gcode);
 
 #ifdef __EMSCRIPTEN_PTHREADS__
 // (mt) Time estimate overlap — the emitting thread (producer) queues chunks on '\n' boundaries and a single worker (consumer)
-//  exclusively runs gcodeproc_bridge::estimate_begin/feed. The bridge state (the file-static g_gp) is touched only by the worker between
+//  exclusively runs gcodeproc_bridge::estimate_begin/feed. The bridge state (the file-static g_processor) is touched only by the worker between
 //  begin and feed; finish()'s join establishes happens-before, after which estimate_end() runs on the caller's thread.
 //  Chunk contents and order are unchanged -> identical estimates and no effect on G-code (golden-safe). Only wall-clock shrinks as emission and parsing overlap.
 struct TimeFeeder {
