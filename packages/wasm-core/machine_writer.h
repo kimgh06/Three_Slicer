@@ -168,10 +168,10 @@ inline std::string machine_envelope_text(const std::vector<double>& limits, Flav
   flavor = flavor_or_marlin(flavor);
   if (limits.size() < 16) return "";
   if (!(flavor == Flavor::MarlinLegacy || flavor == Flavor::MarlinFirmware || flavor == Flavor::RepRapFirmware)) return "";
-  const double accel_x = limits[0];
-  const double accel_y = limits[1];
-  const double accel_z = limits[2];
-  const double accel_e = limits[3];
+  const double acceleration_x = limits[0];
+  const double acceleration_y = limits[1];
+  const double acceleration_z = limits[2];
+  const double acceleration_e = limits[3];
   const double speed_x = limits[4];
   const double speed_y = limits[5];
   const double speed_z = limits[6];
@@ -188,7 +188,7 @@ inline std::string machine_envelope_text(const std::vector<double>& limits, Flav
   if (flavor == Flavor::RepRapFirmware) factor = 60;   // RRF M203 and M566 are in mm/min
   char line[192];
   std::string text;
-  std::snprintf(line, sizeof line, "M201 X%d Y%d Z%d E%d\n", int(accel_x + 0.5), int(accel_y + 0.5), int(accel_z + 0.5), int(accel_e + 0.5));
+  std::snprintf(line, sizeof line, "M201 X%d Y%d Z%d E%d\n", int(acceleration_x + 0.5), int(acceleration_y + 0.5), int(acceleration_z + 0.5), int(acceleration_e + 0.5));
   text += line;
   std::snprintf(line, sizeof line, "M203 X%d Y%d Z%d E%d\n", int(speed_x * factor + 0.5), int(speed_y * factor + 0.5), int(speed_z * factor + 0.5), int(speed_e * factor + 0.5));
   text += line;
@@ -283,12 +283,12 @@ inline std::string machine_jerk_text(double jerk, Flavor flavor, double max_x, d
 
 // The text of GCodeWriter::set_accel_and_jerk (GCodeWriter.cpp:437), Klipper's one command for both. The caller has
 //  decided which of the two changed; neither = no text.
-inline std::string machine_klipper_velocity_limit(bool set_accel, unsigned int acceleration, bool accel_to_decel_enable,
+inline std::string machine_klipper_velocity_limit(bool set_acceleration, unsigned int acceleration, bool accel_to_decel_enable,
                                                   double accel_to_decel_factor, bool set_jerk, double jerk) {
-  if (!set_accel && !set_jerk) return "";
+  if (!set_acceleration && !set_jerk) return "";
   std::ostringstream gcode;
   gcode << "SET_VELOCITY_LIMIT";
-  if (set_accel) {
+  if (set_acceleration) {
     gcode << " ACCEL=" << acceleration;
     if (accel_to_decel_enable)
       gcode << " ACCEL_TO_DECEL=" << acceleration * accel_to_decel_factor / 100;
