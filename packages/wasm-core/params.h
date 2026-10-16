@@ -19,7 +19,7 @@ struct Params {
   //  starts at them and switches at the second printed layer (upstream GCode.cpp:5631-5650).
   double first_layer_nozzle_temp=-1.0;   // nozzle_temperature_initial_layer (<0 = none sent)
   double first_layer_bed_temp=-1.0;      // the plate type's _initial_layer bed option (<0 = none sent)
-  inline double first_layer_nozzle_temp_of(int tool) const { return forTool(extruder_first_layer_temp, tool, first_layer_nozzle_temp); }
+  inline double first_layer_nozzle_temperature_of(int tool) const { return forTool(extruder_first_layer_temp, tool, first_layer_nozzle_temp); }
   bool   single_extruder_multi_material=true;   // one nozzle carries every filament: the switch names no tool
   // Upstream's gcode_flavor ("marlin", "marlin2", "klipper", "reprapfirmware", "repetier", ...). Empty = the host sent
   //  none: the commands the kernel always wrote keep their form, and new ones use Marlin's (machine_writer.h).
@@ -329,4 +329,4 @@ struct Params {
   bool   arachne_dump=false;   // temporary diagnostic: dump the PASS1 arachne input polygons to stderr
 };
 
-Params parse_params(const std::string& j);
+Params parse_params(const std::string& params_json);

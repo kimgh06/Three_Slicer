@@ -1,7 +1,7 @@
 // preamble.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 //  GcodeWriter configuration + the G-code preamble text, and the machine-limit fill for the time estimate.
 //  The four emission flags the preamble computes (realPE/ironOn/scarfOn/seamMode) are handed back in EmitFlags
-//  because slice() keeps using them; `SeamContext seamCtx;` stayed at the call site (the preamble never touches it).
+//  because slice() keeps using them; `SeamContext seamContext;` stayed at the call site (the preamble never touches it).
 #include "slice_ctx.h"
 
 #include "clip_util.h"
@@ -17,7 +17,7 @@ double first_layer_bed(const Params& params) {
   return params.bed_temp;
 }
 double first_layer_nozzle(const Params& params, int tool) {
-  const double first = params.first_layer_nozzle_temp_of(tool);
+  const double first = params.first_layer_nozzle_temperature_of(tool);
   if (first >= 0) return first;
   return Params::forTool(params.extruder_nozzle_temp, tool, params.nozzle_temp);
 }
@@ -76,7 +76,7 @@ void gcode_writer_write_modes(GcodeWriter& writer, const Params& params, bool is
     writer.raw_lines(machine_set_pressure_advance(params.pressure_advance, writer.flavor, is_bbl));
 }
 
-EmitFlags gcode_writer_setup_preamble(GcodeWriter& writer, const Params& params, int treeSupLayers, double treeZMaxResid, const CustomStart* start) {
+EmitFlags gcode_writer_setup_preamble(GcodeWriter& writer, const Params& params, int treeSupportLayers, double treeZMaxResidual, const CustomStart* start) {
   gcode_writer_setup_machine(writer, params);
   writer.retract_length = params.retract_length;
   writer.retract_min_travel = params.retraction_minimum_travel;
@@ -124,8 +124,8 @@ EmitFlags gcode_writer_setup_preamble(GcodeWriter& writer, const Params& params,
       (int)params.enable_support,params.support_threshold_angle,params.support_density,params.support_top_z_distance,params.support_xy_distance,
       params.support_interface_top_layers,params.raft_layers,params.bed_width,params.bed_depth,writer.offset_x,writer.offset_y);
     writer.raw(line);
-    if (treeSupLayers > 0) {   // stage 19: tree support z alignment diagnostics (max residual against the object z grid, mm)
-      std::snprintf(line,sizeof line,"; tree_support layers=%d z_resid_max=%.6fmm", treeSupLayers, treeZMaxResid);
+    if (treeSupportLayers > 0) {   // stage 19: tree support z alignment diagnostics (max residual against the object z grid, mm)
+      std::snprintf(line,sizeof line,"; tree_support layers=%d z_resid_max=%.6fmm", treeSupportLayers, treeZMaxResidual);
       writer.raw(line);
     }
     std::snprintf(line,sizeof line,"; pattern=%s fan=%.0f%% closeFan=%d fullFan=%d slowT=%.0fs arc=%d seam=%s spiral=%d",

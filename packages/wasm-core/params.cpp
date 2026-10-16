@@ -115,9 +115,9 @@ static double auto_line_width(double nozzle, bool top_or_support) {
   return 1.125 * nozzle;
 }
 // Feature width resolution: value>0 -> as-is · 0 -> line_width (>0) · line_width also 0 -> the upstream auto. (default line_width=0.42 -> default behavior unchanged)
-static double resolve_line_width(double raw, double nozzle, double base_lw, bool top_or_support) {
+static double resolve_line_width(double raw, double nozzle, double base_width, bool top_or_support) {
   if (raw > 0) return raw;
-  if (base_lw > 0) return base_lw;
+  if (base_width > 0) return base_width;
   return auto_line_width(nozzle, top_or_support);
 }
 
