@@ -5,35 +5,14 @@
 // Invariant: for a symmetric fixture (central body + two identical ±X ears), the type5 (support) segment
 //  count on each side of the model center must be balanced — L/R ratio in [0.7, 1.3] and both sides > 0.
 import createSlicer from '../../engine/src/slicer_core.js'
+import { boxTrianglesWithInwardBottom, trianglesToSTL } from './stl_fixtures.mjs'
 
-function boxTris(originX,originY,originZ,sizeX,sizeY,sizeZ){
-  const corners=[[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex=>[vertex[0]+originX,vertex[1]+originY,vertex[2]+originZ])
-  const quad=(first,second,third,fourth)=>[[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return[...quad(0,1,2,3),...quad(4,5,6,7),...quad(0,1,5,4),...quad(1,2,6,5),...quad(2,3,7,6),...quad(3,0,4,7)]
-}
-function trisToSTL(tris){
-  const buffer=Buffer.alloc(84+tris.length*50)
-  buffer.writeUInt32LE(tris.length,80)
-  let offset=84
-  for(const triangle of tris){
-    offset+=12
-    for(const point of triangle){
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset+=12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset+=2
-  }
-  return buffer
-}
 // central column x[-5,5] + two identical elevated ears at z[20,24] sticking out ±X (undersides overhang).
-function symFixture(shiftX=0){
-  return trisToSTL([
-    ...boxTris(-5+shiftX,-5,0, 10,10,30),
-    ...boxTris(-15+shiftX,-3,20, 10,6,4),   // LEFT ear
-    ...boxTris(5+shiftX,-3,20, 10,6,4),     // RIGHT ear
+function symmetricFixture(shiftX=0){
+  return trianglesToSTL([
+    ...boxTrianglesWithInwardBottom(-5+shiftX,-5,0, 10,10,30),
+    ...boxTrianglesWithInwardBottom(-15+shiftX,-3,20, 10,6,4),   // LEFT ear
+    ...boxTrianglesWithInwardBottom(5+shiftX,-3,20, 10,6,4),     // RIGHT ear
   ])
 }
 const base = {
@@ -76,7 +55,7 @@ const slicer = await createSlicer()
 const slice=(stl,sliceParams)=>slicer.slice(new Uint8Array(stl), JSON.stringify(sliceParams), ()=>{})
 
 for (const [tag, shiftX] of [['centered', 0], ['off-center +40', 40]]) {
-  const result = slice(symFixture(shiftX), { ...base, support_style:'tree' })
+  const result = slice(symmetricFixture(shiftX), { ...base, support_style:'tree' })
   if (result.error){
     ok(false, `${tag}: slice error ${result.error}`)
     continue
@@ -91,7 +70,7 @@ for (const [tag, shiftX] of [['centered', 0], ['off-center +40', 40]]) {
 }
 // control: tree_lite was already symmetric — guards against a fix that breaks the lite path.
 {
-  const result = slice(symFixture(0), { ...base, support_style:'tree_lite' })
+  const result = slice(symmetricFixture(0), { ...base, support_style:'tree_lite' })
   const counts = analyze(result, 0)
   let ratio = NaN
   if (counts.right>0) ratio = counts.left/counts.right

@@ -8,34 +8,15 @@
 import assert from 'node:assert/strict'
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
-
-function boxTriangles(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]]
-    .map(([x, y, z]) => [originX + x * sizeX, originY + y * sizeY, originZ + z * sizeZ])
-  const faces = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
-  return faces.map(face => face.map(index => corners[index]))
-}
-
-function toSTL(triangles) {
-  const buffer = Buffer.alloc(84 + triangles.length * 50)
-  buffer.writeUInt32LE(triangles.length, 80)
-  triangles.forEach((triangle, index) => {
-    let offset = 84 + index * 50 + 12
-    for (const vertex of triangle) for (const value of vertex) {
-      buffer.writeFloatLE(value, offset)
-      offset += 4
-    }
-  })
-  return new Uint8Array(buffer)
-}
+import { outwardBoxTriangles, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 // A tower with three slabs sticking out at different heights and directions, and a wide roof over all of them.
-const model = toSTL([
-  ...boxTriangles(-4, -4, 0, 8, 8, 24),
-  ...boxTriangles(-20, -4, 6, 16, 12, 1.2),
-  ...boxTriangles(4, -18, 10, 12, 22, 1.2),
-  ...boxTriangles(-16, 2, 15, 20, 16, 1.2),
-  ...boxTriangles(-24, -22, 24, 44, 44, 1.2),
+const model = trianglesToSTLBytes([
+  ...outwardBoxTriangles(-4, -4, 0, 8, 8, 24),
+  ...outwardBoxTriangles(-20, -4, 6, 16, 12, 1.2),
+  ...outwardBoxTriangles(4, -18, 10, 12, 22, 1.2),
+  ...outwardBoxTriangles(-16, 2, 15, 20, 16, 1.2),
+  ...outwardBoxTriangles(-24, -22, 24, 44, 44, 1.2),
 ])
 
 const params = {

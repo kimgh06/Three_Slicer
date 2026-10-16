@@ -4,42 +4,21 @@
 //  time_engine:transcribed — the full GCodeProcessor OOBs on these non-manifold overlapping-box fixtures'
 //  g-code (separate fragility, documented in README §32); toolpath geometry (type5) is identical.
 import createSlicer from '../../engine/src/slicer_core.js'
-function boxTris(originX,originY,originZ,sizeX,sizeY,sizeZ){
-  const corners=[[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex=>[vertex[0]+originX,vertex[1]+originY,vertex[2]+originZ])
-  const quad=(first,second,third,fourth)=>[[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return[...quad(0,1,2,3),...quad(4,5,6,7),...quad(0,1,5,4),...quad(1,2,6,5),...quad(2,3,7,6),...quad(3,0,4,7)]
-}
-function trisToSTL(tris){
-  const buffer=Buffer.alloc(84+tris.length*50)
-  buffer.writeUInt32LE(tris.length,80)
-  let offset=84
-  for(const triangle of tris){
-    offset+=12
-    for(const point of triangle){
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset+=12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset+=2
-  }
-  return buffer
-}
+import { boxTrianglesWithInwardBottom, trianglesToSTL } from './stl_fixtures.mjs'
 const roof=(arm)=>{
-  const tris=[...boxTris(-12,-8,0,4,16,12),...boxTris(8,-8,0,4,16,12),...boxTris(-14,-10,12,28,20,3)]
+  const triangles=[...boxTrianglesWithInwardBottom(-12,-8,0,4,16,12),...boxTrianglesWithInwardBottom(8,-8,0,4,16,12),...boxTrianglesWithInwardBottom(-14,-10,12,28,20,3)]
   if(arm){
-    tris.push(...boxTris(-2,-2,15,3,4,3))
-    tris.push(...boxTris(-2,-2,18,16,4,3))
+    triangles.push(...boxTrianglesWithInwardBottom(-2,-2,15,3,4,3))
+    triangles.push(...boxTrianglesWithInwardBottom(-2,-2,18,16,4,3))
   }
-  return trisToSTL(tris)
+  return trianglesToSTL(triangles)
 }
-const cup=()=>trisToSTL([...boxTris(-15,-15,0,30,30,3),...boxTris(-15,-15,3,5,30,17),...boxTris(10,-15,3,5,30,17),...boxTris(-10,-15,3,20,5,17),...boxTris(-10,10,3,20,5,17),...boxTris(-10,-10,12,20,2,2),...boxTris(-10,8,12,20,2,2),...boxTris(-10,-8,12,2,16,2),...boxTris(8,-8,12,2,16,2)])
-const cantilever=()=>trisToSTL([...boxTris(-3,-3,0,6,6,15),...boxTris(-10,-2,15,20,4,3)])   // arm ON pillar top (connected)
-const floating=()=>trisToSTL([...boxTris(-3,-3,0,6,6,15),...boxTris(-10,-2,18,20,4,3)])     // arm 3mm ABOVE pillar (floating over z-gap)
+const cup=()=>trianglesToSTL([...boxTrianglesWithInwardBottom(-15,-15,0,30,30,3),...boxTrianglesWithInwardBottom(-15,-15,3,5,30,17),...boxTrianglesWithInwardBottom(10,-15,3,5,30,17),...boxTrianglesWithInwardBottom(-10,-15,3,20,5,17),...boxTrianglesWithInwardBottom(-10,10,3,20,5,17),...boxTrianglesWithInwardBottom(-10,-10,12,20,2,2),...boxTrianglesWithInwardBottom(-10,8,12,20,2,2),...boxTrianglesWithInwardBottom(-10,-8,12,2,16,2),...boxTrianglesWithInwardBottom(8,-8,12,2,16,2)])
+const cantilever=()=>trianglesToSTL([...boxTrianglesWithInwardBottom(-3,-3,0,6,6,15),...boxTrianglesWithInwardBottom(-10,-2,15,20,4,3)])   // arm ON pillar top (connected)
+const floating=()=>trianglesToSTL([...boxTrianglesWithInwardBottom(-3,-3,0,6,6,15),...boxTrianglesWithInwardBottom(-10,-2,18,20,4,3)])     // arm 3mm ABOVE pillar (floating over z-gap)
 // wide base z[0,5] + narrow tower z[5,20] + cantilever arm x[2,12] z[17,20]: the arm's support descends
 //  and RESTS ON THE BASE TOP (z=5) at x[2,12] → clean site to measure the bottom z-gap (support_bottom_z_distance).
-const towerArm=()=>trisToSTL([...boxTris(-15,-15,0,30,30,5),...boxTris(-2,-2,5,4,4,15),...boxTris(2,-2,17,10,4,3)])
+const towerArm=()=>trianglesToSTL([...boxTrianglesWithInwardBottom(-15,-15,0,30,30,5),...boxTrianglesWithInwardBottom(-2,-2,5,4,4,15),...boxTrianglesWithInwardBottom(2,-2,17,10,4,3)])
 const base={layer_height:0.2,first_layer_height:0.2,line_width:0.42,wall_loops:2,infill_density:0.15,nozzle_diameter:0.4,filament_diameter:1.75,print_speed:60,first_layer_speed:20,travel_speed:150,nozzle_temp:210,bed_temp:60,top_shell_layers:3,bottom_shell_layers:3,skirt_loops:0,time_engine:'transcribed',enable_support:true,support_threshold_angle:40,support_top_z_distance:0.2,support_xy_distance:0.35}
 const slicer=await createSlicer()
 const slice=(stl,overrides)=>slicer.slice(new Uint8Array(stl),JSON.stringify({...base,...overrides}),()=>{})

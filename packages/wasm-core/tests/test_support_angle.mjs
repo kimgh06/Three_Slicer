@@ -12,42 +12,26 @@
 //    (previously the opening erased thin bands, so a 16° cone only triggered at θ=60° and a 20° cone at θ=80° — a distorted threshold).
 //    Now the overhang condition θ > slope angle holds directly, so we sample on both sides of each slope angle.
 import createSlicer from '../../engine/src/slicer_core.js'
+import { trianglesToSTL } from './stl_fixtures.mjs'
 
 // Inverted cone: apex (z=0) -> a base of radius R (z=H). Side slope angle = atan(H/R) (90° = vertical).
-function coneTris(centerX, centerY, radius, slopeDeg, segmentCount = 64) {
+function coneTriangles(centerX, centerY, radius, slopeDeg, segmentCount = 64) {
   const height = radius * Math.tan(slopeDeg * Math.PI / 180)
   const apex = [centerX, centerY, 0], topCenter = [centerX, centerY, height]
   const rimPoint = i => {
     const angle = 2 * Math.PI * i / segmentCount
     return [centerX + radius * Math.cos(angle), centerY + radius * Math.sin(angle), height]
   }
-  const tris = []
+  const triangles = []
   for (let i = 0; i < segmentCount; i++) {
     const current = rimPoint(i), next = rimPoint((i + 1) % segmentCount)
-    tris.push([apex, next, current])
-    tris.push([topCenter, current, next])
+    triangles.push([apex, next, current])
+    triangles.push([topCenter, current, next])
   }
-  return tris
+  return triangles
 }
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length * 50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const vertex of triangle) {
-      buffer.writeFloatLE(vertex[0], offset)
-      buffer.writeFloatLE(vertex[1], offset + 4)
-      buffer.writeFloatLE(vertex[2], offset + 8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0, offset)
-    offset += 2
-  }
-  return buffer
-}
-const stl = new Uint8Array(trisToSTL([
-  ...coneTris(-40, 0, 14, 8), ...coneTris(0, 0, 14, 16), ...coneTris(40, 0, 14, 20),
+const stl = new Uint8Array(trianglesToSTL([
+  ...coneTriangles(-40, 0, 14, 8), ...coneTriangles(0, 0, 14, 16), ...coneTriangles(40, 0, 14, 20),
 ]))
 
 const base = {
