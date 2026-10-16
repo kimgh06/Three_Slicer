@@ -18,15 +18,15 @@
 #include <set>
 #include <sstream>
 
-// Slice the triangle subset [firstTri,endTri) at a z plane -> contour
-static Paths slice_group(const std::vector<Triangle>& tris, int firstTri, int endTri, double z){
+// Slice the triangle subset [firstTriangle,endTriangle) at a z plane -> contour
+static Paths slice_group(const std::vector<Triangle>& triangles, int firstTriangle, int endTriangle, double z){
   std::vector<SliceSegment> segments;
   SliceSegment segment;
-  for (int triIndex=firstTri; triIndex<endTri; ++triIndex){
-    const Triangle& tri=tris[triIndex];
-    double zmin=std::min({tri.vertices[0].z,tri.vertices[1].z,tri.vertices[2].z}), zmax=std::max({tri.vertices[0].z,tri.vertices[1].z,tri.vertices[2].z});
+  for (int triangleIndex=firstTriangle; triangleIndex<endTriangle; ++triangleIndex){
+    const Triangle& triangle=triangles[triangleIndex];
+    double zmin=std::min({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z}), zmax=std::max({triangle.vertices[0].z,triangle.vertices[1].z,triangle.vertices[2].z});
     if (z<zmin||z>=zmax) continue;
-    if (intersect_triangle_with_plane(tri,z,segment)) segments.push_back(segment);
+    if (intersect_triangle_with_plane(triangle,z,segment)) segments.push_back(segment);
   }
   return SimplifyPolygons(chain_polygons(segments), pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
 }
@@ -35,11 +35,11 @@ static Paths slice_group(const std::vector<Triangle>& tris, int firstTri, int en
 //  and a group switch emits T0/T1 plus a simple prime tower (a 15x15 square ring in the bed corner, only on switching layers).
 //  ⚠ Not a proper wipe tower — no purge/ramming/wipe volume calculation and no tower density optimization. Walls + sparse infill only.
 // =============================================================================
-em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, em::val onProgress,
+em::val slice_multimaterial(std::vector<Triangle>& triangles, const Params& params, em::val onProgress,
                                    double height, bool over_bed){
   auto report=[&](int done,int total){ if(!onProgress.isUndefined()&&!onProgress.isNull()) onProgress(done,total); };
   const double lineWidth=params.line_width;
-  int groupSplit=params.mm_group_split, triangleCount=(int)tris.size();
+  int groupSplit=params.mm_group_split, triangleCount=(int)triangles.size();
   // Group boundaries in triangle order: [bounds[g], bounds[g+1]) is group g. A host that only sends the scalar
   //  mm_group_split still gets the two-group split it always did.
   std::vector<int> bounds{0};
@@ -49,7 +49,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
   }
   if (bounds.size()==1 && groupSplit>0 && groupSplit<triangleCount) bounds.push_back(groupSplit);
   bounds.push_back(triangleCount);
-  const int nGroups=(int)bounds.size()-1;
+  const int groupCount=(int)bounds.size()-1;
   auto toolOf=[&](int group){
     if (group<(int)params.mm_group_tools.size()) return (int)params.mm_group_tools[group];
     return group;
@@ -89,23 +89,23 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
   // paintRegion[stateIdx][layer]: the area that state owns on that layer. The segmentation partitions the contour,
   //  so the states are disjoint by construction — there is no priority rule to apply on top of it.
   std::vector<std::vector<Paths>> paintRegion;
-  // preSliced[layer][group]: every layer's contour, cut once up front. The segmentation is a whole-object pass
+  // slicedContours[layer][group]: every layer's contour, cut once up front. The segmentation is a whole-object pass
   //  (it needs each layer's neighbours to build the projection grid), so the contours cannot be produced lazily
   //  inside the emission loop the way the unpainted path does — and slicing twice would double the slice cost.
-  std::vector<std::vector<Paths>> preSliced;
+  std::vector<std::vector<Paths>> slicedContours;
   // Every layer's contour, cut once up front — the segmentation (a whole-object pass) and the tower pre-pass below
   //  both need it, and the emission loop reuses it, so nothing is sliced twice.
   const std::vector<double>& layerZs = layerPlan.plane;   // the cutting planes (plan_layers); print z stays below
-  preSliced.assign(layerCount, std::vector<Paths>(nGroups));
-  for (int i=0;i<layerCount;++i) for (int group=0; group<nGroups; ++group)
-    preSliced[i][group] = slice_group(tris, bounds[group], bounds[group+1], layerZs[i]);
+  slicedContours.assign(layerCount, std::vector<Paths>(groupCount));
+  for (int i=0;i<layerCount;++i) for (int group=0; group<groupCount; ++group)
+    slicedContours[i][group] = slice_group(triangles, bounds[group], bounds[group+1], layerZs[i]);
   if (paintedMM) {
     // The segmentation planes are exactly the planes slice_group cuts at. Any offset between the two would move the
     //  material boundary by up to half a layer relative to the geometry it is supposed to divide.
     selector_bridge::LayerRings layerRings(layerCount);
     for (int i=0;i<layerCount;++i) {
       Paths contour;
-      for (int group=0; group<nGroups; ++group) for (const auto& path : preSliced[i][group]) contour.push_back(path);
+      for (int group=0; group<groupCount; ++group) for (const auto& path : slicedContours[i][group]) contour.push_back(path);
       layerRings[i].reserve(contour.size());
       for (const auto& path : contour) {
         std::vector<std::pair<double,double>> ring;
@@ -150,7 +150,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
   int lastTowerLayer = -1;
   for (int i=0;i<layerCount;++i) {
     std::set<int> layerTools;
-    for (int group=0; group<nGroups; ++group) if (!preSliced[i][group].empty()) layerTools.insert(toolOf(group));
+    for (int group=0; group<groupCount; ++group) if (!slicedContours[i][group].empty()) layerTools.insert(toolOf(group));
     if (paintedMM && !layerTools.empty())
       for (size_t stateIndex=0;stateIndex<paintedStates.size();++stateIndex) if (!paintRegion[stateIndex][i].empty()) layerTools.insert(paintedStates[stateIndex]-1);
     if (!layerTools.empty()) {                        // a per-feature id adds its tool wherever the layer prints
@@ -189,7 +189,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
   std::vector<std::vector<Paths>> layerWalls(layerCount);         // [layer][loop level], so the emitter re-uses these offsets
   for (int i=0;i<layerCount;++i) {
     Paths contour;
-    for (int group=0; group<nGroups; ++group) for (const auto& path : preSliced[i][group]) contour.push_back(path);
+    for (int group=0; group<groupCount; ++group) for (const auto& path : slicedContours[i][group]) contour.push_back(path);
     layerContour[i] = contour;
     if (contour.empty()) continue;
     Paths lastWall = contour;
@@ -203,24 +203,24 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     else layerFill[i] = offset_paths(lastWall, -lineWidth*0.5);
   }
   // fill minus the neighbouring CONTOUR: exactly surfaces.cpp's surfOne.
-  std::vector<Paths> topSurf(layerCount), botSurf(layerCount);
+  std::vector<Paths> topSurface(layerCount), bottomSurface(layerCount);
   for (int i=0;i<layerCount;++i) {
     if (layerFill[i].empty()) continue;
     Paths contourAbove;
     if (i+1<layerCount) contourAbove = layerContour[i+1];
-    topSurf[i] = clip_paths(layerFill[i], contourAbove, ctDifference);
+    topSurface[i] = clip_paths(layerFill[i], contourAbove, ctDifference);
     Paths contourBelow;
     if (i-1>=0) contourBelow = layerContour[i-1];
-    botSurf[i] = clip_paths(layerFill[i], contourBelow, ctDifference);
+    bottomSurface[i] = clip_paths(layerFill[i], contourBelow, ctDifference);
   }
   // …thickened over the shell counts, then intersected back with this layer's own fill (pass2.cpp:59-70).
   std::vector<Paths> layerSolid(layerCount), layerSparse(layerCount);
   for (int i=0;i<layerCount;++i) {
     if (layerFill[i].empty()) continue;
-    Paths topSolid, botSolid;
-    for (int j=i; j<=std::min(layerCount-1, i + params.top_shell_layers - 1); ++j) topSolid = union_paths(topSolid, topSurf[j]);
-    for (int j=std::max(0, i - params.bottom_shell_layers + 1); j<=i; ++j) botSolid = union_paths(botSolid, botSurf[j]);
-    layerSolid[i]  = clip_paths(union_paths(topSolid, botSolid), layerFill[i], ctIntersection);
+    Paths topSolid, bottomSolid;
+    for (int j=i; j<=std::min(layerCount-1, i + params.top_shell_layers - 1); ++j) topSolid = union_paths(topSolid, topSurface[j]);
+    for (int j=std::max(0, i - params.bottom_shell_layers + 1); j<=i; ++j) bottomSolid = union_paths(bottomSolid, bottomSurface[j]);
+    layerSolid[i]  = clip_paths(union_paths(topSolid, bottomSolid), layerFill[i], ctIntersection);
     layerSparse[i] = clip_paths(layerFill[i], layerSolid[i], ctDifference);
   }
 
@@ -230,8 +230,8 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
   //  the contour, z and the two surface sets, all of which are already computed above, so the same pass runs here
   //  over a LayerData view of this path's geometry rather than being reimplemented.
   std::vector<LayerData> supportLayers;
-  double treeZMaxResid = 0;
-  int treeSupLayers = 0;
+  double treeZMaxResidual = 0;
+  int treeSupportLayers = 0;
   if (params.enable_support) {
     supportLayers.resize(layerCount);
     for (int i=0;i<layerCount;++i) {
@@ -245,15 +245,15 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
       supportLayer.thickness = supportLayerHeight;
       supportLayer.contour = layerContour[i];
       supportLayer.fill = layerFill[i];
-      supportLayer.topSurf = topSurf[i];
-      supportLayer.botSurf = botSurf[i];
+      supportLayer.topSurface = topSurface[i];
+      supportLayer.bottomSurface = bottomSurface[i];
     }
     SliceContext supportContext;
     supportContext.params = &params;
-    supportContext.triangles = &tris;
+    supportContext.triangles = &triangles;
     supportContext.layers = &supportLayers;
-    supportContext.treeZMaxResid = &treeZMaxResid;
-    supportContext.treeSupLayers = &treeSupLayers;
+    supportContext.treeZMaxResidual = &treeZMaxResidual;
+    supportContext.treeSupportLayers = &treeSupportLayers;
     supportContext.isCanceled = [](){ return false; };                 // the MM path has no cancel poll of its own yet
     supportContext.report = [](int,int){};
     supportContext.layerCount = layerCount;
@@ -289,7 +289,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     writer.retract_feed               = (int)std::llround(Params::forTool(params.extruder_retract_speed, tool, params.retract_speed)*60);
     writer.z_hop                  = Params::forTool(params.extruder_z_hop,             tool, params.z_hop);
   };
-  auto toolTemp=[&](int tool){ return Params::forTool(params.extruder_nozzle_temp, tool, params.nozzle_temp); };
+  auto toolTemperature=[&](int tool){ return Params::forTool(params.extruder_nozzle_temp, tool, params.nozzle_temp); };
   loadTool(0);
   writer.print_flow = params.print_flow_ratio;               // upstream's print-wide multiplier (the st path sets it in the preamble)
   writer.retract_min_travel=params.retraction_minimum_travel;
@@ -336,7 +336,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
   //  template session starts after emission, so the writer marks them whenever a custom G-code is present and
   //  finishLayers fills them, or takes them out.
   writer.layer_slots = customGcode;
-  SeamContext seamCtx;
+  SeamContext seamContext;
   writer.raw("; OrcaSlicer RE mini-kernel (Track C stage 6) — MULTIMATERIAL (basic, NOT a real wipe tower)");
   { char line[200];
     std::snprintf(line,sizeof line,"; MM extruders=%d group_split=%d/%d  lh=%.3f lw=%.3f walls=%d infill=%.2f",
@@ -373,9 +373,9 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
              "the same mark — the Extruder2 reading was used");
     if (!paintedStates.empty() && !paintedMM)
       writer.raw("; WARNING: painted facets found but the layer segmentation produced no regions — sliced single-material");
-    if (nGroups>2) {                                  // only the N-way case adds a line, so ≤2 groups stay identical
+    if (groupCount>2) {                                  // only the N-way case adds a line, so ≤2 groups stay identical
       std::string groupsLine="; MM groups:";
-      for (int group=0;group<nGroups;++group){
+      for (int group=0;group<groupCount;++group){
         char entry[48];
         std::snprintf(entry,sizeof entry," T%d[%d,%d)",toolOf(group),bounds[group],bounds[group+1]);
         groupsLine+=entry;
@@ -397,7 +397,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     } }
   // TPU on the first layer changes how a machine should start (upstream hands it to the start-G-code template as
   //  has_tpu_in_first_layer). No template engine here, so it is stated where a reader or a post-processor can act.
-  for (int group=0; group<nGroups; ++group)
+  for (int group=0; group<groupCount; ++group)
     if (filamentTypeOf(toolOf(group)) == "TPU") {
       writer.raw("; has_tpu_in_first_layer = 1");
       break;
@@ -474,11 +474,11 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
   //  the per-tool figures above (charged to the tool doing the purging), not an extra term of the total.
   double filamentPurge=0.0;
   std::vector<double> filamentPurgeByTool;
-  double lastTemp=first_layer_nozzle(params, 0);   // the preamble already heated to T0's material (its first-layer temperature)
+  double lastTemperature=first_layer_nozzle(params, 0);   // the preamble already heated to T0's material (its first-layer temperature)
   // A tool's temperature on layer i: its first-layer one on the first layer, its own after (GCode.cpp:5631).
-  auto toolTempAt=[&](int tool, int layer){
+  auto toolTemperatureAt=[&](int tool, int layer){
     if (layer == 0) return first_layer_nozzle(params, tool);
-    return toolTemp(tool);
+    return toolTemperature(tool);
   };
   int currentLayer=0;
   // Where the second layer starts in writer.gcode: its temperature switch goes there once the start block (spliced in after
@@ -503,8 +503,8 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     writer.z=printZ;
     writer.pe_reset();
     std::vector<float> toolpath, widths;
-    g_seg_w = &widths;
-    g_seg_w_cur = (float)params.line_width;   // stage 21: record MM widths
+    g_segment_widths = &widths;
+    g_current_segment_width = (float)params.line_width;   // stage 21: record MM widths
     chargeCurrentTool();                             // the per-tool totals as of this layer's start (the layer templates')
     layerStarts.push_back(writer.gcode.size());
     layerTools.push_back(currentTool);   // the layers finishLayers makes final
@@ -518,7 +518,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     if (i == 1) {
       secondLayerAt = writer.gcode.size();
       secondLayerTool = currentTool;
-      lastTemp = toolTemp(currentTool);                  // the switch below sets the loaded tool to its own temperature
+      lastTemperature = toolTemperature(currentTool);                  // the switch below sets the loaded tool to its own temperature
     }
     double layerSpeed=params.print_speed;
     if (i==0) layerSpeed=params.first_layer_speed;
@@ -526,69 +526,69 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     // Each feature's own feed (emit.cpp role_feeds); every one at printFeed without per-role speeds, as before.
     const RoleFeeds feeds = role_feeds(params, i == 0, i, 0, printFeed, printFeed, -1.0);
 
-    std::vector<Paths> groups(nGroups);
-    if (!preSliced.empty()) groups = preSliced[i];      // already cut above for the segmentation — do not cut twice
-    else for (int group=0; group<nGroups; ++group) groups[group]=slice_group(tris,bounds[group],bounds[group+1],layerZs[i]);
+    std::vector<Paths> groups(groupCount);
+    if (!slicedContours.empty()) groups = slicedContours[i];      // already cut above for the segmentation — do not cut twice
+    else for (int group=0; group<groupCount; ++group) groups[group]=slice_group(triangles,bounds[group],bounds[group+1],layerZs[i]);
     writer.island = Paths{};
     lowerSlice.clear();
     if (i > 0) lowerSlice = layerContour[i-1];
     refreshOverhangArea();
     writer.internal_area.clear();
     if (params.reduce_infill_retraction && params.infill_density > 0 && !layerContour[i].empty())
-      writer.internal_area = clip_paths(clip_paths(layerContour[i], topSurf[i], ctDifference), botSurf[i], ctDifference);
+      writer.internal_area = clip_paths(clip_paths(layerContour[i], topSurface[i], ctDifference), bottomSurface[i], ctDifference);
     // One region's geometry, kept split by FEATURE so a per-feature filament id has something to address. The wall
     //  loops stay a list of one Paths per loop level rather than being merged: emit_loops is called once per level
     //  and its seam handling is per call, so merging them would move seams even when no feature id is set.
     struct FeatureGeometry { Paths outer; std::vector<Paths> inner; Paths fillLines; Paths solidLines; };
-    auto buildGeom=[&](const Paths& contour) -> FeatureGeometry {
-      FeatureGeometry geom;
-      if (contour.empty()) return geom;
+    auto buildGeometry=[&](const Paths& contour) -> FeatureGeometry {
+      FeatureGeometry geometry;
+      if (contour.empty()) return geometry;
       Paths lastWall=contour;
       for (int wallLoop=0; wallLoop<params.wall_loops; ++wallLoop){
         Paths wallPaths=offset_paths(contour,-(lineWidth*0.5+wallLoop*lineWidth));
         if(wallPaths.empty())break;
-        if (wallLoop==0) geom.outer=wallPaths; else geom.inner.push_back(wallPaths);   // loop 0 is what upstream calls the outer wall
+        if (wallLoop==0) geometry.outer=wallPaths; else geometry.inner.push_back(wallPaths);   // loop 0 is what upstream calls the outer wall
         lastWall=wallPaths;
       }
-      Paths fillArea = [&]() -> Paths {
-        if (lastWall.empty()) return Paths{};
-        return offset_paths(lastWall,-lineWidth*0.5);
-      }();
-      if (fillArea.empty()) return geom;
+      Paths fillArea;
+      if (!lastWall.empty()) {
+        fillArea = offset_paths(lastWall,-lineWidth*0.5);
+      }
+      if (fillArea.empty()) return geometry;
       // The layer's shells were resolved above against its neighbours; this region takes its share of them.
       Paths solidHere  = clip_paths(fillArea, layerSolid[i],  ctIntersection);
       Paths sparseHere = clip_paths(fillArea, layerSparse[i], ctIntersection);
       double infillAngle = 45.0;
       if (i%2) infillAngle = 135.0;
-      if (!sparseHere.empty()) geom.fillLines  = infill_clipped(sparseHere,infillAngle,sparse_spacing);
-      if (!solidHere.empty())  geom.solidLines = infill_clipped(solidHere, infillAngle,solid_spacing);
-      return geom;
+      if (!sparseHere.empty()) geometry.fillLines  = infill_clipped(sparseHere,infillAngle,sparse_spacing);
+      if (!solidHere.empty())  geometry.solidLines = infill_clipped(solidHere, infillAngle,solid_spacing);
+      return geometry;
     };
-    enum : int { FEAT_OUTER=0, FEAT_INNER=1, FEAT_FILL=2, FEAT_SOLID=3 };
+    enum : int { FEATURE_OUTER=0, FEATURE_INNER=1, FEATURE_FILL=2, FEATURE_SOLID=3 };
     // Each feature takes upstream's role flow ratio (emit.cpp role_flow_ratio) on the layer's width.
     auto featureFlow=[&](FlowRole role){
       writer.set_role_flow(role_flow_ratio(params, role, writer.on_first_layer));
       writer.set_feature((int)role);
     };
-    auto emitFeature=[&](const FeatureGeometry& geom, int feature){
-      if (feature==FEAT_OUTER) {
+    auto emitFeature=[&](const FeatureGeometry& geometry, int feature){
+      if (feature==FEATURE_OUTER) {
         featureFlow(FlowRole::OuterWall);
-        if (!geom.outer.empty()) emit_loops(writer,toolpath,geom.outer,printZ,1.0f,feeds.of(FlowRole::OuterWall),travelFeed,-1,seamCtx);
+        if (!geometry.outer.empty()) emit_loops(writer,toolpath,geometry.outer,printZ,1.0f,feeds.of(FlowRole::OuterWall),travelFeed,-1,seamContext);
         return;
       }
-      if (feature==FEAT_INNER) {
+      if (feature==FEATURE_INNER) {
         featureFlow(FlowRole::InnerWall);
-        for (const auto& loops : geom.inner) emit_loops(writer,toolpath,loops,printZ,1.0f,feeds.of(FlowRole::InnerWall),travelFeed,-1,seamCtx);
+        for (const auto& loops : geometry.inner) emit_loops(writer,toolpath,loops,printZ,1.0f,feeds.of(FlowRole::InnerWall),travelFeed,-1,seamContext);
         return;
       }
       // Solid before sparse, the order emit_layer.cpp uses — the skin is what the sparse fill anchors against.
-      if (feature==FEAT_SOLID) {
+      if (feature==FEATURE_SOLID) {
         featureFlow(FlowRole::InternalSolid);
-        if (!geom.solidLines.empty()) emit_lines(writer,toolpath,geom.solidLines,printZ,3.0f,feeds.of(FlowRole::InternalSolid),travelFeed);
+        if (!geometry.solidLines.empty()) emit_lines(writer,toolpath,geometry.solidLines,printZ,3.0f,feeds.of(FlowRole::InternalSolid),travelFeed);
         return;
       }
       featureFlow(FlowRole::SparseInfill);
-      if (!geom.fillLines.empty()) emit_lines(writer,toolpath,geom.fillLines,printZ,2.0f,feeds.of(FlowRole::SparseInfill),travelFeed);
+      if (!geometry.fillLines.empty()) emit_lines(writer,toolpath,geometry.fillLines,printZ,2.0f,feeds.of(FlowRole::SparseInfill),travelFeed);
     };
     // ponytail: M109 (wait) right at the switch. A real slicer pre-heats the idle tool a few layers early to hide
     //  the stall; do that when the wipe tower knows the upcoming tool per layer.
@@ -617,7 +617,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
         ++toolChanges;
         if (writer.absolute_e) writer.extruder_position = 0.0;           // the sequence resets E (GCodeWriter::toolchange's reset_e)
         writer.unretract_move();
-        g_seg_tool = tool;
+        g_segment_tool = tool;
         return;
       }
       char toolCommand[16];
@@ -632,28 +632,28 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
         std::snprintf(unretractLine,sizeof unretractLine,"G1 E%.4f F%d ; PETG extra unretract",writer.e_word(2.0),writer.retract_feed);
         writer.raw(unretractLine);
       }
-      g_seg_tool = tool;                                // the preview's tool channel follows the T command
-      if (toolTempAt(tool, currentLayer) != lastTemp) {     // only when the materials actually disagree
+      g_segment_tool = tool;                                // the preview's tool channel follows the T command
+      if (toolTemperatureAt(tool, currentLayer) != lastTemperature) {     // only when the materials actually disagree
         char line[48];
-        std::snprintf(line,sizeof line,"M109 S%.0f",toolTempAt(tool, currentLayer));
+        std::snprintf(line,sizeof line,"M109 S%.0f",toolTemperatureAt(tool, currentLayer));
         writer.raw(line);
-        lastTemp=toolTempAt(tool, currentLayer);
+        lastTemperature=toolTemperatureAt(tool, currentLayer);
       }
     };
-    g_seg_tool = currentTool;                            // a layer starts on whatever tool the previous one left loaded
+    g_segment_tool = currentTool;                            // a layer starts on whatever tool the previous one left loaded
 
     // What this layer emits, in emission order: (tool, contour).
     //  Without paint this is literally "every group in turn" — the same contours, in the same order, with the same
     //  tools — so the no-paint G-code is unchanged by construction.
     std::vector<std::pair<int,Paths>> units;
     if (!paintedMM) {
-      for (int group=0; group<nGroups; ++group) if (!groups[group].empty()) units.emplace_back(toolOf(group), groups[group]);
+      for (int group=0; group<groupCount; ++group) if (!groups[group].empty()) units.emplace_back(toolOf(group), groups[group]);
     } else {
       // One bucket per tool. Emitting the painted regions in geometric order instead would purge through the prime
       //  tower at every region boundary, and a purge is real filament — the measured wipe-tower share is what
       //  stats.filament_mm_purge reports — so this is correctness, not tidiness: each tool is entered once a layer.
       std::map<int,Paths> byTool;
-      for (int group=0; group<nGroups; ++group){
+      for (int group=0; group<groupCount; ++group){
         if (groups[group].empty()) continue;
         Paths unpainted = groups[group];
         for (int stateIndex=0; stateIndex<(int)paintedStates.size(); ++stateIndex){
@@ -681,8 +681,8 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     }
 
     // Each region's geometry, built once — the per-feature buckets below reference it rather than re-offsetting.
-    std::vector<FeatureGeometry> unitGeom(units.size());
-    for (size_t unitIndex=0; unitIndex<units.size(); ++unitIndex) unitGeom[unitIndex]=buildGeom(units[unitIndex].second);
+    std::vector<FeatureGeometry> unitGeometry(units.size());
+    for (size_t unitIndex=0; unitIndex<units.size(); ++unitIndex) unitGeometry[unitIndex]=buildGeometry(units[unitIndex].second);
     // Which tool a feature resolves to: its own filament id when set, otherwise the region's. Bucketing by that
     //  instead of by the region keeps the "a tool is entered once per layer" property when a feature id splits a
     //  region across two tools — the alternative purges at every feature boundary.
@@ -693,16 +693,16 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     std::map<int, std::vector<std::pair<size_t,int>>> byToolFeature;   // tool -> [(unit, feature)] in emission order
     for (size_t unitIndex=0; unitIndex<units.size(); ++unitIndex) {
       const int regionTool = units[unitIndex].first;
-      byToolFeature[featureTool(regionTool, params.outer_wall_filament_id)].push_back({unitIndex, FEAT_OUTER});
-      byToolFeature[featureTool(regionTool, params.inner_wall_filament_id)].push_back({unitIndex, FEAT_INNER});
+      byToolFeature[featureTool(regionTool, params.outer_wall_filament_id)].push_back({unitIndex, FEATURE_OUTER});
+      byToolFeature[featureTool(regionTool, params.inner_wall_filament_id)].push_back({unitIndex, FEATURE_INNER});
       // A solid region is top, bottom or internal; the kernel does not separate the three, so the surface ids
       //  resolve in upstream's own precedence — an explicit top id wins, then bottom, then internal solid.
       int solidId;
       if (params.top_surface_filament_id > 0) solidId = params.top_surface_filament_id;
       else if (params.bottom_surface_filament_id > 0) solidId = params.bottom_surface_filament_id;
       else solidId = params.internal_solid_filament_id;
-      byToolFeature[featureTool(regionTool, solidId)].push_back({unitIndex, FEAT_SOLID});
-      byToolFeature[featureTool(regionTool, params.sparse_infill_filament_id)].push_back({unitIndex, FEAT_FILL});
+      byToolFeature[featureTool(regionTool, solidId)].push_back({unitIndex, FEATURE_SOLID});
+      byToolFeature[featureTool(regionTool, params.sparse_infill_filament_id)].push_back({unitIndex, FEATURE_FILL});
     }
     // Same order rule as the regions had: the loaded tool first, then ascending. With no feature ids set every
     //  feature lands in its own region's bucket in outer/inner/fill order, which is the sequence emitGroup used to
@@ -727,8 +727,8 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
         //  so nothing is diverted and the tower (if any) keeps its fixed size.
         double remainingLength = 0.0;
         if (purgeVolume > 0) remainingLength = purgeVolume / (lineWidth * layerHeight);
-        for (size_t unitIndex=0; unitIndex<unitGeom.size() && remainingLength > 1e-6; ++unitIndex) {
-          Paths& lines = unitGeom[unitIndex].fillLines;
+        for (size_t unitIndex=0; unitIndex<unitGeometry.size() && remainingLength > 1e-6; ++unitIndex) {
+          Paths& lines = unitGeometry[unitIndex].fillLines;
           while (!lines.empty() && remainingLength > 1e-6) {
             const Path& line = lines.back();
             double lineLength = 0;
@@ -748,7 +748,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     //  (1-based, 0 = "keep the loaded tool"), which is the same contract the single-material path honours.
     if (params.enable_support && i < (int)supportLayers.size()) {
       const LayerData& supportLayer = supportLayers[i];
-      const bool anySupport = !supportLayer.supBase.empty() || !supportLayer.supIface.empty() || !supportLayer.supTree.empty();
+      const bool anySupport = !supportLayer.supportBase.empty() || !supportLayer.supportInterface.empty() || !supportLayer.supportTree.empty();
       if (anySupport) {
         int supportTool = currentTool;
         if (params.support_filament > 0) supportTool = params.support_filament - 1;
@@ -757,16 +757,16 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
         if (supportTool != currentTool) toolTo(supportTool, false);
         writer.set_role_flow(role_flow_ratio(params, FlowRole::Support, writer.on_first_layer));
         writer.set_feature((int)FlowRole::Support);
-        if (!supportLayer.supBase.empty()) {
-          Paths lines = infill_clipped(supportLayer.supBase, 45.0, support_spacing);
+        if (!supportLayer.supportBase.empty()) {
+          Paths lines = infill_clipped(supportLayer.supportBase, 45.0, support_spacing);
           if (!lines.empty()) emit_lines(writer,toolpath,lines,printZ,5.0f,feeds.of(FlowRole::Support),travelFeed);
         }
-        if (!supportLayer.supTree.empty()) emit_lines_variable_width(writer,toolpath,supportLayer.supTree,printZ,layerHeight,params,5.0f,feeds.of(FlowRole::Support),travelFeed);
-        if (!supportLayer.supIface.empty()) {
+        if (!supportLayer.supportTree.empty()) emit_lines_variable_width(writer,toolpath,supportLayer.supportTree,printZ,layerHeight,params,5.0f,feeds.of(FlowRole::Support),travelFeed);
+        if (!supportLayer.supportInterface.empty()) {
           if (interfaceTool != currentTool) toolTo(interfaceTool, false);
           writer.set_role_flow(role_flow_ratio(params, FlowRole::SupportInterface, writer.on_first_layer));
           writer.set_feature((int)FlowRole::SupportInterface);
-          Paths lines = infill_clipped(supportLayer.supIface, 45.0, solid_spacing);
+          Paths lines = infill_clipped(supportLayer.supportInterface, 45.0, solid_spacing);
           if (!lines.empty()) emit_lines(writer,toolpath,lines,printZ,5.0f,feeds.of(FlowRole::SupportInterface),travelFeed);
         }
         printedThisLayer = true;      // the layer has extruded, so a later tool change purges
@@ -787,7 +787,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
       double side = towerRingSize;   // match the footprint printed above it
       if (params.wipe_tower_real) side = params.prime_tower_width;
       writer.raw("; prime tower (sustain — keeps the tower grounded under the purges above)");
-      emit_loops(writer,toolpath,primeRings(side,3),printZ,11.0f,printFeed,travelFeed,-1,seamCtx);   // sustain: shape only, no purge to size
+      emit_loops(writer,toolpath,primeRings(side,3),printZ,11.0f,printFeed,travelFeed,-1,seamContext);   // sustain: shape only, no purge to size
       const double spent = writer.filament - sustainStart;
       filamentPurge += spent;
       if ((int)filamentPurgeByTool.size() <= currentTool) filamentPurgeByTool.resize(currentTool+1, 0.0);
@@ -847,7 +847,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
             }
           } else {                                        // square ring fallback on failure
             writer.raw("; prime tower (fallback square ring)");
-            emit_loops(writer,toolpath,primeRings(towerRingSize,ringLoopsFor(pairFlushVolume,towerRingSize,layerHeight)),printZ,11.0f,printFeed,travelFeed,-1,seamCtx);
+            emit_loops(writer,toolpath,primeRings(towerRingSize,ringLoopsFor(pairFlushVolume,towerRingSize,layerHeight)),printZ,11.0f,printFeed,travelFeed,-1,seamContext);
           }
         } else {
           { const int loops = ringLoopsFor(pairFlushVolume, towerRingSize, layerHeight);
@@ -862,7 +862,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
             //  an arbitrarily large purge. Reported rather than quietly under-purging: the answer is a wider tower.
             if (pairFlushVolume > 0 && (int)rings.size() < loops)
               writer.raw("; WARNING: the tower footprint is too small for the requested purging volume — widen it");
-            emit_loops(writer,toolpath,rings,printZ,11.0f,printFeed,travelFeed,-1,seamCtx); }
+            emit_loops(writer,toolpath,rings,printZ,11.0f,printFeed,travelFeed,-1,seamContext); }
         }
         const double spent = writer.filament - purgeStart;
         filamentPurge += spent;
@@ -871,7 +871,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
         if ((int)filamentPurgeByTool.size() <= currentTool) filamentPurgeByTool.resize(currentTool+1, 0.0);
         filamentPurgeByTool[currentTool] += spent;
       }
-      for (const auto& item : byToolFeature[to]) emitFeature(unitGeom[item.first], item.second);
+      for (const auto& item : byToolFeature[to]) emitFeature(unitGeometry[item.first], item.second);
       printedThisLayer=true;
     }
     if (customGcode) {
@@ -887,7 +887,7 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
             customFacts.first_layer_points.push_back(y);
           }
           if (role == 11) {
-            double* box = customFacts.wipe_tower_bbox;
+            double* box = customFacts.wipe_tower_bounding_box;
             if (!customFacts.has_wipe_tower) {
               box[0]=box[2]=x;
               box[1]=box[3]=y;
@@ -915,8 +915,8 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     layersArray.call<void>("push",layerObject);
     report(i+1,layerCount);
   }
-  g_seg_w = nullptr;   // stage 21: the local MM widths goes out of scope here
-  g_seg_tool = 0;      // thread_local and shared with the single-material path — a leaked tool would tag its segments
+  g_segment_widths = nullptr;  // stage 21: the local MM widths goes out of scope here
+  g_segment_tool = 0;          // thread_local and shared with the single-material path — a leaked tool would tag its segments
   chargeCurrentTool();  // flush the last tool's remainder -> sum(filamentByTool) == writer.filament
   // One slot per extruder even when a tool never printed, so a caller can index the array by tool number
   //  (the material names it shows come from the same per-extruder lists).
@@ -984,20 +984,20 @@ em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, e
     customFacts.total_layer_count = layerCount;
     customFacts.total_toolchanges = toolChanges;
     double minX=1e18, minY=1e18, maxX=-1e18, maxY=-1e18;
-    for (const Triangle& tri : tris) for (const Vertex& vertex : tri.vertices) {
+    for (const Triangle& triangle : triangles) for (const Vertex& vertex : triangle.vertices) {
       minX=std::min(minX,(double)vertex.x);
       minY=std::min(minY,(double)vertex.y);
       maxX=std::max(maxX,(double)vertex.x);
       maxY=std::max(maxY,(double)vertex.y);
     }
-    customFacts.object_bboxes = { minX+writer.offset_x, minY+writer.offset_y, maxX+writer.offset_x, maxY+writer.offset_y };
+    customFacts.object_bounding_boxes = { minX+writer.offset_x, minY+writer.offset_y, maxX+writer.offset_x, maxY+writer.offset_y };
     Paths firstLayer;
-    if (!preSliced.empty()) for (const Paths& group : preSliced[0]) firstLayer = union_paths(firstLayer, group);
+    if (!slicedContours.empty()) for (const Paths& group : slicedContours[0]) firstLayer = union_paths(firstLayer, group);
     customFacts.first_layer_area_mm2 = paths_area(firstLayer);
     { double firstLayerMinX, firstLayerMinY, firstLayerMaxX, firstLayerMaxY;
       bounding_box_of(firstLayer, firstLayerMinX, firstLayerMinY, firstLayerMaxX, firstLayerMaxY);
       if (firstLayerMaxX >= firstLayerMinX)
-        customFacts.object_first_layer_bboxes = { firstLayerMinX+writer.offset_x, firstLayerMinY+writer.offset_y, firstLayerMaxX+writer.offset_x, firstLayerMaxY+writer.offset_y }; }
+        customFacts.object_first_layer_bounding_boxes = { firstLayerMinX+writer.offset_x, firstLayerMinY+writer.offset_y, firstLayerMaxX+writer.offset_x, firstLayerMaxY+writer.offset_y }; }
     CustomStart customStart;
     std::string error = custom_gcode_start(params, customFacts, customStart);
     if (error.empty()) {
