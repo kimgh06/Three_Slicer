@@ -119,12 +119,12 @@ std::vector<Polygon> chain_closed_loops(const std::vector<Segment>& segments, st
     return key;
   };
   std::vector<std::uint64_t> slot_key(capacity);
-  std::vector<std::uint32_t> slot_seg(capacity, kNone);   // kNone == empty slot
+  std::vector<std::uint32_t> slot_segment(capacity, kNone);   // kNone == empty slot
   const auto insert = [&](std::uint64_t key, std::uint32_t segment_index) {
     std::uint64_t slot = mix(key) & mask;
-    while (slot_seg[slot] != kNone) slot = (slot + 1) & mask;
+    while (slot_segment[slot] != kNone) slot = (slot + 1) & mask;
     slot_key[slot] = key;
-    slot_seg[slot] = segment_index;
+    slot_segment[slot] = segment_index;
   };
   for (std::uint32_t i = 0; i < segments.size(); ++i) {
     insert(pack(cell(segments[i].start.x), cell(segments[i].start.y)), i);
@@ -138,9 +138,9 @@ std::vector<Polygon> chain_closed_loops(const std::vector<Segment>& segments, st
     for (std::int64_t offset_x = -1; offset_x <= 1; ++offset_x)
       for (std::int64_t offset_y = -1; offset_y <= 1; ++offset_y) {
         const std::uint64_t key = pack(cell_x + offset_x, cell_y + offset_y);
-        for (std::uint64_t slot = mix(key) & mask; slot_seg[slot] != kNone; slot = (slot + 1) & mask) {
+        for (std::uint64_t slot = mix(key) & mask; slot_segment[slot] != kNone; slot = (slot + 1) & mask) {
           if (slot_key[slot] != key) continue;
-          const std::uint32_t i = slot_seg[slot];
+          const std::uint32_t i = slot_segment[slot];
           if (used[i] || i >= best) continue;
           if (close(segments[i].start, end) || close(segments[i].end, end)) best = i;
         }

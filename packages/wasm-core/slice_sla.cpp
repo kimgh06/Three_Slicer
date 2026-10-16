@@ -218,7 +218,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     return result;
   }
 
-  ModelPrep model_prep = prepare_model(triangles, params, /*reuseGeom=*/false);
+  ModelPrep model_prep = prepare_model(triangles, params, /*reuseGeometry=*/false);
   const double height = model_prep.height;
   if (!(height > 1e-4)) {
     result.set("error", std::string("model has no height to slice"));
@@ -239,7 +239,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   //      cleaned the way pass1 does it. Mid planes are ascending, so the lower_bound walk matches pass1's.
   std::vector<double> mids(model_layer_count);
   for (int i = 0; i < model_layer_count; ++i) mids[i] = top_z(i) - layer_thickness_at(i) / 2;
-  std::vector<std::vector<SliceSegment>> layerSegs(model_layer_count);
+  std::vector<std::vector<SliceSegment>> layerSegments(model_layer_count);
   {
     // Facet -> segment sweep. Parallel in mt the way PASS1 is (pass1.cpp): contiguous facet ranges, one bucket set
     //  per range, concatenated in range order — so every layer's segment order is exactly the serial loop's and st
@@ -295,15 +295,15 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
       for (int i = 0; i < model_layer_count; ++i) {
         size_t total = 0;
         for (auto& bucket : buckets) total += bucket[(size_t)i].size();
-        layerSegs[(size_t)i].reserve(total);
+        layerSegments[(size_t)i].reserve(total);
         for (auto& bucket : buckets) {
           auto& source = bucket[(size_t)i];
-          layerSegs[(size_t)i].insert(layerSegs[(size_t)i].end(), source.begin(), source.end());
+          layerSegments[(size_t)i].insert(layerSegments[(size_t)i].end(), source.begin(), source.end());
           std::vector<SliceSegment>().swap(source);
         }
       }
     } else {
-      sweep(0, triangle_count, layerSegs, true);
+      sweep(0, triangle_count, layerSegments, true);
     }
   }
   // The generator no longer eats these contours — the bridge slices the mesh itself through the real
@@ -312,13 +312,13 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
   std::vector<Paths> contours(model_layer_count);
   sla_for_each_layer(model_layer_count, [&](int i) {
     if (canceled()) return;   // cooperative bail; the boundary check below reports the cancel
-    Paths loops = chain_polygons(layerSegs[i]);
+    Paths loops = chain_polygons(layerSegments[i]);
     contours[i] = SimplifyPolygons(loops, pftNonZero);   // NonZero on oriented loops (slice_planes.h): upstream's Regular mode; coincident shells union instead of cancelling
     if (params.gcode_resolution > 1e-6) CleanPolygons(contours[i], SCALE * params.gcode_resolution);
     contours[i].erase(std::remove_if(contours[i].begin(), contours[i].end(),
                                      [](const Path& path){ return path.size() < 3; }), contours[i].end());
-    layerSegs[i].clear();
-    layerSegs[i].shrink_to_fit();
+    layerSegments[i].clear();
+    layerSegments[i].shrink_to_fit();
   }, [&](int done) { report(30 + std::min(149, done * 150 / std::max(1, model_layer_count)), 1000); });   // chaining: 3% -> 18%
   if (canceled()) {
     result.set("error", std::string("canceled"));
