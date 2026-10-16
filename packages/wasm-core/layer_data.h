@@ -16,20 +16,20 @@ struct ClassicWall { Path path; bool loop; int inset; float width; };
 // Layer data (2-pass)
 struct LayerData {
   double z=0; int index=0; double thickness=0;
-  Paths contour;                 // outer contour (holes included)
-  std::vector<Paths> walls;      // wall loops (outermost to innermost)
-  Paths fill;                    // infill region (innermost wall -w/2)
-  Paths topSurf, botSurf;        // exposed surfaces (difference with the neighbors)
-  Paths supBase, supIface;       // support body (sparse) / interface (solid)
+  Paths contour;                            // outer contour (holes included)
+  std::vector<Paths> walls;                 // wall loops (outermost to innermost)
+  Paths fill;                               // infill region (innermost wall -w/2)
+  Paths topSurface, bottomSurface;          // exposed surfaces (difference with the neighbors)
+  Paths supportBase, supportInterface;      // support body (sparse) / interface (solid)
   // Stages 18/19 -> WP3: real tree support toolpaths (TreePath: width + the upstream role/height/mm3_per_mm)
-  std::vector<TreePath> supTree;
+  std::vector<TreePath> supportTree;
   // Classic wall generator (the port of upstream process_classic): loops and thin walls in upstream's print order, and
   //  the variable-width gap fill. `walls` above holds the same loops grouped by depth, for spiral mode and the layer length.
   std::vector<ClassicWall> classicWalls;
   std::vector<TreePath> classicGapFill;
-  Paths island;                  // region travels stay inside (contour −w/2) — precomputed in PASS1 (parallel), moved at emission
+  Paths island;                             // region travels stay inside (contour −w/2) — precomputed in PASS1 (parallel), moved at emission
   std::vector<arachne_bridge::WallLine> arachneWalls;  // stage 7: the real Arachne variable-width walls (arachne mode)
 };
 
-em::val slice_multimaterial(std::vector<Triangle>& tris, const Params& params, em::val onProgress,
+em::val slice_multimaterial(std::vector<Triangle>& triangles, const Params& params, em::val onProgress,
                             double height, bool over_bed);

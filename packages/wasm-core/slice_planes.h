@@ -74,7 +74,7 @@ inline bool intersect_triangle_with_plane(const Triangle& triangle, double z, Sl
   else out = { crossingX[0],crossingY[0],crossingX[1],crossingY[1] };
   return true;
 }
-inline long long qkey(double x, double y) {
+inline long long endpoint_key(double x, double y) {
   const long long quantisedX = (long long)std::llround(x/CHAIN_KEY_QUANTUM_MM);
   const long long quantisedY = (long long)std::llround(y/CHAIN_KEY_QUANTUM_MM);
   return (quantisedX << 32) ^ (quantisedY & CHAIN_KEY_Y_MASK);
@@ -92,8 +92,8 @@ inline Paths chain_polygons(std::vector<SliceSegment>& segments) {
   std::unordered_map<long long,std::vector<int>> endsAtPoint;
   endsAtPoint.reserve(segmentCount*2);
   for (int segmentIndex=0;segmentIndex<segmentCount;++segmentIndex){
-    endsAtPoint[qkey(segments[segmentIndex].x0,segments[segmentIndex].y0)].push_back(segmentIndex*2);
-    endsAtPoint[qkey(segments[segmentIndex].x1,segments[segmentIndex].y1)].push_back(segmentIndex*2+1);
+    endsAtPoint[endpoint_key(segments[segmentIndex].x0,segments[segmentIndex].y0)].push_back(segmentIndex*2);
+    endsAtPoint[endpoint_key(segments[segmentIndex].x1,segments[segmentIndex].y1)].push_back(segmentIndex*2+1);
   }
   const auto toClipperPoint = [](double x, double y) { return IntPoint((cInt)std::llround(x*SCALE),(cInt)std::llround(y*SCALE)); };
   Paths out;
@@ -110,8 +110,8 @@ inline Paths chain_polygons(std::vector<SliceSegment>& segments) {
     int segmentsWalkedForward=1;
     int segmentsWalkedBackward=0;
     for (int step=0;step<segmentCount;++step){
-      if (qkey(currentX,currentY)==qkey(loopStartX,loopStartY)) break;
-      const auto endsHere=endsAtPoint.find(qkey(currentX,currentY));
+      if (endpoint_key(currentX,currentY)==endpoint_key(loopStartX,loopStartY)) break;
+      const auto endsHere=endsAtPoint.find(endpoint_key(currentX,currentY));
       int nextSegment=-1;
       int nextEnd=-1;
       if (endsHere!=endsAtPoint.end()) for (const int reference:endsHere->second){

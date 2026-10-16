@@ -17,9 +17,9 @@ struct StageCache {
   bool over_bed = false;
   int layerCount = 0;
   std::string layerKey;
-  int treeSupLayers = 0;
-  double treeZMaxResid = -1.0;   // for reproducing the preamble diagnostic lines
+  int treeSupportLayers = 0;
+  double treeZMaxResidual = -1.0;   // for reproducing the preamble diagnostic lines
   std::vector<LayerData> layers;
 };
-extern StageCache g_scache;
+extern StageCache g_stage_cache;
 std::string make_layer_key(const Params& params);

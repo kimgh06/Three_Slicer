@@ -4,7 +4,7 @@
 
 #include <cstdio>
 
-StageCache g_scache;
+StageCache g_stage_cache;
 std::string make_layer_key(const Params& params) {
   char key[1024];
   std::snprintf(key, sizeof key, "%.6f|%.6f|%.6f|%d|%d|%s|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%s|%s|%.3f|%d|%.4f|%d"

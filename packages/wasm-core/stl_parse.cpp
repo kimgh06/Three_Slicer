@@ -24,10 +24,10 @@ static std::vector<Triangle> parse_binary(const std::vector<uint8_t>& bytes) {
     Triangle triangle;
     offset += 12;
     for (int k = 0; k < 3; ++k) {
-      float xyz[3];
-      std::memcpy(xyz, &bytes[offset], 12);
+      float coordinates[3];
+      std::memcpy(coordinates, &bytes[offset], 12);
       offset += 12;
-      triangle.vertices[k]={xyz[0],xyz[1],xyz[2]};
+      triangle.vertices[k]={coordinates[0],coordinates[1],coordinates[2]};
     }
     offset += 2;
     triangles.push_back(triangle);

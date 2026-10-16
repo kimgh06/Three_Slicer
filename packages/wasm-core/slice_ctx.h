@@ -25,8 +25,8 @@ struct SliceContext {
   const Params* params = nullptr;
   std::vector<Triangle>* triangles = nullptr;
   std::vector<LayerData>* layers = nullptr;
-  double* treeZMaxResid = nullptr;   // support_run writes slice()'s own diagnostics locals
-  int*    treeSupLayers = nullptr;
+  double* treeZMaxResidual = nullptr;   // support_run writes slice()'s own diagnostics locals
+  int*    treeSupportLayers = nullptr;
   std::function<bool()> isCanceled;         // G002 cancel poll
   std::function<void(int,int)> report;      // worker progress callback
   int layerCount = 0, total = 0, raftLayerCount = 0;
@@ -48,7 +48,7 @@ using LayerFlushCallback = std::function<void(double, int, std::vector<float>&, 
 
 // ---- Model preparation + PASS 1 -> pass1.cpp -----------------------------------
 struct ModelPrep { double centerX, centerY, height; bool over_bed; };
-ModelPrep prepare_model(std::vector<Triangle>& tris, const Params& params, bool reuseGeom);
+ModelPrep prepare_model(std::vector<Triangle>& triangles, const Params& params, bool reuseGeometry);
 bool pass1_run(SliceContext& context);              // false = canceled (G002)
 
 // ---- PASS 1.5 surface detection -> surfaces.cpp --------------------------------
@@ -61,7 +61,7 @@ void support_run(SliceContext& context);
 struct EmitFlags { bool realPE, ironOn, scarfOn; int seamMode; };
 struct CustomStart;
 // `start` is the expanded custom start block (custom_gcode.h), or null for the raw path.
-EmitFlags gcode_writer_setup_preamble(GcodeWriter& writer, const Params& params, int treeSupLayers, double treeZMaxResid, const CustomStart* start = nullptr);
+EmitFlags gcode_writer_setup_preamble(GcodeWriter& writer, const Params& params, int treeSupportLayers, double treeZMaxResidual, const CustomStart* start = nullptr);
 // The temperatures of the first layer (the host's _initial_layer values, else the print's own) and the switch to
 //  the print's own at the second printed layer (preamble.cpp).
 // The writer's machine state from the profile (flavor, E mode, firmware retraction, z_offset), and the modes block
@@ -75,7 +75,7 @@ void setup_time_limits(const Params& params, gcode_time::Limits& timeLimits, gco
 
 // ---- Raft -> raft.cpp ---------------------------------------------------------
 double raft_emit(GcodeWriter& writer, const Params& params, std::vector<LayerData>& layers, double lineWidth, int raftLayerCount,
-                 int travelFeed, int firstLayerFeed, SeamContext& seamCtx, const LayerFlushCallback& flush_layer);
+                 int travelFeed, int firstLayerFeed, SeamContext& seamContext, const LayerFlushCallback& flush_layer);
 
 // ---- PASS 2 precomputation -> pass2.cpp ---------------------------------------
 EmitPrecompute precompute_layer_emit(const SliceContext& context, int layerIndex);
