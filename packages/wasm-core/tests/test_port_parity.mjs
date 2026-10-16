@@ -36,38 +36,38 @@ const EXPECTED_DIVERGENT = new Set([
 ])
 
 const listFiles = root => {
-  const out = []
+  const files = []
   const walk = dir => {
     for (const entry of readdirSync(dir).sort()) {
       const full = join(dir, entry)
       if (statSync(full).isDirectory()) walk(full)
-      else if (!entry.includes('.bak')) out.push(relative(root, full))
+      else if (!entry.includes('.bak')) files.push(relative(root, full))
     }
   }
   walk(root)
-  return out
+  return files
 }
 
 const arachneRoot = join(here, 'arachne_port')
 const treeRoot = join(here, 'treesupport_port')
-const treeFiles = new Set(listFiles(treeRoot).filter(f => !f.endsWith('.wasm')))
+const treeFiles = new Set(listFiles(treeRoot).filter(file => !file.endsWith('.wasm')))
 
 let shared = 0
 const divergent = new Set()
-for (const rel of listFiles(arachneRoot)) {
-  if (!treeFiles.has(rel)) continue
+for (const relativePath of listFiles(arachneRoot)) {
+  if (!treeFiles.has(relativePath)) continue
   shared += 1
-  if (!readFileSync(join(arachneRoot, rel)).equals(readFileSync(join(treeRoot, rel)))) divergent.add(rel)
+  if (!readFileSync(join(arachneRoot, relativePath)).equals(readFileSync(join(treeRoot, relativePath)))) divergent.add(relativePath)
 }
 
 // A near-empty tree must not pass vacuously. (278 shared today; ~53 pairs are dead
 // upstream leftovers scheduled for deletion, so the floor sits below that.)
 assert.ok(shared >= 200, `expected the two port trees to share 200+ files, found ${shared}`)
 
-const unexpected = [...divergent].filter(f => !EXPECTED_DIVERGENT.has(f)).sort()
+const unexpected = [...divergent].filter(file => !EXPECTED_DIVERGENT.has(file)).sort()
 assert.deepEqual(unexpected, [], `shared port files drifted apart (patch both copies or add to the divergence list): ${unexpected.join(', ')}`)
 
-const stale = [...EXPECTED_DIVERGENT].filter(f => existsSync(join(arachneRoot, f)) && existsSync(join(treeRoot, f)) && !divergent.has(f)).sort()
+const stale = [...EXPECTED_DIVERGENT].filter(file => existsSync(join(arachneRoot, file)) && existsSync(join(treeRoot, file)) && !divergent.has(file)).sort()
 assert.deepEqual(stale, [], `divergence list entries are now byte-identical (remove them): ${stale.join(', ')}`)
 
 // The kernel's own clipper build keeps a local copy of Int128.hpp (see the WASM patch

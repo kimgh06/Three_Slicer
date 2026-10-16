@@ -22,7 +22,7 @@ std::string option_default(const std::string& key);
 // One tool-change wipe-tower block from the REAL ported WipeTower.generate(), placed at (tower_x,
 // tower_y) on the bed. `gcode` is ready to splice into the kernel output (bed coords = final coords,
 // relative E — matches the kernel's M83 mode, original markers ; CP TOOLCHANGE / ; WIPE_TOWER_START
-// preserved). `toolpath` is flat push_seg octets [x0,y0,z,type, x1,y1,z,type] in MODEL coords (bed
+// preserved). `toolpath` is flat push_toolpath_segment octets [x0,y0,z,type, x1,y1,z,type] in MODEL coords (bed
 // minus bed/2 offset), type = 11 (prime tower), for the viewer. `filament_mm` = summed relative E.
 struct WipeTowerBlock {
     std::string        gcode;
@@ -30,7 +30,7 @@ struct WipeTowerBlock {
     double             filament_mm = 0.0;
     bool               ok = false;
 };
-WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_w, double bed_d, double first_layer_h, double layer_h,
+WipeTowerBlock wipe_tower_block(double bed_x0, double bed_y0, double bed_width, double bed_depth, double first_layer_height, double layer_height,
                                 double z, bool is_first_layer, int old_tool, int new_tool,
                                 double tower_x, double tower_y, double tower_width,
                                 double filament_diameter,

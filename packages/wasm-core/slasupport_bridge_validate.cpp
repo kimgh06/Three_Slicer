@@ -77,9 +77,9 @@ LayerAssemblyResult assemble_object_layers(
     last_z[layer.object_id] = layer.print_z;
   }
 
-  std::stable_sort(sorted.begin(), sorted.end(), [&](const ObjectLayerInput& a, const ObjectLayerInput& b) {
-    if (a.print_z != b.print_z) return a.print_z < b.print_z;
-    return order.at(a.object_id) < order.at(b.object_id);
+  std::stable_sort(sorted.begin(), sorted.end(), [&](const ObjectLayerInput& left, const ObjectLayerInput& right) {
+    if (left.print_z != right.print_z) return left.print_z < right.print_z;
+    return order.at(left.object_id) < order.at(right.object_id);
   });
   for (const ObjectLayerInput& layer : sorted) {
     if (result.layers.empty() || result.layers.back().print_z != layer.print_z)
@@ -144,10 +144,10 @@ StrategyCapability strategy_capability(SupportStrategy strategy) {
 static bool polygon_contains(const Polygon& polygon, const Vec2& point) {
   bool inside = false;
   for (std::size_t i = 0, previous = polygon.size() - 1; i < polygon.size(); previous = i++) {
-    const Vec2& a = polygon[i];
-    const Vec2& b = polygon[previous];
-    if ((a.y > point.y) != (b.y > point.y) &&
-        point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x)
+    const Vec2& vertex = polygon[i];
+    const Vec2& previous_vertex = polygon[previous];
+    if ((vertex.y > point.y) != (previous_vertex.y > point.y) &&
+        point.x < (previous_vertex.x - vertex.x) * (point.y - vertex.y) / (previous_vertex.y - vertex.y) + vertex.x)
       inside = !inside;
   }
   return inside;
@@ -196,8 +196,8 @@ ValidationResult validate(const PreparedJob& job) {
       if (!finite(coordinate)) return failure("objects[" + std::to_string(i) + "].mesh: non-finite coordinate");
     for (double coordinate : object.transform.matrix)
       if (!finite(coordinate)) return failure("objects[" + std::to_string(i) + "].transform: non-finite coordinate");
-    const auto& m = object.transform.matrix;
-    if (m[3] != 0.0 || m[7] != 0.0 || m[11] != 0.0 || m[15] != 1.0)
+    const auto& matrix = object.transform.matrix;
+    if (matrix[3] != 0.0 || matrix[7] != 0.0 || matrix[11] != 0.0 || matrix[15] != 1.0)
       return failure("objects[" + std::to_string(i) + "].transform: expected affine matrix");
   }
 
@@ -219,17 +219,18 @@ ValidationResult validate(const PreparedJob& job) {
       return failure("layers[" + std::to_string(i) + "].print_z: not strictly increasing");
     last_layer_index[layer.object_id] = layer.index;
     last_print_z[layer.object_id] = layer.print_z;
-    for (std::size_t p = 0; p < layer.contours.size(); ++p)
-      if (!valid_polygon(layer.contours[p]))
-        return failure("layers[" + std::to_string(i) + "].contours[" + std::to_string(p) + "]: invalid polygon");
-    for (std::size_t m = 0; m < layer.modifier_masks.size(); ++m) {
-      const ModifierMask& mask = layer.modifier_masks[m];
+    for (std::size_t contour_index = 0; contour_index < layer.contours.size(); ++contour_index)
+      if (!valid_polygon(layer.contours[contour_index]))
+        return failure("layers[" + std::to_string(i) + "].contours[" + std::to_string(contour_index) + "]: invalid polygon");
+    for (std::size_t mask_index = 0; mask_index < layer.modifier_masks.size(); ++mask_index) {
+      const ModifierMask& mask = layer.modifier_masks[mask_index];
       if (mask.kind != ModifierKind::blocker && mask.kind != ModifierKind::enforcer)
-        return failure("layers[" + std::to_string(i) + "].modifier_masks[" + std::to_string(m) + "].kind: invalid");
-      if (mask.kind == ModifierKind::blocker) ++blockers; else ++enforcers;
-      for (std::size_t p = 0; p < mask.polygons.size(); ++p)
-        if (!valid_polygon(mask.polygons[p]))
-          return failure("layers[" + std::to_string(i) + "].modifier_masks[" + std::to_string(m) + "].polygons[" + std::to_string(p) + "]: invalid polygon");
+        return failure("layers[" + std::to_string(i) + "].modifier_masks[" + std::to_string(mask_index) + "].kind: invalid");
+      if (mask.kind == ModifierKind::blocker) ++blockers;
+      else ++enforcers;
+      for (std::size_t polygon_index = 0; polygon_index < mask.polygons.size(); ++polygon_index)
+        if (!valid_polygon(mask.polygons[polygon_index]))
+          return failure("layers[" + std::to_string(i) + "].modifier_masks[" + std::to_string(mask_index) + "].polygons[" + std::to_string(polygon_index) + "]: invalid polygon");
     }
   }
 

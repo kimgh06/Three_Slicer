@@ -39,23 +39,23 @@ namespace slasupport_bridge {
 
 static indexed_triangle_set soup_to_its(const std::vector<float>& soup) {
   indexed_triangle_set its;
-  const size_t n = soup.size() / 9;
-  its.vertices.reserve(n * 3);
-  its.indices.reserve(n);
-  for (size_t t = 0; t < n; ++t) {
-    for (int v = 0; v < 3; ++v)
-      its.vertices.emplace_back(soup[t * 9 + v * 3], soup[t * 9 + v * 3 + 1], soup[t * 9 + v * 3 + 2]);
-    its.indices.emplace_back(int(t * 3), int(t * 3 + 1), int(t * 3 + 2));
+  const size_t triangle_count = soup.size() / 9;
+  its.vertices.reserve(triangle_count * 3);
+  its.indices.reserve(triangle_count);
+  for (size_t triangle = 0; triangle < triangle_count; ++triangle) {
+    for (int corner = 0; corner < 3; ++corner)
+      its.vertices.emplace_back(soup[triangle * 9 + corner * 3], soup[triangle * 9 + corner * 3 + 1], soup[triangle * 9 + corner * 3 + 2]);
+    its.indices.emplace_back(int(triangle * 3), int(triangle * 3 + 1), int(triangle * 3 + 2));
   }
   return its;
 }
 
 static Vec3d transformed(const Transform& transform, const Vec3& point) {
-  const auto& m = transform.matrix;
+  const auto& matrix = transform.matrix;
   return Vec3d(
-    m[0] * point.x + m[4] * point.y + m[8]  * point.z + m[12],
-    m[1] * point.x + m[5] * point.y + m[9]  * point.z + m[13],
-    m[2] * point.x + m[6] * point.y + m[10] * point.z + m[14]);
+    matrix[0] * point.x + matrix[4] * point.y + matrix[8]  * point.z + matrix[12],
+    matrix[1] * point.x + matrix[5] * point.y + matrix[9]  * point.z + matrix[13],
+    matrix[2] * point.x + matrix[6] * point.y + matrix[10] * point.z + matrix[14]);
 }
 
 static std::vector<float> merged_mesh(const PreparedJob& job) {
@@ -75,18 +75,22 @@ static std::vector<float> merged_mesh(const PreparedJob& job) {
 
 // The move_on_mesh_surface logic (SupportPointGenerator.cpp): project up and down, take the closer hit; a miss
 //  on both sides falls back to the closest surface point.
-static Vec3f snap_to_surface(const AABBMesh& emesh, const Vec3d& p) {
-  const Vec3d up(0., 0., 1.), down(0., 0., -1.);
-  auto hit_up = emesh.query_ray_hit(p, up);
-  auto hit_down = emesh.query_ray_hit(p, down);
-  const bool u = hit_up.is_hit(), d = hit_down.is_hit();
-  if (u || d) {
-    const auto& hit = (!d || (u && hit_up.distance() < hit_down.distance())) ? hit_up : hit_down;
-    if (hit.distance() < 2.0)
-      return (p + hit.distance() * hit.direction()).cast<float>();
+static Vec3f snap_to_surface(const AABBMesh& surface_mesh, const Vec3d& point) {
+  const Vec3d up(0., 0., 1.);
+  const Vec3d down(0., 0., -1.);
+  auto hit_up = surface_mesh.query_ray_hit(point, up);
+  auto hit_down = surface_mesh.query_ray_hit(point, down);
+  const bool hits_up = hit_up.is_hit();
+  const bool hits_down = hit_down.is_hit();
+  if (hits_up || hits_down) {
+    const AABBMesh::hit_result* closer_hit = &hit_down;
+    if (!hits_down || (hits_up && hit_up.distance() < hit_down.distance())) closer_hit = &hit_up;
+    if (closer_hit->distance() < 2.0)
+      return (point + closer_hit->distance() * closer_hit->direction()).cast<float>();
   }
-  int tri; Vec3d closest;
-  emesh.squared_distance(p, tri, closest);
+  int triangle_index;
+  Vec3d closest;
+  surface_mesh.squared_distance(point, triangle_index, closest);
   return closest.cast<float>();
 }
 
@@ -143,15 +147,18 @@ static void prepare_permanent_support_points_port(
       [](const Slic3r::sla::SupportPoint &p1, const Slic3r::sla::SupportPoint &p2) { return p1.pos.z() < p2.pos.z(); });
 }
 
-GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenConfig& cfg) {
+GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenerationConfig& point_config) {
   GeneratedPoints out;
   const ValidationResult checked = validate(job);
-  if (!checked.ok) { out.error = checked.error; return out; }
+  if (!checked.ok) {
+    out.error = checked.error;
+    return out;
+  }
 
   // Upstream SLAPrintSteps.cpp:716 config mapping.
   Slic3r::sla::SupportPointGeneratorConfig generator_config;
-  generator_config.density_relative = float(cfg.density_relative);
-  generator_config.head_diameter = float(cfg.head_diameter);
+  generator_config.density_relative = float(point_config.density_relative);
+  generator_config.head_diameter = float(point_config.head_diameter);
   generator_config.island_configuration = Slic3r::sla::SampleConfigFactory::apply_density(
       Slic3r::sla::SampleConfigFactory::create(generator_config.head_diameter),
       generator_config.density_relative);
@@ -167,7 +174,7 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       for (const PreparedLayer& layer : job.layers)
         if (layer.object_id == object.id) object_layers.push_back(&layer);
       std::sort(object_layers.begin(), object_layers.end(),
-                [](const PreparedLayer* a, const PreparedLayer* b) { return a->index < b->index; });
+                [](const PreparedLayer* left, const PreparedLayer* right) { return left->index < right->index; });
       if (object_layers.empty()) continue;
 
       // The object mesh in generation (plate) space — for slicing, the surface snap, and the permanent-point
@@ -182,7 +189,7 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
                                      object_index * 1000 + value, object_total * 1000});
       };
 
-      const double tw_weld0 = emscripten_get_now();
+      const double weld_start = emscripten_get_now();
       std::vector<float> soup;
       soup.reserve(object.mesh.size());
       for (std::size_t i = 0; i < object.mesh.size(); i += 3) {
@@ -194,8 +201,8 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       }
       indexed_triangle_set its = soup_to_its(soup);
       its_merge_vertices(its);
-      AABBMesh emesh{its};
-      out.t_weld_ms += emscripten_get_now() - tw_weld0;
+      AABBMesh surface_mesh{its};
+      out.t_weld_ms += emscripten_get_now() - weld_start;
       stage_tick(50);
 
       // The generator's input slices come from the REAL slicer with the profile's gap-closing radius —
@@ -205,8 +212,8 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       heights.reserve(object_layers.size());
       for (const PreparedLayer* layer : object_layers) heights.push_back(float(layer->slice_z));
       Slic3r::MeshSlicingParamsEx slicing_params;
-      slicing_params.closing_radius = float(cfg.slice_closing_radius);
-      const double tw_slice0 = emscripten_get_now();
+      slicing_params.closing_radius = float(point_config.slice_closing_radius);
+      const double slice_start = emscripten_get_now();
       std::vector<Slic3r::ExPolygons> slices;
       {
         // mt builds: slice_mesh_ex's internal tbb::parallel_for splits across the pthread pool inside
@@ -218,14 +225,14 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
         slices = Slic3r::slice_mesh_ex(its, heights, slicing_params, []{});
       }
       cancel();
-      out.t_slice_ms += emscripten_get_now() - tw_slice0;
+      out.t_slice_ms += emscripten_get_now() - slice_start;
       stage_tick(180);
 
-      Slic3r::sla::StatusFunction status = [&stage_tick](int st) {
-        stage_tick(350 + std::size_t(std::max(0, std::min(100, st))) * 650 / 100);
+      Slic3r::sla::StatusFunction status = [&stage_tick](int percent) {
+        stage_tick(350 + std::size_t(std::max(0, std::min(100, percent))) * 650 / 100);
       };
 
-      const double tw_prepare0 = emscripten_get_now();
+      const double prepare_start = emscripten_get_now();
       Slic3r::sla::SupportPointGeneratorData data;
       {
         // The five prepare passes are execution::for_each(ex_tbb, …) over independent layer slots —
@@ -236,7 +243,7 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
         data = Slic3r::sla::prepare_generator_data(
             std::move(slices), heights, {}, cancel, status);
       }
-      out.t_prepare_ms += emscripten_get_now() - tw_prepare0;
+      out.t_prepare_ms += emscripten_get_now() - prepare_start;
       stage_tick(350);
 
       // Permanent (manual) points of this object enter the generator's density accounting…
@@ -244,27 +251,29 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
       for (const SupportPoint& point : job.points) {
         if (point.object_id != object.id || !(point.permanent || point.manual)) continue;
         const Vec3d position = transformed(object.transform, point.position);
-        Slic3r::sla::SupportPoint sp;
-        sp.pos = position.cast<float>();
-        sp.head_front_radius = float(point.head_front_radius);
-        sp.type = Slic3r::sla::SupportPointType::manual_add;
-        authored.push_back(sp);
+        Slic3r::sla::SupportPoint authored_point;
+        authored_point.pos = position.cast<float>();
+        authored_point.head_front_radius = float(point.head_front_radius);
+        authored_point.type = Slic3r::sla::SupportPointType::manual_add;
+        authored.push_back(authored_point);
       }
-      prepare_permanent_support_points_port(data.permanent_supports, authored, emesh);
+      prepare_permanent_support_points_port(data.permanent_supports, authored, surface_mesh);
 
-      const double tw_generate0 = emscripten_get_now();
+      const double generate_start = emscripten_get_now();
       Slic3r::sla::LayerSupportPoints layer_points =
           Slic3r::sla::generate_support_points(data, generator_config, cancel, status);
-      out.t_generate_ms += emscripten_get_now() - tw_generate0;
+      out.t_generate_ms += emscripten_get_now() - generate_start;
 
       // Maximal move of support point to mesh surface, no more than height of layer (upstream :768).
-      double allowed_move = heights.size() > 1
-          ? double(heights[1] - heights[0]) + std::numeric_limits<float>::epsilon()
-          : double(std::numeric_limits<float>::epsilon());
-      const double tw_move0 = emscripten_get_now();
+      double allowed_move;
+      if (heights.size() > 1)
+        allowed_move = double(heights[1] - heights[0]) + std::numeric_limits<float>::epsilon();
+      else
+        allowed_move = double(std::numeric_limits<float>::epsilon());
+      const double move_start = emscripten_get_now();
       Slic3r::sla::SupportPoints surface_points =
-          Slic3r::sla::move_on_mesh_surface(layer_points, emesh, allowed_move, cancel);
-      out.t_move_ms += emscripten_get_now() - tw_move0;
+          Slic3r::sla::move_on_mesh_surface(layer_points, surface_mesh, allowed_move, cancel);
+      out.t_move_ms += emscripten_get_now() - move_start;
 
       // …and are appended AFTER the move so their authored 3d position survives (upstream :776).
       surface_points.insert(surface_points.end(),
@@ -272,29 +281,36 @@ GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenCo
 
       // Back to object-local coordinates for the bridge schema.
       Eigen::Matrix4d matrix;
-      for (int c = 0; c < 4; ++c)
-        for (int r = 0; r < 4; ++r) matrix(r, c) = object.transform.matrix[c * 4 + r];
+      for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row) matrix(row, column) = object.transform.matrix[column * 4 + row];
       const Eigen::Matrix4d inverse = matrix.inverse();
       const std::size_t generated_count = surface_points.size() - data.permanent_supports.size();
       for (std::size_t i = 0; i < surface_points.size(); ++i) {
-        const Slic3r::sla::SupportPoint& sp = surface_points[i];
-        const Eigen::Vector4d local = inverse * Eigen::Vector4d(sp.pos.x(), sp.pos.y(), sp.pos.z(), 1.0);
+        const Slic3r::sla::SupportPoint& surface_point = surface_points[i];
+        const Eigen::Vector4d local = inverse * Eigen::Vector4d(surface_point.pos.x(), surface_point.pos.y(), surface_point.pos.z(), 1.0);
         SupportPoint point;
         point.source_id = out.points.size();
         point.object_id = object.id;
         point.position = {local.x(), local.y(), local.z()};
-        point.head_front_radius = sp.head_front_radius;
-        point.type = sp.type == Slic3r::sla::SupportPointType::island ? PointType::island
-                   : sp.type == Slic3r::sla::SupportPointType::slope  ? PointType::slope
-                                                                      : PointType::manual_add;
+        point.head_front_radius = surface_point.head_front_radius;
+        if (surface_point.type == Slic3r::sla::SupportPointType::island) point.type = PointType::island;
+        else if (surface_point.type == Slic3r::sla::SupportPointType::slope) point.type = PointType::slope;
+        else point.type = PointType::manual_add;
         point.permanent = i >= generated_count;
         point.manual = point.permanent;
         out.points.push_back(std::move(point));
       }
     }
-  } catch (const BridgeCanceled&) { out.error = "support point generation canceled"; return out; }
-    catch (const std::exception& e) { out.error = std::string("exception: ") + e.what(); return out; }
-    catch (...) { out.error = "unknown exception"; return out; }
+  } catch (const BridgeCanceled&) {
+    out.error = "support point generation canceled";
+    return out;
+  } catch (const std::exception& exception) {
+    out.error = std::string("exception: ") + exception.what();
+    return out;
+  } catch (...) {
+    out.error = "unknown exception";
+    return out;
+  }
 
   out.ok = true;
   return out;
@@ -325,18 +341,22 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
     pad_config.embed_object.stick_penetration_mm = params.stick_penetration;
   }
   const std::string invalid = pad_config.validate();
-  if (!invalid.empty()) { out.error = invalid; return out; }
+  if (!invalid.empty()) {
+    out.error = invalid;
+    return out;
+  }
   out.full_height = pad_config.full_height();
 
   // Upstream samples the blueprint over [zstart, zstart + full_height + sampling] where zstart is the
   // ground MINUS the plate thickness in embed mode (SupportTree.cpp create_pad: the object sits at ground
   // and the pad plate extends below it, so the model band sampled is the object's own bottom). The inputs
   // here are in the print frame, so ground is 0.
-  constexpr float PadSamplingLH = 0.1f;
-  const float zstart = params.around_object ? -float(params.wall_thickness) : 0.f;
+  constexpr float PadSamplingLayerHeight = 0.1f;
+  float zstart = 0.f;
+  if (params.around_object) zstart = -float(params.wall_thickness);
   std::vector<float> heights;
-  for (float h = zstart; h < zstart + float(out.full_height + PadSamplingLH + 1e-6); h += PadSamplingLH)
-    heights.push_back(h);
+  for (float height = zstart; height < zstart + float(out.full_height + PadSamplingLayerHeight + 1e-6); height += PadSamplingLayerHeight)
+    heights.push_back(height);
 
   try {
     Slic3r::ExPolygons model_contours;
@@ -354,7 +374,10 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
     // nothing and the object simply prints on the plate. Everywhere else, empty means failure.
     const bool empty_is_legal = params.around_object && !params.around_object_everywhere;
     if (model_contours.empty() && support_contours.empty()) {
-      if (empty_is_legal) { out.ok = true; return out; }
+      if (empty_is_legal) {
+        out.ok = true;
+        return out;
+      }
       out.error = "pad: nothing reaches the plate to stand on";
       return out;
     }
@@ -362,7 +385,10 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
     indexed_triangle_set pad;
     Slic3r::sla::create_pad(support_contours, model_contours, pad, pad_config);
     if (pad.indices.empty()) {
-      if (empty_is_legal) { out.ok = true; return out; }
+      if (empty_is_legal) {
+        out.ok = true;
+        return out;
+      }
       out.error = "pad: empty geometry";
       return out;
     }
@@ -371,26 +397,36 @@ PadResult generate_pad(const std::vector<float>& model_mesh,
     const float lift = float(out.full_height);
     out.mesh.reserve(pad.indices.size() * 9);
     for (const auto& face : pad.indices)
-      for (int v = 0; v < 3; ++v) {
-        const auto& p = pad.vertices[face(v)];
-        out.mesh.push_back(p.x()); out.mesh.push_back(p.y()); out.mesh.push_back(p.z() + lift);
+      for (int corner = 0; corner < 3; ++corner) {
+        const auto& vertex = pad.vertices[face(corner)];
+        out.mesh.push_back(vertex.x());
+        out.mesh.push_back(vertex.y());
+        out.mesh.push_back(vertex.z() + lift);
       }
-  } catch (const std::exception& e) { out.error = std::string("exception: ") + e.what(); return out; }
-    catch (...) { out.error = "unknown exception"; return out; }
+  } catch (const std::exception& exception) {
+    out.error = std::string("exception: ") + exception.what();
+    return out;
+  } catch (...) {
+    out.error = "unknown exception";
+    return out;
+  }
 
   out.ok = true;
   return out;
 }
 
-Result generate(const PreparedJob& job, const Config& cfg) {
+Result generate(const PreparedJob& job, const Config& bridge_config) {
   Result out;
-  out.capability = strategy_capability(cfg.strategy);
+  out.capability = strategy_capability(bridge_config.strategy);
   if (out.capability.status != StrategyCapabilityStatus::supported) {
     out.error = out.capability.code;
     return out;
   }
   const ValidationResult checked = validate(job);
-  if (!checked.ok) { out.error = checked.error; return out; }
+  if (!checked.ok) {
+    out.error = checked.error;
+    return out;
+  }
   const std::vector<slasupport_bridge::SupportPoint> filtered_points =
     filter_support_points_by_modifiers(job.points, job.layers, job.support_enforcers_only);
   out.point_order.reserve(filtered_points.size());
@@ -401,38 +437,43 @@ Result generate(const PreparedJob& job, const Config& cfg) {
     out.error = "support tree canceled";
     return out;
   }
-  if (filtered_points.empty()) { out.error = "points: empty"; return out; }
+  if (filtered_points.empty()) {
+    out.error = "points: empty";
+    return out;
+  }
 
   const std::vector<float> model = merged_mesh(job);
 
   indexed_triangle_set its = soup_to_its(model);
 
-  SupportTreeConfig stc;
-  stc.enabled                     = true;
-  stc.head_front_radius_mm        = cfg.head_front_radius;
-  stc.head_back_radius_mm         = cfg.head_back_radius;
-  stc.head_fallback_radius_mm     = cfg.head_fallback_radius;
-  stc.head_width_mm               = cfg.head_width;
-  stc.head_penetration_mm         = cfg.head_penetration;
-  stc.base_radius_mm              = cfg.base_radius;
-  stc.base_height_mm              = cfg.base_height;
-  stc.max_bridge_length_mm        = cfg.max_bridge_length;
-  stc.max_pillar_link_distance_mm = cfg.max_pillar_link_distance;
-  stc.object_elevation_mm         = cfg.object_elevation;
-  stc.ground_facing_only          = cfg.buildplate_only;
-  stc.bridge_slope                = cfg.bridge_slope;
-  stc.pillar_widening_factor      = cfg.pillar_widening_factor;
+  SupportTreeConfig tree_config;
+  tree_config.enabled                     = true;
+  tree_config.head_front_radius_mm        = bridge_config.head_front_radius;
+  tree_config.head_back_radius_mm         = bridge_config.head_back_radius;
+  tree_config.head_fallback_radius_mm     = bridge_config.head_fallback_radius;
+  tree_config.head_width_mm               = bridge_config.head_width;
+  tree_config.head_penetration_mm         = bridge_config.head_penetration;
+  tree_config.base_radius_mm              = bridge_config.base_radius;
+  tree_config.base_height_mm              = bridge_config.base_height;
+  tree_config.max_bridge_length_mm        = bridge_config.max_bridge_length;
+  tree_config.max_pillar_link_distance_mm = bridge_config.max_pillar_link_distance;
+  tree_config.object_elevation_mm         = bridge_config.object_elevation;
+  tree_config.ground_facing_only          = bridge_config.buildplate_only;
+  tree_config.bridge_slope                = bridge_config.bridge_slope;
+  tree_config.pillar_widening_factor      = bridge_config.pillar_widening_factor;
   // Upstream make_support_cfg: a zero base safety distance means "use the kernel's own safety distance".
-  stc.pillar_base_safety_distance_mm = cfg.pillar_base_safety_distance < 1e-9
-    ? SupportTreeConfig::safety_distance_mm : cfg.pillar_base_safety_distance;
-  stc.max_bridges_on_pillar       = (unsigned)std::max(0, cfg.max_bridges_on_pillar);
-  stc.max_weight_on_model_support = cfg.max_weight_on_model;
-  stc.pillar_connection_mode      = cfg.pillar_connection_mode == 0 ? PillarConnectionMode::zigzag
-                                  : cfg.pillar_connection_mode == 1 ? PillarConnectionMode::cross
-                                                                    : PillarConnectionMode::dynamic;
+  if (bridge_config.pillar_base_safety_distance < 1e-9)
+    tree_config.pillar_base_safety_distance_mm = SupportTreeConfig::safety_distance_mm;
+  else
+    tree_config.pillar_base_safety_distance_mm = bridge_config.pillar_base_safety_distance;
+  tree_config.max_bridges_on_pillar       = (unsigned)std::max(0, bridge_config.max_bridges_on_pillar);
+  tree_config.max_weight_on_model_support = bridge_config.max_weight_on_model;
+  if (bridge_config.pillar_connection_mode == 0) tree_config.pillar_connection_mode = PillarConnectionMode::zigzag;
+  else if (bridge_config.pillar_connection_mode == 1) tree_config.pillar_connection_mode = PillarConnectionMode::cross;
+  else tree_config.pillar_connection_mode = PillarConnectionMode::dynamic;
 
-  SupportPoints pts;
-  pts.reserve(job.points.size());
+  SupportPoints support_points;
+  support_points.reserve(job.points.size());
   {
     AABBMesh snap_mesh{its};
     std::unordered_map<std::string, const PreparedObject*> objects;
@@ -441,44 +482,54 @@ Result generate(const PreparedJob& job, const Config& cfg) {
       Vec3 local = point.position;
       local.z += point.elevation;
       const Vec3d position = transformed(objects.at(point.object_id)->transform, local);
-      Slic3r::sla::SupportPoint sp;
-      sp.pos = snap_to_surface(snap_mesh, position);
-      sp.head_front_radius = float(point.head_front_radius);
-      sp.type = point.type == PointType::island ? SupportPointType::island
-              : point.type == PointType::slope ? SupportPointType::slope
-                                               : SupportPointType::manual_add;
-      pts.push_back(sp);
+      Slic3r::sla::SupportPoint support_point;
+      support_point.pos = snap_to_surface(snap_mesh, position);
+      support_point.head_front_radius = float(point.head_front_radius);
+      if (point.type == PointType::island) support_point.type = SupportPointType::island;
+      else if (point.type == PointType::slope) support_point.type = SupportPointType::slope;
+      else support_point.type = SupportPointType::manual_add;
+      support_points.push_back(support_point);
     }
   }
   if (job.callbacks.on_progress)
     job.callbacks.on_progress({ProgressPhase::prepare, filtered_points.size(), filtered_points.size()});
 
-  SupportableMesh sm{its, pts, stc};
-  JobController ctl;
+  SupportableMesh supportable_mesh{its, support_points, tree_config};
+  JobController controller;
   if (job.callbacks.on_progress) {
-    auto cb = job.callbacks.on_progress;
-    ctl.statuscb = [cb](unsigned pct, const std::string&) {
-      cb({ProgressPhase::support_tree, pct, 100});
+    auto on_progress = job.callbacks.on_progress;
+    controller.statuscb = [on_progress](unsigned percent, const std::string&) {
+      on_progress({ProgressPhase::support_tree, percent, 100});
     };
   }
-  if (job.callbacks.is_canceled) ctl.stopcondition = job.callbacks.is_canceled;
-  SupportTreeBuilder builder{ctl};
+  if (job.callbacks.is_canceled) controller.stopcondition = job.callbacks.is_canceled;
+  SupportTreeBuilder builder{controller};
   try {
     // Upstream quirk (DefaultSupportTree.cpp `return pc == ABORT`): execute returns TRUE only when ABORTED.
-    if (DefaultSupportTree::execute(builder, sm)) { out.error = "support tree aborted"; return out; }
-  } catch (const std::exception& e) { out.error = std::string("exception: ") + e.what(); return out; }
-    catch (...) { out.error = "unknown exception"; return out; }
+    if (DefaultSupportTree::execute(builder, supportable_mesh)) {
+      out.error = "support tree aborted";
+      return out;
+    }
+  } catch (const std::exception& exception) {
+    out.error = std::string("exception: ") + exception.what();
+    return out;
+  } catch (...) {
+    out.error = "unknown exception";
+    return out;
+  }
 
-  const indexed_triangle_set& merged = builder.merged_mesh((size_t)std::max(6, cfg.mesh_steps));
+  const indexed_triangle_set& merged = builder.merged_mesh((size_t)std::max(6, bridge_config.mesh_steps));
   out.mesh.reserve(merged.indices.size() * 9);
-  const float lift = float(cfg.object_elevation);
-  for (const auto& f : merged.indices)
-    for (int v = 0; v < 3; ++v) {
-      const auto& p = merged.vertices[f(v)];
-      out.mesh.push_back(p.x()); out.mesh.push_back(p.y()); out.mesh.push_back(p.z() + lift);
+  const float lift = float(bridge_config.object_elevation);
+  for (const auto& face : merged.indices)
+    for (int corner = 0; corner < 3; ++corner) {
+      const auto& vertex = merged.vertices[face(corner)];
+      out.mesh.push_back(vertex.x());
+      out.mesh.push_back(vertex.y());
+      out.mesh.push_back(vertex.z() + lift);
     }
   out.pillars = builder.pillarcount();
-  out.heads   = pts.size();
+  out.heads   = support_points.size();
   out.ok      = true;
   if (job.callbacks.on_progress)
     job.callbacks.on_progress({ProgressPhase::complete, 1, 1});

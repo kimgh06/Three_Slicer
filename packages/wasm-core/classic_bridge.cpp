@@ -106,15 +106,15 @@ ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& thick_po
                 double length = lines[start_index].length();
                 double sum = lines[start_index].length() * 0.5 * (lines[start_index].a_width + lines[start_index].b_width);
                 path.polyline.append(Point3(lines[start_index].a));
-                for (int idx = start_index + 1; idx < i; idx++) {
-                    length += lines[idx].length();
-                    sum += lines[idx].length() * 0.5 * (lines[idx].a_width + lines[idx].b_width);
-                    path.polyline.append(Point3(lines[idx].a));
+                for (int line_index = start_index + 1; line_index < i; line_index++) {
+                    length += lines[line_index].length();
+                    sum += lines[line_index].length() * 0.5 * (lines[line_index].a_width + lines[line_index].b_width);
+                    path.polyline.append(Point3(lines[line_index].a));
                 }
                 path.polyline.append(Point3(lines[i].a));
                 if (length > SCALED_EPSILON) {
-                    double w = sum / length;
-                    Flow new_flow = flow_with_width(flow, unscale<float>(w) + flow.height() * float(1. - 0.25 * PI));
+                    double average_width = sum / length;
+                    Flow new_flow = flow_with_width(flow, unscale<float>(average_width) + flow.height() * float(1. - 0.25 * PI));
                     path.mm3_per_mm = new_flow.mm3_per_mm();
                     path.width = new_flow.width();
                     path.height = new_flow.height();
@@ -129,26 +129,26 @@ ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& thick_po
             thickness_delta = fabs(line.a_width - line.b_width);
             if (thickness_delta > tolerance) {
                 const unsigned int segments = (unsigned int)ceil(thickness_delta / tolerance);
-                const coordf_t seg_len = line_len / segments;
-                Points pp;
+                const coordf_t segment_length = line_len / segments;
+                Points split_points;
                 std::vector<coordf_t> width;
                 {
-                    pp.push_back(line.a);
+                    split_points.push_back(line.a);
                     width.push_back(line.a_width);
                     for (size_t j = 1; j < segments; ++j) {
-                        pp.push_back((line.a.cast<double>() + (line.b - line.a).cast<double>().normalized() * (j * seg_len)).cast<coord_t>());
+                        split_points.push_back((line.a.cast<double>() + (line.b - line.a).cast<double>().normalized() * (j * segment_length)).cast<coord_t>());
 
-                        coordf_t w = line.a_width + (j * seg_len) * (line.b_width - line.a_width) / line_len;
-                        width.push_back(w);
-                        width.push_back(w);
+                        coordf_t split_width = line.a_width + (j * segment_length) * (line.b_width - line.a_width) / line_len;
+                        width.push_back(split_width);
+                        width.push_back(split_width);
                     }
-                    pp.push_back(line.b);
+                    split_points.push_back(line.b);
                     width.push_back(line.b_width);
                 }
 
                 lines.erase(lines.begin() + i);
                 for (size_t j = 0; j < segments; ++j) {
-                    ThickLine new_line(pp[j], pp[j + 1]);
+                    ThickLine new_line(split_points[j], split_points[j + 1]);
                     new_line.a_width = width[2 * j];
                     new_line.b_width = width[2 * j + 1];
                     lines.insert(lines.begin() + i + j, new_line);
@@ -168,15 +168,15 @@ ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& thick_po
         double length = lines[start_index].length();
         double sum = lines[start_index].length() * lines[start_index].a_width;
         path.polyline.append(Point3(lines[start_index].a));
-        for (size_t idx = start_index + 1; idx < final_size; idx++) {
-            length += lines[idx].length();
-            sum += lines[idx].length() * lines[idx].a_width;
-            path.polyline.append(Point3(lines[idx].a));
+        for (size_t line_index = start_index + 1; line_index < final_size; line_index++) {
+            length += lines[line_index].length();
+            sum += lines[line_index].length() * lines[line_index].a_width;
+            path.polyline.append(Point3(lines[line_index].a));
         }
         path.polyline.append(Point3(lines[final_size - 1].b));
         if (length > SCALED_EPSILON) {
-            double w = sum / length;
-            Flow new_flow = flow_with_width(flow, unscale<float>(w) + flow.height() * float(1. - 0.25 * PI));
+            double average_width = sum / length;
+            Flow new_flow = flow_with_width(flow, unscale<float>(average_width) + flow.height() * float(1. - 0.25 * PI));
             path.mm3_per_mm = new_flow.mm3_per_mm();
             path.width = new_flow.width();
             path.height = new_flow.height();
@@ -191,8 +191,8 @@ ExtrusionPaths thick_polyline_to_extrusion_paths_2(const ThickPolyline& thick_po
 void variable_width(const ThickPolylines& polylines, ExtrusionRole role, const Flow& flow, std::vector<ExtrusionEntity*>& out)
 {
     const float tolerance = float(scale_(0.05));
-    for (const ThickPolyline& p : polylines) {
-        ExtrusionPaths paths = thick_polyline_to_extrusion_paths_2(p, role, flow, tolerance);
+    for (const ThickPolyline& polyline : polylines) {
+        ExtrusionPaths paths = thick_polyline_to_extrusion_paths_2(polyline, role, flow, tolerance);
         if (!paths.empty()) {
             if (paths.front().first_point() == paths.back().last_point())
                 out.emplace_back(new ExtrusionLoop(std::move(paths)));
@@ -213,7 +213,7 @@ struct Flows {
 ExtrusionEntityCollection traverse_loops(const Flows& flows, const Config& config, const PerimeterGeneratorLoops &loops,
                                          ThickPolylines &thin_walls, bool reverse_thin_wall_hole)
 {
-    ExtrusionEntityCollection coll;
+    ExtrusionEntityCollection collection;
 
     for (const PerimeterGeneratorLoop &loop : loops) {
         bool is_external = loop.is_external();
@@ -248,51 +248,51 @@ ExtrusionEntityCollection traverse_loops(const Flows& flows, const Config& confi
         path.height = flows.layer_height;
         paths.emplace_back(std::move(path));
 
-        coll.append(ExtrusionLoop(std::move(paths), loop_role));
+        collection.append(ExtrusionLoop(std::move(paths), loop_role));
     }
 
     // Append thin walls to the nearest-neighbor search (only for first iteration)
     if (! thin_walls.empty()) {
-        variable_width(thin_walls, erExternalPerimeter, flows.ext_perimeter, coll.entities);
+        variable_width(thin_walls, erExternalPerimeter, flows.ext_perimeter, collection.entities);
         thin_walls.clear();
     }
 
     Point zero_point(0, 0);
-    std::vector<std::pair<size_t, bool>> chain = chain_extrusion_entities(coll.entities, &zero_point);
+    std::vector<std::pair<size_t, bool>> chain = chain_extrusion_entities(collection.entities, &zero_point);
     ExtrusionEntityCollection out;
-    for (const std::pair<size_t, bool> &idx : chain) {
-        if (idx.first >= loops.size()) {
+    for (const std::pair<size_t, bool> &chain_entry : chain) {
+        if (chain_entry.first >= loops.size()) {
             // This is a thin wall.
             out.entities.reserve(out.entities.size() + 1);
-            out.entities.emplace_back(coll.entities[idx.first]);
-            coll.entities[idx.first] = nullptr;
-            if (idx.second)
+            out.entities.emplace_back(collection.entities[chain_entry.first]);
+            collection.entities[chain_entry.first] = nullptr;
+            if (chain_entry.second)
                 out.entities.back()->reverse();
         } else {
-            const PerimeterGeneratorLoop &loop = loops[idx.first];
+            const PerimeterGeneratorLoop &loop = loops[chain_entry.first];
             const bool reverse_children_thin_wall_hole = loops.size() == 1 && loop.is_contour && loop.children.size() == 1 &&
                                                          (!loop.children.front().is_contour) && loop.children.front().children.empty();
             ExtrusionEntityCollection children = traverse_loops(flows, config, loop.children, thin_walls, reverse_children_thin_wall_hole);
             out.entities.reserve(out.entities.size() + children.entities.size() + 1);
-            ExtrusionLoop *eloop = static_cast<ExtrusionLoop*>(coll.entities[idx.first]);
-            coll.entities[idx.first] = nullptr;
+            ExtrusionLoop *extrusion_loop = static_cast<ExtrusionLoop*>(collection.entities[chain_entry.first]);
+            collection.entities[chain_entry.first] = nullptr;
 
             if (config.wall_counter_clockwise == (loop.is_contour || reverse_thin_wall_hole))
-                eloop->make_counter_clockwise();
+                extrusion_loop->make_counter_clockwise();
             else
-                eloop->make_clockwise();
+                extrusion_loop->make_clockwise();
 
             // Orca: Reverse print order for thin wall holes.
             if (reverse_thin_wall_hole) {
                 std::reverse(out.entities.begin(), out.entities.end());
             }
 
-            eloop->inset_idx = loop.depth;
+            extrusion_loop->inset_idx = loop.depth;
             if (loop.is_contour) {
                 out.append(std::move(children.entities));
-                out.entities.emplace_back(eloop);
+                out.entities.emplace_back(extrusion_loop);
             } else {
-                out.entities.emplace_back(eloop);
+                out.entities.emplace_back(extrusion_loop);
                 out.append(std::move(children.entities));
             }
         }
@@ -387,17 +387,17 @@ void reorder_inner_outer_inner(ExtrusionEntityCollection& entities)
     }
 }
 
-IPath to_ipath(const Points& points)
+IntegerPath to_integer_path(const Points& points)
 {
-    IPath out;
+    IntegerPath out;
     out.reserve(points.size());
     for (const Point& point : points) out.emplace_back(point.x(), point.y());
     return out;
 }
 
-IPath to_ipath(const Polyline3& polyline)
+IntegerPath to_integer_path(const Polyline3& polyline)
 {
-    IPath out;
+    IntegerPath out;
     out.reserve(polyline.points.size());
     for (const Point3& point : polyline.points) out.emplace_back(point.x(), point.y());
     return out;
@@ -411,41 +411,41 @@ void flatten_wall(const ExtrusionEntity* entity, std::vector<Extrusion>& out)
         const ExtrusionLoop* loop = static_cast<const ExtrusionLoop*>(entity);
         int kind = InnerWall;
         if (loop->paths.front().role() == erExternalPerimeter) kind = OuterWall;
-        out.push_back({ to_ipath(loop->polygon().points), true, kind, loop->inset_idx, double(loop->paths.front().width) });
+        out.push_back({ to_integer_path(loop->polygon().points), true, kind, loop->inset_idx, double(loop->paths.front().width) });
         return;
     }
     if (entity->is_loop()) {
         for (const ExtrusionPath& path : static_cast<const ExtrusionLoop*>(entity)->paths)
-            out.push_back({ to_ipath(path.polyline), false, ThinWall, -1, double(path.width) });
+            out.push_back({ to_integer_path(path.polyline), false, ThinWall, -1, double(path.width) });
         return;
     }
     const ExtrusionPath* path = static_cast<const ExtrusionPath*>(entity);
-    out.push_back({ to_ipath(path->polyline), false, ThinWall, -1, double(path->width) });
+    out.push_back({ to_integer_path(path->polyline), false, ThinWall, -1, double(path->width) });
 }
 
 void flatten_gap_fill(const ExtrusionEntity* entity, std::vector<Extrusion>& out)
 {
     if (entity->is_loop()) {
         for (const ExtrusionPath& path : static_cast<const ExtrusionLoop*>(entity)->paths)
-            out.push_back({ to_ipath(path.polyline), false, GapFill, -1, double(path.width) });
+            out.push_back({ to_integer_path(path.polyline), false, GapFill, -1, double(path.width) });
         return;
     }
     const ExtrusionPath* path = static_cast<const ExtrusionPath*>(entity);
-    out.push_back({ to_ipath(path->polyline), false, GapFill, -1, double(path->width) });
+    out.push_back({ to_integer_path(path->polyline), false, GapFill, -1, double(path->width) });
 }
 
 } // namespace
 
-Result generate(const std::vector<IPath>& contour, const Config& config)
+Result generate(const std::vector<IntegerPath>& contour, const Config& config)
 {
     Result result;
 
     Polygons slice_polygons;
-    for (const IPath& path : contour) {
+    for (const IntegerPath& path : contour) {
         if (path.size() < 3) continue;
         Polygon polygon;
         polygon.points.reserve(path.size());
-        for (const IPoint& point : path) polygon.points.emplace_back(coord_t(point.first), coord_t(point.second));
+        for (const IntegerPoint& point : path) polygon.points.emplace_back(coord_t(point.first), coord_t(point.second));
         slice_polygons.emplace_back(std::move(polygon));
     }
     ExPolygons slices = union_ex(slice_polygons);
@@ -521,13 +521,13 @@ Result generate(const std::vector<IPath>& contour, const Config& config)
                         // the following offset2 ensures almost nothing in @thin_walls is narrower than $min_width
                         // (actually, something larger than that still may exist due to mitering or other causes)
                         coord_t min_width = coord_t(scale_(flows.ext_perimeter.m_nozzle_diameter / 3));
-                        ExPolygons expp = opening_ex(
+                        ExPolygons thin_wall_areas = opening_ex(
                             // medial axis requires non-overlapping geometry
                             diff_ex(last, offset(offsets, float(ext_perimeter_width / 2.) + ClipperSafetyOffset)),
                             float(min_width / 2.));
                         // the maximum thickness of our thin wall area is equal to the minimum thickness of a single loop
-                        for (ExPolygon &ex : expp)
-                            ex.medial_axis(min_width, ext_perimeter_width + ext_perimeter_spacing2, &thin_walls);
+                        for (ExPolygon &thin_wall_area : thin_wall_areas)
+                            thin_wall_area.medial_axis(min_width, ext_perimeter_width + ext_perimeter_spacing2, &thin_walls);
                     } else {
                         coord_t ext_perimeter_smaller_width = scaled_width(flows.smaller_ext_perimeter);
                         for (const ExPolygon& expolygon : last) {
@@ -624,30 +624,30 @@ Result generate(const std::vector<IPath>& contour, const Config& config)
             }
 
             // nest loops: holes first
-            for (int d = 0; d <= loop_number; ++ d) {
-                PerimeterGeneratorLoops &holes_d = holes[d];
-                // loop through all holes having depth == d
-                for (int i = 0; i < (int)holes_d.size(); ++ i) {
-                    const PerimeterGeneratorLoop &loop = holes_d[i];
+            for (int depth = 0; depth <= loop_number; ++ depth) {
+                PerimeterGeneratorLoops &holes_at_depth = holes[depth];
+                // loop through all holes at this depth
+                for (int i = 0; i < (int)holes_at_depth.size(); ++ i) {
+                    const PerimeterGeneratorLoop &loop = holes_at_depth[i];
                     // find the hole loop that contains this one, if any
-                    for (int t = d + 1; t <= loop_number; ++ t) {
-                        for (int j = 0; j < (int)holes[t].size(); ++ j) {
-                            PerimeterGeneratorLoop &candidate_parent = holes[t][j];
+                    for (int parent_depth = depth + 1; parent_depth <= loop_number; ++ parent_depth) {
+                        for (int j = 0; j < (int)holes[parent_depth].size(); ++ j) {
+                            PerimeterGeneratorLoop &candidate_parent = holes[parent_depth][j];
                             if (candidate_parent.polygon.contains(loop.polygon.first_point())) {
                                 candidate_parent.children.push_back(loop);
-                                holes_d.erase(holes_d.begin() + i);
+                                holes_at_depth.erase(holes_at_depth.begin() + i);
                                 -- i;
                                 goto NEXT_LOOP;
                             }
                         }
                     }
                     // if no hole contains this hole, find the contour loop that contains it
-                    for (int t = loop_number; t >= 0; -- t) {
-                        for (int j = 0; j < (int)contours[t].size(); ++ j) {
-                            PerimeterGeneratorLoop &candidate_parent = contours[t][j];
+                    for (int parent_depth = loop_number; parent_depth >= 0; -- parent_depth) {
+                        for (int j = 0; j < (int)contours[parent_depth].size(); ++ j) {
+                            PerimeterGeneratorLoop &candidate_parent = contours[parent_depth][j];
                             if (candidate_parent.polygon.contains(loop.polygon.first_point())) {
                                 candidate_parent.children.push_back(loop);
-                                holes_d.erase(holes_d.begin() + i);
+                                holes_at_depth.erase(holes_at_depth.begin() + i);
                                 -- i;
                                 goto NEXT_LOOP;
                             }
@@ -657,18 +657,18 @@ Result generate(const std::vector<IPath>& contour, const Config& config)
                 }
             }
             // nest contour loops
-            for (int d = loop_number; d >= 1; -- d) {
-                PerimeterGeneratorLoops &contours_d = contours[d];
-                // loop through all contours having depth == d
-                for (int i = 0; i < (int)contours_d.size(); ++ i) {
-                    const PerimeterGeneratorLoop &loop = contours_d[i];
+            for (int depth = loop_number; depth >= 1; -- depth) {
+                PerimeterGeneratorLoops &contours_at_depth = contours[depth];
+                // loop through all contours at this depth
+                for (int i = 0; i < (int)contours_at_depth.size(); ++ i) {
+                    const PerimeterGeneratorLoop &loop = contours_at_depth[i];
                     // find the contour loop that contains it
-                    for (int t = d - 1; t >= 0; -- t) {
-                        for (size_t j = 0; j < contours[t].size(); ++ j) {
-                            PerimeterGeneratorLoop &candidate_parent = contours[t][j];
+                    for (int parent_depth = depth - 1; parent_depth >= 0; -- parent_depth) {
+                        for (size_t j = 0; j < contours[parent_depth].size(); ++ j) {
+                            PerimeterGeneratorLoop &candidate_parent = contours[parent_depth][j];
                             if (candidate_parent.polygon.contains(loop.polygon.first_point())) {
                                 candidate_parent.children.push_back(loop);
-                                contours_d.erase(contours_d.begin() + i);
+                                contours_at_depth.erase(contours_at_depth.begin() + i);
                                 -- i;
                                 goto NEXT_CONTOUR;
                             }
@@ -695,23 +695,23 @@ Result generate(const std::vector<IPath>& contour, const Config& config)
         // fill gaps
         if (! gaps.empty()) { // collapse
             // ORCA: Use the smaller width as the lower bound to avoid overestimating safe overlap
-            double min = 0.2 * std::min(perimeter_width, ext_perimeter_width) * (1 - INSET_OVERLAP_TOLERANCE);
-            double max = 2. * perimeter_spacing;
+            double min_gap_width = 0.2 * std::min(perimeter_width, ext_perimeter_width) * (1 - INSET_OVERLAP_TOLERANCE);
+            double max_gap_width = 2. * perimeter_spacing;
             ExPolygons gaps_ex = diff_ex(
                 //FIXME offset2 would be enough and cheaper.
-                opening_ex(gaps, float(min / 2.)),
-                offset2_ex(gaps, - float(max / 2.), float(max / 2. + ClipperSafetyOffset)));
+                opening_ex(gaps, float(min_gap_width / 2.)),
+                offset2_ex(gaps, - float(max_gap_width / 2.), float(max_gap_width / 2. + ClipperSafetyOffset)));
             ThickPolylines polylines;
-            for (ExPolygon& ex : gaps_ex) {
+            for (ExPolygon& gap : gaps_ex) {
                 //BBS: Use DP simplify to avoid duplicated points and accelerate medial-axis calculation as well.
-                ex.douglas_peucker(surface_simplify_resolution);
-                ex.medial_axis(min, max, &polylines);
+                gap.douglas_peucker(surface_simplify_resolution);
+                gap.medial_axis(min_gap_width, max_gap_width, &polylines);
             }
 
             // SoftFever: filter out tiny gap fills
             polylines.erase(std::remove_if(polylines.begin(), polylines.end(),
-                [&](const ThickPolyline& p) {
-                    return p.length() < scale_(config.filter_out_gap_fill);
+                [&](const ThickPolyline& polyline) {
+                    return polyline.length() < scale_(config.filter_out_gap_fill);
                 }), polylines.end());
 
             if (! polylines.empty()) {
@@ -750,10 +750,10 @@ Result generate(const std::vector<IPath>& contour, const Config& config)
             inset -= infill_peri_overlap;
         }
         // simplify infill contours according to resolution
-        Polygons pp;
-        for (ExPolygon &ex : last)
-            ex.simplify_p(scaled_resolution, &pp);
-        ExPolygons not_filled_exp = union_ex(pp);
+        Polygons simplified_polygons;
+        for (ExPolygon &remaining : last)
+            remaining.simplify_p(scaled_resolution, &simplified_polygons);
+        ExPolygons not_filled_exp = union_ex(simplified_polygons);
         // collapse too narrow infill areas
         coord_t min_perimeter_infill_spacing = coord_t(solid_infill_spacing * (1. - INSET_OVERLAP_TOLERANCE));
 
@@ -762,9 +762,9 @@ Result generate(const std::vector<IPath>& contour, const Config& config)
             float(-inset - min_perimeter_infill_spacing / 2.),
             float(min_perimeter_infill_spacing / 2.));
         for (const ExPolygon& expolygon : infill_exp) {
-            result.fill.push_back(to_ipath(expolygon.contour.points));
+            result.fill.push_back(to_integer_path(expolygon.contour.points));
             for (const Polygon& hole : expolygon.holes)
-                result.fill.push_back(to_ipath(hole.points));
+                result.fill.push_back(to_integer_path(hole.points));
         }
     } // for each island
     return result;

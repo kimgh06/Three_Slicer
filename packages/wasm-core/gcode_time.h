@@ -25,31 +25,31 @@ struct Limits {
 };
 
 struct Result {
-    double total_s = 0.0;                 // total estimated print time (s)
-    std::vector<double> layer_s;          // per "; LAYER" time (s)
-    double first_layer_s = 0.0;
-    double extrude_s = 0.0, travel_s = 0.0; // move-type breakdown (s)
-    std::map<int, double> role_s;         // ExtrusionRole int -> s (only when ;_EXTRUSION_ROLE tags present)
+    double total_seconds = 0.0;                 // total estimated print time (s)
+    std::vector<double> layer_seconds;          // per "; LAYER" time (s)
+    double first_layer_seconds = 0.0;
+    double extrude_seconds = 0.0, travel_seconds = 0.0; // move-type breakdown (s)
+    std::map<int, double> role_seconds;         // ExtrusionRole int -> s (only when ;_EXTRUSION_ROLE tags present)
     double filament_mm = 0.0;             // sum of positive E deltas (mm) — cross-check vs kernel stat
     long   moves = 0;                     // parsed motion moves
 };
 
 // Parse g-code text and estimate print time with the original trapezoidal planner.
-Result estimate(const std::string& gcode, const Limits& lim);
+Result estimate(const std::string& gcode, const Limits& limits);
 
 // The same estimate fed in pieces: begin (construct) -> feed any number of chunks, split anywhere (a partial trailing line is
 //  carried into the next feed) -> end. estimate() is begin + one feed + end, so the two agree to the bit. This is what lets the
 //  mt feeder keep parsing while the kernel is still emitting, instead of re-reading the whole text after the last layer.
 class Estimator {
 public:
-    explicit Estimator(const Limits& lim);
+    explicit Estimator(const Limits& limits);
     ~Estimator();
     void feed(const char* data, size_t len);
     void feed(const std::string& chunk) { feed(chunk.data(), chunk.size()); }
     Result end();
 private:
-    struct Impl;
-    Impl* impl_;
+    struct Implementation;
+    Implementation* implementation_;
 };
 
 } // namespace gcode_time

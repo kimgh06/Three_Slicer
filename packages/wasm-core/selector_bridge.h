@@ -22,16 +22,16 @@ enum : int {
   STATE_EXTRUDER_MAX = 16,
 };
 
-// Build the selector from a WELDED mesh in kernel coords: verts = flat x,y,z; tris = flat 3 indices/face.
+// Build the selector from a WELDED mesh in kernel coords: vertex_coordinates = flat x,y,z; triangle_indices = flat 3 indices/face.
 // Face order must match the kernel's triangle order so a viewer raycast face index == selector facet.
-void construct(const std::vector<float>& verts, const std::vector<int>& tris);
+void construct(const std::vector<float>& vertex_coordinates, const std::vector<int>& triangle_indices);
 // Rebuild the selector on a mesh with the SAME topology and keep every mark. Moving, rotating or scaling a model
 // changes its coordinates and nothing else, so the selector has to be rebuilt (the brush and the layer projection
 // both work on real positions) while the paint has no reason to go. Upstream's own persistence does exactly this:
 // the marks live in a TriangleSplittingData keyed by facet index, which a transform does not touch — it is the same
 // data 3MF stores and undo/redo replays. Returns false, and falls back to a plain construct, when the face count
 // differs: a different model's facet 7 is not this one's, and pretending otherwise would move the paint elsewhere.
-bool reconstruct_keeping_paint(const std::vector<float>& verts, const std::vector<int>& tris);
+bool reconstruct_keeping_paint(const std::vector<float>& vertex_coordinates, const std::vector<int>& triangle_indices);
 void clear();
 int  facet_count();
 bool has_paint();                    // true when ANY state (1..16) has painted facets
@@ -44,8 +44,8 @@ enum : int {
   CURSOR_CIRCLE = 1,   // a disc facing the camera: only the surface being looked at
 };
 
-// Paint a brush patch anchored at facet `facet` around world hit point (hx,hy,hz), camera at
-// (cx,cy,cz), radius mm, in the given state (STATE_ENFORCER / STATE_BLOCKER / an extruder 3..16).
+// Paint a brush patch anchored at facet `facet` around world hit point (hit_x,hit_y,hit_z), camera at
+// (camera_x,camera_y,camera_z), radius mm, in the given state (STATE_ENFORCER / STATE_BLOCKER / an extruder 3..16).
 // STATE_NONE is a legal state HERE and only here: it is the eraser, writing NONE over the brushed facets so they
 // return to the default extruder — the same thing upstream's shift+drag does (GLGizmoPainterBase.cpp ~732-748).
 // The embind layer does NOT let a state argument carry NONE (bindings.cpp): erasing has its own entry point there,
@@ -53,22 +53,22 @@ enum : int {
 // Upstream's `highlight_by_angle_deg` (select_patch's last-but-one argument), as a MODE rather than a per-stroke
 // argument — it is gizmo state upstream too (m_paint_on_overhangs_only). Non-zero restricts every stroke and every
 // fill to facets overhanging by more than that angle; 0, the default, paints everything.
-void set_overhang_limit(float deg);
+void set_overhang_limit(float degrees);
 
-void paint(int facet, float hx, float hy, float hz, float cx, float cy, float cz, float radius, int state, int cursor);
+void paint(int facet, float hit_x, float hit_y, float hit_z, float camera_x, float camera_y, float camera_z, float radius, int state, int cursor);
 
 // The CAPSULE swept between two consecutive stroke samples — upstream's DoublePointCursor (GLGizmoPainterBase.cpp
 // :878 builds one for every adjacent pair of projected mouse positions). A pointer stream is sampled, not
 // continuous: paint() alone leaves a drag as a row of separate balls with gaps between them, and the faster the
-// drag the wider the gaps. (a*) is the previous sample, (b*) this one; everything else matches paint().
-void paint_stroke(int facet, float ax, float ay, float az, float bx, float by, float bz,
-                  float cx, float cy, float cz, float radius, int state, int cursor);
+// drag the wider the gaps. (previous_*) is the previous sample, (hit_*) this one; everything else matches paint().
+void paint_stroke(int facet, float previous_x, float previous_y, float previous_z, float hit_x, float hit_y, float hit_z,
+                  float camera_x, float camera_y, float camera_z, float radius, int state, int cursor);
 
 // The section plane, upstream's object clipper (Alt+wheel over the canvas — GLGizmoPainterBase.cpp:709). Every
 // cursor and both fills reject facets on the far side of it, which is the only way to reach an interior surface
 // with a brush. `normal`+`offset` are in KERNEL coords (a point p is clipped when normal.p - offset > 0);
 // `enabled` false restores upstream's inactive plane, which clips nothing.
-void set_clip_plane(float nx, float ny, float nz, float offset, bool enabled);
+void set_clip_plane(float normal_x, float normal_y, float normal_z, float offset, bool enabled);
 
 int  painted_count(int state);       // number of painted facets of that state (UI feedback)
 
@@ -81,8 +81,8 @@ int  painted_count(int state);       // number of painted facets of that state (
 //    or the edge is sharper than `angle_deg`. With `propagate` false it marks only the facet under the cursor,
 //    which is exactly upstream's "Triangles" (POINTER) cursor — the same call with propagation off.
 // STATE_NONE is accepted by both, on the same reasoning as paint(): it is the eraser.
-void seed_fill(int facet, float hx, float hy, float hz, float angle_deg, int state);
-void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool propagate, int state);
+void seed_fill(int facet, float hit_x, float hit_y, float hit_z, float angle_deg, int state);
+void bucket_fill(int facet, float hit_x, float hit_y, float hit_z, float angle_deg, bool propagate, int state);
 
 // A fill SELECTED but not applied — upstream runs exactly this on every mouse move while a fill tool is active
 // (GLGizmoPainterBase.cpp:929-965) and draws the result in a lighter shade, so a click is aimed rather than tried.
@@ -93,7 +93,7 @@ enum : int {
   FILL_BUCKET   = 1,   // flood everything sharing the hit facet's current state
   FILL_TRIANGLE = 2,   // exactly one facet: bucket fill with the propagation off
 };
-std::vector<float> fill_preview(int facet, float hx, float hy, float hz, float angle_deg, int mode);
+std::vector<float> fill_preview(int facet, float hit_x, float hit_y, float hit_z, float angle_deg, int mode);
 void fill_preview_clear();
 
 // Overlay triangles for the painted state: flat x,y,z per vertex, 3 vertices per triangle (three.js render).

@@ -230,7 +230,7 @@ struct PreparedJob {
 // generate_support_points, move_on_mesh_surface against the object mesh, then the permanent/manual points are
 // appended AFTER the move (upstream keeps their authored 3d position). Modifier masks are NOT applied here —
 // generate() filters the final point set exactly as before (task-6 semantics).
-struct PointGenConfig {
+struct PointGenerationConfig {
   double density_relative = 1.0;      // support_points_density_relative / 100
   double head_diameter = 0.4;         // [mm] support_head_front_diameter
   double slice_closing_radius = 0.049; // [mm] the generator's input slices are gap-closed like upstream
@@ -249,7 +249,7 @@ struct GeneratedPoints {
   double t_move_ms = 0;      // move_on_mesh_surface
 };
 
-GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenConfig& cfg);
+GeneratedPoints generate_support_points(const PreparedJob& job, const PointGenerationConfig& point_config);
 
 enum class SupportStrategy : std::uint8_t { default_tree = 0, branching = 1, organic = 2 };
 
@@ -320,7 +320,7 @@ struct Result {
   bool ok = false;
 };
 
-Result generate(const PreparedJob& job, const Config& cfg);
+Result generate(const PreparedJob& job, const Config& bridge_config);
 
 enum class SupportSlicerCapabilityStatus : std::uint8_t {
   supported = 0,

@@ -55,7 +55,7 @@ try {
   assert.equal(branching?.copied, false)
 
   const bridge = readFileSync(join(here, 'slasupport_bridge.cpp'), 'utf8')
-  assert.match(bridge, /strategy_capability\(cfg\.strategy\)/)
+  assert.match(bridge, /strategy_capability\(bridge_config\.strategy\)/)
   assert.match(bridge, /status != StrategyCapabilityStatus::supported/)
   assert.match(bridge, /DefaultSupportTree::execute/)
 

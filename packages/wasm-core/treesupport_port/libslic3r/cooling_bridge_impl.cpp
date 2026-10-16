@@ -25,8 +25,8 @@ std::string begin(const std::string& settings_json, const std::vector<unsigned i
   try {
     DynamicPrintConfig loaded;
     std::vector<std::pair<std::string, std::string>> extras;
-    std::vector<std::string> objectNames;
-    std::string error = load_settings_json(settings_json, loaded, extras, objectNames);
+    std::vector<std::string> object_names;
+    std::string error = load_settings_json(settings_json, loaded, extras, object_names);
     if (!error.empty())
       return error;
     session->config.apply(loaded, true);
@@ -61,11 +61,21 @@ Markers markers(unsigned int extruder) {
   out.overhang = config.enable_overhang_bridge_fan.get_at(extruder);
   out.overhang_external = config.overhang_fan_threshold.get_at(extruder) == int(Overhang_threshold_none);
   switch (config.overhang_fan_threshold.get_at(extruder)) {
-  case int(Overhang_threshold_1_4):    out.overhang_overlap = 0.9;  break;
-  case int(Overhang_threshold_2_4):    out.overhang_overlap = 0.75; break;
-  case int(Overhang_threshold_3_4):    out.overhang_overlap = 0.5;  break;
-  case int(Overhang_threshold_4_4):    out.overhang_overlap = 0.25; break;
-  case int(Overhang_threshold_bridge): out.overhang_overlap = 0.05; break;
+  case int(Overhang_threshold_1_4):
+    out.overhang_overlap = 0.9;
+    break;
+  case int(Overhang_threshold_2_4):
+    out.overhang_overlap = 0.75;
+    break;
+  case int(Overhang_threshold_3_4):
+    out.overhang_overlap = 0.5;
+    break;
+  case int(Overhang_threshold_4_4):
+    out.overhang_overlap = 0.25;
+    break;
+  case int(Overhang_threshold_bridge):
+    out.overhang_overlap = 0.05;
+    break;
   default: break;
   }
   out.support_interface = config.support_material_interface_fan_speed.get_at(extruder) > -1;

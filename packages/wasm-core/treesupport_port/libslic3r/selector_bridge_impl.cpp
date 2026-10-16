@@ -23,11 +23,13 @@ namespace {
         using TriangleSelector::TriangleSelector;
         std::vector<float> seed_fill_overlay() const {
             std::vector<float> out;
-            for (const Triangle& tr : m_triangles) {
-                if (!tr.valid() || tr.is_split() || !tr.is_selected_by_seed_fill()) continue;
+            for (const Triangle& triangle : m_triangles) {
+                if (!triangle.valid() || triangle.is_split() || !triangle.is_selected_by_seed_fill()) continue;
                 for (int k = 0; k < 3; ++k) {
-                    const stl_vertex& v = m_vertices[tr.verts_idxs[k]].v;
-                    out.push_back(v.x()); out.push_back(v.y()); out.push_back(v.z());
+                    const stl_vertex& vertex = m_vertices[triangle.verts_idxs[k]].v;
+                    out.push_back(vertex.x());
+                    out.push_back(vertex.y());
+                    out.push_back(vertex.z());
                 }
             }
             return out;
@@ -39,7 +41,7 @@ namespace {
     // ENFORCER/BLOCKER and must not pay for 14 extruder states it never paints.
     constexpr int STATE_COUNT = selector_bridge::STATE_EXTRUDER_MAX + 1;
     std::unique_ptr<TriangleMesh>      g_mesh;
-    std::unique_ptr<PreviewSelector>   g_sel;
+    std::unique_ptr<PreviewSelector>   g_selector;
     std::array<indexed_triangle_set, STATE_COUNT> g_facets;   // cached painted facets per state (kernel coords)
     std::array<bool, STATE_COUNT>      g_cached{};
     const indexed_triangle_set         g_empty{};
@@ -66,7 +68,10 @@ namespace {
     // Conservative on purpose: erasing every mark leaves this true, which costs one wasted serialize() and never a
     // wrong answer. Cleared only where the marks genuinely cease to exist (a fresh selector).
     bool g_maybe_painted = false;
-    void invalidate() { g_cached.fill(false); g_segmented.clear(); }
+    void invalidate() {
+        g_cached.fill(false);
+        g_segmented.clear();
+    }
 
     // The section plane every cursor is built with. Upstream keeps it on the gizmo's ObjectClipper and passes it
     // into each call; here it is one bridge-wide value because the viewer has exactly one section plane. Default
@@ -79,7 +84,11 @@ namespace {
     const indexed_triangle_set& facets_of(int state) {
         if (!valid_state(state)) return g_empty;
         if (!g_cached[state]) {
-            g_facets[state] = g_sel ? g_sel->get_facets((EnforcerBlockerType)state) : indexed_triangle_set{};
+            if (g_selector) {
+                g_facets[state] = g_selector->get_facets((EnforcerBlockerType)state);
+            } else {
+                g_facets[state] = indexed_triangle_set{};
+            }
             g_cached[state] = true;
         }
         return g_facets[state];
@@ -96,112 +105,137 @@ const indexed_triangle_set& selector_blocker_its()  { return facets_of(selector_
 // path — the export takes g_maybe_painted instead. (It cannot: this must stay exact, and the flag is conservative,
 // so an erased-clean selector would route a slice down the painted path it no longer belongs on.)
 bool selector_has_paint() {
-    if (!g_sel) return false;
+    if (!g_selector) return false;
     for (int state = selector_bridge::STATE_ENFORCER; state <= selector_bridge::STATE_EXTRUDER_MAX; ++state)
-        if (g_sel->has_facets((EnforcerBlockerType)state)) return true;
+        if (g_selector->has_facets((EnforcerBlockerType)state)) return true;
     return false;
 }
 }
 
 namespace selector_bridge {
 
-void construct(const std::vector<float>& verts, const std::vector<int>& tris) {
-    indexed_triangle_set its;
-    its.vertices.reserve(verts.size() / 3);
-    for (size_t i = 0; i + 2 < verts.size(); i += 3) its.vertices.emplace_back(verts[i], verts[i+1], verts[i+2]);
-    its.indices.reserve(tris.size() / 3);
-    for (size_t i = 0; i + 2 < tris.size(); i += 3) its.indices.emplace_back(tris[i], tris[i+1], tris[i+2]);
-    g_mesh = std::make_unique<TriangleMesh>(its);
-    g_sel  = std::make_unique<PreviewSelector>(*g_mesh);
+void construct(const std::vector<float>& vertex_coordinates, const std::vector<int>& triangle_indices) {
+    indexed_triangle_set triangle_set;
+    triangle_set.vertices.reserve(vertex_coordinates.size() / 3);
+    for (size_t i = 0; i + 2 < vertex_coordinates.size(); i += 3)
+        triangle_set.vertices.emplace_back(vertex_coordinates[i], vertex_coordinates[i+1], vertex_coordinates[i+2]);
+    triangle_set.indices.reserve(triangle_indices.size() / 3);
+    for (size_t i = 0; i + 2 < triangle_indices.size(); i += 3)
+        triangle_set.indices.emplace_back(triangle_indices[i], triangle_indices[i+1], triangle_indices[i+2]);
+    g_mesh = std::make_unique<TriangleMesh>(triangle_set);
+    g_selector  = std::make_unique<PreviewSelector>(*g_mesh);
     g_maybe_painted = false;
     invalidate();
 }
 
-bool reconstruct_keeping_paint(const std::vector<float>& verts, const std::vector<int>& tris) {
-    const bool same_topology = g_sel && g_mesh && g_mesh->its.indices.size() == tris.size() / 3;
-    if (!same_topology) { construct(verts, tris); return false; }
-    TriangleSelector::TriangleSplittingData marks = g_sel->serialize();
+bool reconstruct_keeping_paint(const std::vector<float>& vertex_coordinates, const std::vector<int>& triangle_indices) {
+    const bool same_topology = g_selector && g_mesh && g_mesh->its.indices.size() == triangle_indices.size() / 3;
+    if (!same_topology) {
+        construct(vertex_coordinates, triangle_indices);
+        return false;
+    }
+    TriangleSelector::TriangleSplittingData marks = g_selector->serialize();
     // `used_states` is the exact answer to "does this bitstream carry any mark", and serialize() just filled it in
     // — so a move restores the flag rather than guessing, at no extra cost. construct() below clears it first.
     bool marked = false;
-    for (size_t state = 1; state < marks.used_states.size(); ++state) if (marks.used_states[state]) { marked = true; break; }
-    construct(verts, tris);
-    g_sel->deserialize(marks);
+    for (size_t state = 1; state < marks.used_states.size(); ++state)
+        if (marks.used_states[state]) {
+            marked = true;
+            break;
+        }
+    construct(vertex_coordinates, triangle_indices);
+    g_selector->deserialize(marks);
     g_maybe_painted = marked;
     invalidate();
     return true;
 }
 
-void clear() { if (g_mesh) g_sel = std::make_unique<PreviewSelector>(*g_mesh); g_maybe_painted = false; invalidate(); }
+void clear() {
+    if (g_mesh) g_selector = std::make_unique<PreviewSelector>(*g_mesh);
+    g_maybe_painted = false;
+    invalidate();
+}
 
-int  facet_count() { return g_mesh ? int(g_mesh->its.indices.size()) : 0; }
+int  facet_count() {
+    if (!g_mesh) return 0;
+    return int(g_mesh->its.indices.size());
+}
 bool has_paint()   { return Slic3r::selector_has_paint(); }
 
 namespace {
     // cursor_factory asserts on anything but these two, and an assert in a wasm build is a raw trap with no message,
     //  so an unknown value is read as the default brush instead of being passed through.
     TriangleSelector::CursorType shape_of(int cursor) {
-        return (cursor == selector_bridge::CURSOR_CIRCLE) ? TriangleSelector::CursorType::CIRCLE
-                                                          : TriangleSelector::CursorType::SPHERE;
+        if (cursor == selector_bridge::CURSOR_CIRCLE) return TriangleSelector::CursorType::CIRCLE;
+        return TriangleSelector::CursorType::SPHERE;
     }
     // Everything a stroke does after its cursor is built is identical whether that cursor is a ball or a capsule.
     void apply_patch(int facet, std::unique_ptr<TriangleSelector::Cursor>&& cursor_shape, int state) {
-        Transform3d trafo = Transform3d::Identity();
-        g_sel->select_patch(facet, std::move(cursor_shape), (EnforcerBlockerType)state, trafo,
+        Transform3d transform = Transform3d::Identity();
+        g_selector->select_patch(facet, std::move(cursor_shape), (EnforcerBlockerType)state, transform,
                             /*triangle_splitting*/true, g_overhang_deg);
         if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;   // NONE is the eraser — it never creates a mark
         invalidate();
     }
     bool paintable_hit(int facet, int state) {
-        return g_sel && facet >= 0 && facet < int(g_mesh->its.indices.size()) && paintable_state(state);
+        return g_selector && facet >= 0 && facet < int(g_mesh->its.indices.size()) && paintable_state(state);
     }
 }
 
-void set_overhang_limit(float deg) { g_overhang_deg = deg > 0.f ? deg : 0.f; }
-
-void set_clip_plane(float nx, float ny, float nz, float offset, bool enabled) {
-    if (!enabled) { g_clip = TriangleSelector::ClippingPlane(); return; }
-    g_clip = TriangleSelector::ClippingPlane(std::array<float, 4>{nx, ny, nz, offset});
+void set_overhang_limit(float degrees) {
+    if (degrees > 0.f)
+        g_overhang_deg = degrees;
+    else
+        g_overhang_deg = 0.f;
 }
 
-void paint(int facet, float hx, float hy, float hz, float cx, float cy, float cz, float radius, int state, int cursor) {
+void set_clip_plane(float normal_x, float normal_y, float normal_z, float offset, bool enabled) {
+    if (!enabled) {
+        g_clip = TriangleSelector::ClippingPlane();
+        return;
+    }
+    g_clip = TriangleSelector::ClippingPlane(std::array<float, 4>{normal_x, normal_y, normal_z, offset});
+}
+
+void paint(int facet, float hit_x, float hit_y, float hit_z, float camera_x, float camera_y, float camera_z, float radius, int state, int cursor) {
     if (!paintable_hit(facet, state)) return;
-    Transform3d trafo = Transform3d::Identity();
+    Transform3d transform = Transform3d::Identity();
     apply_patch(facet, TriangleSelector::SinglePointCursor::cursor_factory(
-        Vec3f(hx, hy, hz), Vec3f(cx, cy, cz), radius, shape_of(cursor), trafo, g_clip), state);
+        Vec3f(hit_x, hit_y, hit_z), Vec3f(camera_x, camera_y, camera_z), radius, shape_of(cursor), transform, g_clip), state);
 }
 
-void paint_stroke(int facet, float ax, float ay, float az, float bx, float by, float bz,
-                  float cx, float cy, float cz, float radius, int state, int cursor) {
+void paint_stroke(int facet, float previous_x, float previous_y, float previous_z, float hit_x, float hit_y, float hit_z,
+                  float camera_x, float camera_y, float camera_z, float radius, int state, int cursor) {
     if (!paintable_hit(facet, state)) return;
-    Transform3d trafo = Transform3d::Identity();
+    Transform3d transform = Transform3d::Identity();
     // Capsule3D for the sphere brush, Capsule2D for the circle one — DoublePointCursor::cursor_factory picks by the
     //  same CursorType the single-point factory takes, so the two entry points cannot disagree about the shape.
     apply_patch(facet, TriangleSelector::DoublePointCursor::cursor_factory(
-        Vec3f(ax, ay, az), Vec3f(bx, by, bz), Vec3f(cx, cy, cz), radius, shape_of(cursor), trafo, g_clip), state);
+        Vec3f(previous_x, previous_y, previous_z), Vec3f(hit_x, hit_y, hit_z), Vec3f(camera_x, camera_y, camera_z), radius,
+        shape_of(cursor), transform, g_clip), state);
 }
 
 // Both fills follow upstream's own order (GLGizmoPainterBase.cpp ~845-865): select, then apply the selection as a
 // state. The trailing unselect is ours — upstream keeps the selection alive to highlight it under a moving cursor,
 // while a headless one-shot call must leave the selector holding nothing, or the NEXT fill's `force_reselection`
 // would be the only thing standing between the two clicks.
-void seed_fill(int facet, float hx, float hy, float hz, float angle_deg, int state) {
+void seed_fill(int facet, float hit_x, float hit_y, float hit_z, float angle_deg, int state) {
     if (!paintable_hit(facet, state)) return;
-    Transform3d trafo = Transform3d::Identity();
-    g_sel->seed_fill_select_triangles(Vec3f(hx, hy, hz), facet, trafo, g_clip,
+    Transform3d transform = Transform3d::Identity();
+    g_selector->seed_fill_select_triangles(Vec3f(hit_x, hit_y, hit_z), facet, transform, g_clip,
                                       angle_deg, g_overhang_deg, /*force_reselection*/true);
-    g_sel->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
-    g_sel->seed_fill_unselect_all_triangles();
+    g_selector->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
+    g_selector->seed_fill_unselect_all_triangles();
     if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;
     invalidate();
 }
 
-void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool propagate, int state) {
+void bucket_fill(int facet, float hit_x, float hit_y, float hit_z, float angle_deg, bool propagate, int state) {
     if (!paintable_hit(facet, state)) return;
-    g_sel->bucket_fill_select_triangles(Vec3f(hx, hy, hz), facet, g_clip,
+    g_selector->bucket_fill_select_triangles(Vec3f(hit_x, hit_y, hit_z), facet, g_clip,
                                         angle_deg, propagate, /*force_reselection*/true);
-    g_sel->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
-    g_sel->seed_fill_unselect_all_triangles();
+    g_selector->seed_fill_apply_on_triangles((EnforcerBlockerType)state);
+    g_selector->seed_fill_unselect_all_triangles();
     if (state != selector_bridge::STATE_NONE) g_maybe_painted = true;
     invalidate();
 }
@@ -211,19 +245,19 @@ void bucket_fill(int facet, float hx, float hy, float hz, float angle_deg, bool 
 // aimed rather than tried. The selection is left standing on the selector: the click that follows re-selects with
 // force_reselection anyway, so nothing depends on clearing it, and leaving it costs one flag per split triangle
 // instead of a second full walk on every pointer move.
-std::vector<float> fill_preview(int facet, float hx, float hy, float hz, float angle_deg, int mode) {
-    if (!g_sel || facet < 0 || facet >= int(g_mesh->its.indices.size())) return {};
-    Transform3d trafo = Transform3d::Identity();
+std::vector<float> fill_preview(int facet, float hit_x, float hit_y, float hit_z, float angle_deg, int mode) {
+    if (!g_selector || facet < 0 || facet >= int(g_mesh->its.indices.size())) return {};
+    Transform3d transform = Transform3d::Identity();
     if (mode == selector_bridge::FILL_SMART)
-        g_sel->seed_fill_select_triangles(Vec3f(hx, hy, hz), facet, trafo, g_clip,
+        g_selector->seed_fill_select_triangles(Vec3f(hit_x, hit_y, hit_z), facet, transform, g_clip,
                                           angle_deg, g_overhang_deg, /*force_reselection*/true);
     else
-        g_sel->bucket_fill_select_triangles(Vec3f(hx, hy, hz), facet, g_clip, angle_deg,
+        g_selector->bucket_fill_select_triangles(Vec3f(hit_x, hit_y, hit_z), facet, g_clip, angle_deg,
                                             /*propagate*/mode == selector_bridge::FILL_BUCKET, /*force_reselection*/true);
-    return g_sel->seed_fill_overlay();
+    return g_selector->seed_fill_overlay();
 }
 void fill_preview_clear() {
-    if (g_sel) g_sel->seed_fill_unselect_all_triangles();
+    if (g_selector) g_selector->seed_fill_unselect_all_triangles();
 }
 
 int painted_count(int state) { return int(facets_of(state).indices.size()); }
@@ -235,7 +269,7 @@ int painted_count(int state) { return int(facets_of(state).indices.size()); }
 // The whole batch is assembled into ONE TriangleSplittingData and deserialized in one call because deserialize()
 // resets the selector — feeding it per facet would leave only the last one.
 int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::string>& hex) {
-    if (!g_sel || facets.empty() || facets.size() != hex.size()) return 0;
+    if (!g_selector || facets.empty() || facets.size() != hex.size()) return 0;
     const int facet_total = facet_count();
 
     // triangles_to_split has to be strictly ascending by triangle_idx (upstream asserts it, and get_triangle_as_string
@@ -245,9 +279,9 @@ int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::strin
     order.reserve(facets.size());
     for (size_t i = 0; i < facets.size(); ++i)
         if (facets[i] >= 0 && facets[i] < facet_total && !hex[i].empty()) order.push_back(i);
-    std::sort(order.begin(), order.end(), [&facets](size_t a, size_t b) { return facets[a] < facets[b]; });
+    std::sort(order.begin(), order.end(), [&facets](size_t left, size_t right) { return facets[left] < facets[right]; });
     order.erase(std::unique(order.begin(), order.end(),
-                            [&facets](size_t a, size_t b) { return facets[a] == facets[b]; }), order.end());
+                            [&facets](size_t left, size_t right) { return facets[left] == facets[right]; }), order.end());
 
     TriangleSelector::TriangleSplittingData data;
     int applied = 0;
@@ -259,12 +293,15 @@ int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::strin
         // front), so it reads back in reverse — four bits per digit, least significant bit first.
         bool malformed = false;
         for (auto it = text.crbegin(); it != text.crend(); ++it) {
-            const char ch = *it;
+            const char digit = *it;
             int nibble;
-            if (ch >= '0' && ch <= '9')      nibble = ch - '0';
-            else if (ch >= 'A' && ch <= 'F') nibble = 10 + (ch - 'A');
-            else if (ch >= 'a' && ch <= 'f') nibble = 10 + (ch - 'a');   // upstream only writes uppercase; be liberal reading
-            else { malformed = true; break; }
+            if (digit >= '0' && digit <= '9')      nibble = digit - '0';
+            else if (digit >= 'A' && digit <= 'F') nibble = 10 + (digit - 'A');
+            else if (digit >= 'a' && digit <= 'f') nibble = 10 + (digit - 'a');   // upstream only writes uppercase; be liberal reading
+            else {
+                malformed = true;
+                break;
+            }
             for (int bit = 0; bit < 4; ++bit) data.bitstream.push_back(bool(nibble & (1 << bit)));
         }
         if (malformed) {
@@ -278,7 +315,7 @@ int apply_paint_hex(const std::vector<int>& facets, const std::vector<std::strin
         ++applied;
     }
     if (applied == 0) return 0;
-    g_sel->deserialize(data);
+    g_selector->deserialize(data);
     g_maybe_painted = true;
     invalidate();
     return applied;
@@ -294,21 +331,28 @@ std::vector<std::pair<int, std::string>> export_paint_hex() {
     // The flag, NOT has_paint(): serialize() walks every original triangle's split tree whether or not anything
     // was painted, and has_paint() is no cheaper — it scans the whole mesh once per state. Both cost ~400ms on a
     // 980k-facet model that carries no marks at all. g_maybe_painted answers the same question in one load.
-    if (!g_sel || !g_maybe_painted) return out;
-    const TriangleSelector::TriangleSplittingData data = g_sel->serialize();
+    if (!g_selector || !g_maybe_painted) return out;
+    const TriangleSelector::TriangleSplittingData data = g_selector->serialize();
     out.reserve(data.triangles_to_split.size());
     for (size_t entry = 0; entry < data.triangles_to_split.size(); ++entry) {
         const TriangleSelector::TriangleBitStreamMapping& mapping = data.triangles_to_split[entry];
         size_t offset = size_t(mapping.bitstream_start_idx);
-        const size_t end = (entry + 1 < data.triangles_to_split.size())
-            ? size_t(data.triangles_to_split[entry + 1].bitstream_start_idx)
-            : data.bitstream.size();
+        size_t end;
+        if (entry + 1 < data.triangles_to_split.size())
+            end = size_t(data.triangles_to_split[entry + 1].bitstream_start_idx);
+        else
+            end = data.bitstream.size();
         std::string hex;
         while (offset + 4 <= end) {
             int nibble = 0;
             for (int bit = 3; bit >= 0; --bit) nibble = (nibble << 1) | int(data.bitstream[offset + bit]);
             offset += 4;
-            hex.insert(hex.begin(), char(nibble < 10 ? '0' + nibble : 'A' + (nibble - 10)));
+            int digit;
+            if (nibble < 10)
+                digit = '0' + nibble;
+            else
+                digit = 'A' + (nibble - 10);
+            hex.insert(hex.begin(), char(digit));
         }
         if (!hex.empty()) out.emplace_back(mapping.triangle_idx, std::move(hex));
     }
@@ -316,10 +360,16 @@ std::vector<std::pair<int, std::string>> export_paint_hex() {
 }
 
 std::vector<float> overlay(int state) {
-    const indexed_triangle_set& its = facets_of(state);
-    std::vector<float> out; out.reserve(its.indices.size() * 9);
-    for (const auto& f : its.indices)
-        for (int k = 0; k < 3; ++k) { const Vec3f& v = its.vertices[f[k]]; out.push_back(v.x()); out.push_back(v.y()); out.push_back(v.z()); }
+    const indexed_triangle_set& painted = facets_of(state);
+    std::vector<float> out;
+    out.reserve(painted.indices.size() * 9);
+    for (const auto& face : painted.indices)
+        for (int k = 0; k < 3; ++k) {
+            const Vec3f& vertex = painted.vertices[face[k]];
+            out.push_back(vertex.x());
+            out.push_back(vertex.y());
+            out.push_back(vertex.z());
+        }
     return out;
 }
 
@@ -330,27 +380,29 @@ namespace {
     to_mm_rings(const std::vector<Polygons>& projected, size_t layer_count) {
         std::vector<std::vector<std::vector<std::pair<double,double>>>> out(layer_count);
         for (size_t i = 0; i < layer_count && i < projected.size(); ++i)
-            for (const Polygon& p : projected[i]) {
-                std::vector<std::pair<double,double>> ring; ring.reserve(p.points.size());
-                for (const Point& pt : p.points) ring.emplace_back(unscale<double>(pt.x()), unscale<double>(pt.y()));
+            for (const Polygon& polygon : projected[i]) {
+                std::vector<std::pair<double,double>> ring;
+                ring.reserve(polygon.points.size());
+                for (const Point& point : polygon.points) ring.emplace_back(unscale<double>(point.x()), unscale<double>(point.y()));
                 if (ring.size() >= 3) out[i].push_back(std::move(ring));
             }
         return out;
     }
-    std::vector<float> to_float_zs(const std::vector<double>& slice_zs_mm) {
-        std::vector<float> zs; zs.reserve(slice_zs_mm.size());
-        for (double z : slice_zs_mm) zs.push_back(float(z));
-        return zs;
+    std::vector<float> to_float_heights(const std::vector<double>& slice_zs_mm) {
+        std::vector<float> slice_heights;
+        slice_heights.reserve(slice_zs_mm.size());
+        for (double z : slice_zs_mm) slice_heights.push_back(float(z));
+        return slice_heights;
     }
 }
 
 std::vector<std::vector<std::vector<std::pair<double,double>>>>
 project_layers(const std::vector<double>& slice_zs_mm, int state) {
-    const indexed_triangle_set& its = facets_of(state);
-    if (its.indices.empty() || slice_zs_mm.empty())
+    const indexed_triangle_set& painted = facets_of(state);
+    if (painted.indices.empty() || slice_zs_mm.empty())
         return std::vector<std::vector<std::vector<std::pair<double,double>>>>(slice_zs_mm.size());
-    const std::vector<float> zs = to_float_zs(slice_zs_mm);
-    return to_mm_rings(project_custom_facets_footprint(its, zs), slice_zs_mm.size());   // XY footprint per layer
+    const std::vector<float> slice_heights = to_float_heights(slice_zs_mm);
+    return to_mm_rings(project_custom_facets_footprint(painted, slice_heights), slice_zs_mm.size());   // XY footprint per layer
 }
 
 
@@ -363,7 +415,7 @@ namespace {
             if (ring.size() < 3) continue;
             Polygon polygon;
             polygon.points.reserve(ring.size());
-            for (const auto& xy : ring) polygon.points.emplace_back(scale_(xy.first), scale_(xy.second));
+            for (const auto& point_mm : ring) polygon.points.emplace_back(scale_(point_mm.first), scale_(point_mm.second));
             polygons.push_back(std::move(polygon));
         }
         // The caller hands over its slicer's own output, where nesting is expressed by winding. union_ex is what
@@ -374,7 +426,7 @@ namespace {
     std::vector<std::pair<double,double>> polygon_to_ring(const Polygon& polygon) {
         std::vector<std::pair<double,double>> ring;
         ring.reserve(polygon.points.size());
-        for (const Point& pt : polygon.points) ring.emplace_back(unscale<double>(pt.x()), unscale<double>(pt.y()));
+        for (const Point& point : polygon.points) ring.emplace_back(unscale<double>(point.x()), unscale<double>(point.y()));
         return ring;
     }
 }
@@ -383,22 +435,25 @@ bool segment_prepare(const std::vector<double>& slice_zs_mm, const selector_brid
                      int extruder_count, int top_shell_layers, int bottom_shell_layers,
                      double layer_height, double outer_wall_line_width, double segmented_region_max_width) {
     g_segmented.clear();
-    if (!g_sel || slice_zs_mm.empty() || layer_rings.empty() || extruder_count < 2) return false;
+    if (!g_selector || slice_zs_mm.empty() || layer_rings.empty() || extruder_count < 2) return false;
 
     // State s addresses Extruder s, so the state count upstream wants is extruder_count + 1 — index 0 is the
     // default extruder, the one every unpainted facet prints with.
     const size_t num_facets_states = size_t(extruder_count) + 1;
     bool any_painted = false;
     for (int state = STATE_ENFORCER; state <= extruder_count && state <= STATE_EXTRUDER_MAX; ++state)
-        if (painted_count(state) > 0) { any_painted = true; break; }
+        if (painted_count(state) > 0) {
+            any_painted = true;
+            break;
+        }
     if (!any_painted) return false;
 
     const size_t layer_count = std::min(slice_zs_mm.size(), layer_rings.size());
     std::vector<ExPolygons> layer_slices(layer_count);
     for (size_t i = 0; i < layer_count; ++i) layer_slices[i] = rings_to_expolygons(layer_rings[i]);
 
-    std::vector<float> zs = to_float_zs(slice_zs_mm);
-    zs.resize(layer_count);
+    std::vector<float> slice_heights = to_float_heights(slice_zs_mm);
+    slice_heights.resize(layer_count);
 
     SegmentationShellParams shell;
     shell.top_shell_layers      = top_shell_layers;
@@ -409,12 +464,12 @@ bool segment_prepare(const std::vector<double>& slice_zs_mm, const selector_brid
     // get_facets vs get_facets_strict is upstream's own split: the contour projection wants every facet carrying the
     // state, the shell projection only the ones entirely of it. Neither is cached — each is read once per run.
     auto facets_of_state = [](size_t state, bool strict) -> indexed_triangle_set {
-        if (!g_sel || !valid_state(int(state))) return indexed_triangle_set{};
-        return strict ? g_sel->get_facets_strict((EnforcerBlockerType)state)
-                      : g_sel->get_facets((EnforcerBlockerType)state);
+        if (!g_selector || !valid_state(int(state))) return indexed_triangle_set{};
+        if (strict) return g_selector->get_facets_strict((EnforcerBlockerType)state);
+        return g_selector->get_facets((EnforcerBlockerType)state);
     };
 
-    g_segmented = mm_segmentation_by_painting(layer_slices, zs, facets_of_state, num_facets_states, shell,
+    g_segmented = mm_segmentation_by_painting(layer_slices, slice_heights, facets_of_state, num_facets_states, shell,
                                               float(segmented_region_max_width),
                                               IncludeTopAndBottomLayers::Yes, [](){});
     return !g_segmented.empty();
@@ -424,12 +479,12 @@ selector_bridge::LayerRings segment_regions(int state) {
     selector_bridge::LayerRings out(g_segmented.size());
     if (!valid_state(state)) return out;
     const size_t column = size_t(state) - 1;
-    for (size_t layer_idx = 0; layer_idx < g_segmented.size(); ++layer_idx) {
-        const std::vector<ExPolygons>& by_extruder = g_segmented[layer_idx];
+    for (size_t layer_index = 0; layer_index < g_segmented.size(); ++layer_index) {
+        const std::vector<ExPolygons>& by_extruder = g_segmented[layer_index];
         if (column >= by_extruder.size()) continue;
         for (const ExPolygon& expolygon : by_extruder[column]) {
-            out[layer_idx].push_back(polygon_to_ring(expolygon.contour));
-            for (const Polygon& hole : expolygon.holes) out[layer_idx].push_back(polygon_to_ring(hole));
+            out[layer_index].push_back(polygon_to_ring(expolygon.contour));
+            for (const Polygon& hole : expolygon.holes) out[layer_index].push_back(polygon_to_ring(hole));
         }
     }
     return out;

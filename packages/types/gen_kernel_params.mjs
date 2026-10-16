@@ -7,8 +7,9 @@
 // consumer at all. A hand-written table would drift the same way the AGENTS.md key counts already did (89 -> 93).
 //
 // Three inputs, each the authority for one column:
-//   · wasm-core/params.cpp  — WHICH keys exist. Every read is `p.<field> = j<reader>(j,"<key>", …)`, so the reader
-//                             call sites are the definition of the accepted key set. Nothing else can be.
+//   · wasm-core/params.cpp  — WHICH keys exist. Every read is `p.<field> = json_<reader>(params_json,"<key>", …)`,
+//                             so the reader call sites are the definition of the accepted key set. Nothing else
+//                             can be.
 //   · wasm-core/params.h    — the C++ type, the default, and the trailing `//` comment as the description.
 //   · engine/src/settings.js — which schema key produces which kernel param, discovered by PROBING
 //                             deriveKernelParams rather than by parsing it (see probeSchemaMapping below).
@@ -30,19 +31,23 @@ const END = '<!-- KERNEL-PARAMS:END -->'
 
 // ---- 1. the accepted key set, from the reader call sites --------------------------------------------------
 // A line can carry more than one key: the tree-support shape options are read as
-// `jget(j,"…_organic", jget(j,"…", p.field))`, i.e. the organic-suffixed name wins and the suffix-less one is its
-// fallback. Both are accepted, both land in the same field, so both belong in the table — with the first one
-// marked as the alias it is.
+// `json_number(params_json,"…_organic", json_number(params_json,"…", p.field))`, i.e. the organic-suffixed name wins
+// and the suffix-less one is its fallback. Both are accepted, both land in the same field, so both belong in the
+// table — with the first one marked as the alias it is.
 function readerKeys() {
   const source = readFileSync(join(CORE, 'params.cpp'), 'utf8')
   const rows = []
   for (const line of source.split('\n')) {
     const assigned = line.match(/^\s*p\.([a-z0-9_]+)\s*=/)
     if (!assigned) continue
-    const keys = [...line.matchAll(/\bj[a-z_]+\(j,\s*"([a-z0-9_]+)"/g)].map(m => m[1])
+    const keys = [...line.matchAll(/\bjson_[a-z_]+\(params_json,\s*"([a-z0-9_]+)"/g)].map(m => m[1])
     if (!keys.length) continue
-    const reader = line.match(/\b(j[a-z_]+)\(j,/)?.[1] ?? 'jget'
-    keys.forEach((key, i) => rows.push({ key, field: assigned[1], reader, aliasOf: i > 0 ? keys[0] : null }))
+    const reader = line.match(/\b(json_[a-z_]+)\(params_json,/)?.[1] ?? 'json_number'
+    keys.forEach((key, i) => {
+      let aliasOf = null
+      if (i > 0) aliasOf = keys[0]
+      rows.push({ key, field: assigned[1], reader, aliasOf })
+    })
   }
   return rows
 }
@@ -62,15 +67,21 @@ function structFields() {
     if (!line.startsWith('double') && !line.startsWith('int') && !line.startsWith('bool') &&
         !line.startsWith('std::string') && !line.startsWith('std::vector')) continue
     const split = line.indexOf('//')
-    const code = (split < 0 ? line : line.slice(0, split)).trim().replace(/;$/, '').trim()
-    const note = split < 0 ? '' : line.slice(split + 2).trim()
+    let codeText = line
+    let note = ''
+    if (split >= 0) {
+      codeText = line.slice(0, split)
+      note = line.slice(split + 2).trim()
+    }
+    const code = codeText.trim().replace(/;$/, '').trim()
     const type = code.match(/^(std::vector<[a-z:]+>|std::string|double|int|bool)\s+/)?.[1]
     if (!type) continue
     // `double a=1, b=2, c` — one type, several fields, at most one trailing comment shared by all of them.
     for (const decl of code.slice(type.length).split(',')) {
       const name = decl.trim().match(/^([a-z0-9_]+)/)?.[1]
       if (!name) continue
-      const value = decl.includes('=') ? decl.slice(decl.indexOf('=') + 1).trim() : ''
+      let value = ''
+      if (decl.includes('=')) value = decl.slice(decl.indexOf('=') + 1).trim()
       out[name] = { type: type.replace('std::', ''), default: value, note }
     }
   }
@@ -99,7 +110,8 @@ const probesFor = (key) => {
   const option = schema[key]
   if (option?.enum_values?.length) {
     const values = option.enum_values.filter(v => v !== option.default)
-    return option.type === 'coEnums' ? [values] : values
+    if (option.type === 'coEnums') return [values]
+    return values
   }
   return PROBE_BY_TYPE[option?.type] ?? ['probe']
 }
@@ -135,6 +147,20 @@ const GROUPS = [
 ]
 
 const escape = (text) => String(text).replace(/\|/g, '\\|')
+// The table cells that have a fallback text, one function per column.
+function defaultCell(field, row) {
+  if (field.default) return `\`${escape(field.default.replace(/"/g, "'"))}\``
+  if (row.reader.includes('arr')) return '`[]`'
+  return '—'
+}
+function fromCell(from) {
+  if (from.length) return from.map(k => `\`${k}\``).join(', ')
+  return '—'
+}
+function noteCell(row, field) {
+  if (row.aliasOf) return escape(`fallback spelling — \`${row.aliasOf}\` wins when both are sent`)
+  return escape(field.note)
+}
 const TYPE_LABEL = { 'vector<double>': '`number[]`', 'vector<string>': '`string[]`', string: '`string`', double: '`number`', int: '`number`', bool: '`boolean`' }
 
 // ---- the consumed-key artifact ----------------------------------------------------------------------------
@@ -169,9 +195,9 @@ function buildTable(sources) {
     grouped.get(group).push({
       key: row.key,
       type: TYPE_LABEL[field.type] ?? `\`${field.type ?? '?'}\``,
-      default: field.default ? `\`${escape(field.default.replace(/"/g, "'"))}\`` : (row.reader.includes('arr') ? '`[]`' : '—'),
-      from: from.length ? from.map(k => `\`${k}\``).join(', ') : '—',
-      note: escape(row.aliasOf ? `fallback spelling — \`${row.aliasOf}\` wins when both are sent` : field.note),
+      default: defaultCell(field, row),
+      from: fromCell(from),
+      note: noteCell(row, field),
     })
   }
 

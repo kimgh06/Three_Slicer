@@ -14,9 +14,15 @@ public:
   //  Re-enabling task_group parallelism waits until the crash cause is confirmed. (The threaded version is in the git history.)
   // [Confirmed] task_group threading still reproduces the abort at 774k tri even after the early simplification (4x less heap) (3/3, second soak)
   //  -> the cause is a race/UB inside the port, not memory pressure. Permanently inline. (The threaded version is in the git history.)
-  template<class F> void run(F&& f){ f(); tbb_stub::prog().fetch_add(1); }   // real progress tick (for UI polling)
+  template<class F> void run(F&& f){
+    f();
+    tbb_stub::prog().fetch_add(1);   // real progress tick (for UI polling)
+  }
 
-  void wait(){ for (auto& t : ths) t.join(); ths.clear(); }
+  void wait(){
+    for (auto& worker : ths) worker.join();
+    ths.clear();
+  }
   ~task_group(){ wait(); }
 };
 }

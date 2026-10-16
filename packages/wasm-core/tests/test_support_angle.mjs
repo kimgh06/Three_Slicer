@@ -12,24 +12,26 @@
 //    (previously the opening erased thin bands, so a 16° cone only triggered at θ=60° and a 20° cone at θ=80° — a distorted threshold).
 //    Now the overhang condition θ > slope angle holds directly, so we sample on both sides of each slope angle.
 import createSlicer from '../../engine/src/slicer_core.js'
+import { trianglesToSTL } from './stl_fixtures.mjs'
 
 // Inverted cone: apex (z=0) -> a base of radius R (z=H). Side slope angle = atan(H/R) (90° = vertical).
-function coneTris(cx, cy, R, slopeDeg, seg = 64) {
-  const H = R * Math.tan(slopeDeg * Math.PI / 180)
-  const apex = [cx, cy, 0], topC = [cx, cy, H]
-  const p = i => { const a = 2 * Math.PI * i / seg; return [cx + R * Math.cos(a), cy + R * Math.sin(a), H] }
-  const t = []
-  for (let i = 0; i < seg; i++) { const a = p(i), b = p((i + 1) % seg); t.push([apex, b, a]); t.push([topC, a, b]) }
-  return t
+function coneTriangles(centerX, centerY, radius, slopeDeg, segmentCount = 64) {
+  const height = radius * Math.tan(slopeDeg * Math.PI / 180)
+  const apex = [centerX, centerY, 0], topCenter = [centerX, centerY, height]
+  const rimPoint = i => {
+    const angle = 2 * Math.PI * i / segmentCount
+    return [centerX + radius * Math.cos(angle), centerY + radius * Math.sin(angle), height]
+  }
+  const triangles = []
+  for (let i = 0; i < segmentCount; i++) {
+    const current = rimPoint(i), next = rimPoint((i + 1) % segmentCount)
+    triangles.push([apex, next, current])
+    triangles.push([topCenter, current, next])
+  }
+  return triangles
 }
-function trisToSTL(tris) {
-  const buf = Buffer.alloc(84 + tris.length * 50); buf.writeUInt32LE(tris.length, 80)
-  let off = 84
-  for (const tr of tris) { off += 12; for (const v of tr) { buf.writeFloatLE(v[0], off); buf.writeFloatLE(v[1], off + 4); buf.writeFloatLE(v[2], off + 8); off += 12 } buf.writeUInt16LE(0, off); off += 2 }
-  return buf
-}
-const stl = new Uint8Array(trisToSTL([
-  ...coneTris(-40, 0, 14, 8), ...coneTris(0, 0, 14, 16), ...coneTris(40, 0, 14, 20),
+const stl = new Uint8Array(trianglesToSTL([
+  ...coneTriangles(-40, 0, 14, 8), ...coneTriangles(0, 0, 14, 16), ...coneTriangles(40, 0, 14, 20),
 ]))
 
 const base = {
@@ -42,33 +44,44 @@ const base = {
   //  filters out the thin per-layer bands of a smooth cone and hides the angle behavior, so it is turned off (the removal logic itself is checked separately).
   support_remove_small_overhang: false,
 }
-const M = await createSlicer()
+const slicer = await createSlicer()
 
 // Toolpath stride 8, type offset +3 (the buildSegmentData contract in toolpath_gpu.js). type 5 = support base, 6 = interface.
 const supportSegments = (angle) => {
-  const r = M.slice(stl, JSON.stringify({ ...base, support_threshold_angle: angle }), () => {})
-  if (r.error) throw new Error(String(r.error))
-  let seg = 0
-  for (const L of r.layers || []) {
-    const p = L.paths; if (!p) continue
-    for (let i = 0; i < p.length; i += 8) { const t = p[i + 3]; if (t === 5 || t === 6) seg++ }
+  const result = slicer.slice(stl, JSON.stringify({ ...base, support_threshold_angle: angle }), () => {})
+  if (result.error) throw new Error(String(result.error))
+  let segments = 0
+  for (const layer of result.layers || []) {
+    const paths = layer.paths
+    if (!paths) continue
+    for (let i = 0; i < paths.length; i += 8) {
+      const type = paths[i + 3]
+      if (type === 5 || type === 6) segments++
+    }
   }
-  return seg
+  return segments
 }
 
 // Points chosen between the triggering thresholds of each cone (8°/16°/20°) — one more target should qualify at each step.
 const ANGLES = [5, 12, 18, 25]
-const rows = ANGLES.map(a => ({ a, seg: supportSegments(a) }))
-for (const r of rows) console.log(`  θ=${String(r.a).padStart(2)}°  support segments ${String(r.seg).padStart(6)}`)
+const rows = ANGLES.map(angle => ({ angle, segments: supportSegments(angle) }))
+for (const row of rows) console.log(`  θ=${String(row.angle).padStart(2)}°  support segments ${String(row.segments).padStart(6)}`)
 
 let fail = 0
 for (let i = 1; i < rows.length; i++) {
-  if (rows[i].seg <= rows[i - 1].seg) {
-    console.log(`FAIL monotonic increase violated: θ=${rows[i - 1].a}°(${rows[i - 1].seg}) -> θ=${rows[i].a}°(${rows[i].seg})`)
+  if (rows[i].segments <= rows[i - 1].segments) {
+    console.log(`FAIL monotonic increase violated: θ=${rows[i - 1].angle}°(${rows[i - 1].segments}) -> θ=${rows[i].angle}°(${rows[i].segments})`)
     fail++
   }
 }
-if (rows[0].seg !== 0) { console.log(`FAIL support generated at the lowest threshold (10°) (${rows[0].seg}) — over-detection`); fail++ }
+if (rows[0].segments !== 0) {
+  console.log(`FAIL support generated at the lowest threshold (10°) (${rows[0].segments}) — over-detection`)
+  fail++
+}
 
-console.log(fail ? `\nSUPPORT ANGLE TEST FAILED (${fail})` : '\nSUPPORT ANGLE TEST PASSED — higher threshold = more support (matches upstream direction)')
-process.exit(fail ? 1 : 0)
+if (fail) {
+  console.log(`\nSUPPORT ANGLE TEST FAILED (${fail})`)
+  process.exit(1)
+}
+console.log('\nSUPPORT ANGLE TEST PASSED — higher threshold = more support (matches upstream direction)')
+process.exit(0)

@@ -9,8 +9,8 @@
 
 namespace classic_bridge {
 
-using IPoint = std::pair<long long, long long>;
-using IPath  = std::vector<IPoint>;
+using IntegerPoint = std::pair<long long, long long>;
+using IntegerPath  = std::vector<IntegerPoint>;
 
 // WallSequence, in upstream's enum order (PrintConfig.hpp).
 enum WallSequence { InnerOuter = 0, OuterInner = 1, InnerOuterInner = 2 };
@@ -44,7 +44,7 @@ struct Config {
 enum Kind { OuterWall = 0, InnerWall = 1, ThinWall = 2, GapFill = 3 };
 
 struct Extrusion {
-  IPath  points;       // a loop does not repeat its first point
+  IntegerPath  points;       // a loop does not repeat its first point
   bool   closed;
   int    kind;         // Kind
   int    inset;        // loop depth (0 = external); -1 for thin walls and gap fill
@@ -54,10 +54,10 @@ struct Extrusion {
 struct Result {
   std::vector<Extrusion> walls;     // loops and thin walls, in upstream's print order (islands chained, then traverse_loops)
   std::vector<Extrusion> gap_fill;  // variable-width gap fill (erGapFill)
-  std::vector<IPath>     fill;      // fill_surfaces: the infill area, contours CCW and holes CW
+  std::vector<IntegerPath>     fill;      // fill_surfaces: the infill area, contours CCW and holes CW
 };
 
 // contour: the layer's slice (contours and holes, any orientation; unioned NonZero inside).
-Result generate(const std::vector<IPath>& contour, const Config& config);
+Result generate(const std::vector<IntegerPath>& contour, const Config& config);
 
 } // namespace classic_bridge

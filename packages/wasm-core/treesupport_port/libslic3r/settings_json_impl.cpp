@@ -8,7 +8,7 @@ namespace Slic3r {
 namespace {
 
 // parse_str_arr, verbatim from the lambda in ConfigBase::load_from_json (Config.cpp:858).
-bool parse_str_arr(const nlohmann::json::const_iterator& it, const char single_sep,const char array_sep,const bool escape_string_style,std::string& value_str) {
+bool parse_str_arr(const nlohmann::json::const_iterator& it, const char single_separator,const char array_separator,const bool escape_string_style,std::string& value_str) {
         // must have consistent type name
         std::string consistent_type;
         for (auto iter = it.value().begin(); iter != it.value().end(); ++iter) {
@@ -24,16 +24,16 @@ bool parse_str_arr(const nlohmann::json::const_iterator& it, const char single_s
         for (auto iter = it.value().begin(); iter != it.value().end(); iter++) {
             if (iter.value().is_array()) {
                 if (!first)
-                    value_str += array_sep;
+                    value_str += array_separator;
                 else
                     first = false;
-                bool success = parse_str_arr(iter, single_sep, array_sep,escape_string_style, value_str);
+                bool success = parse_str_arr(iter, single_separator, array_separator,escape_string_style, value_str);
                 if (!success)
                     return false;
             }
             else if (iter.value().is_string()) {
                 if (!first)
-                    value_str += single_sep;
+                    value_str += single_separator;
                 else
                     first = false;
                 if (!escape_string_style)
@@ -82,26 +82,26 @@ std::string load_settings_json(const std::string& settings_json, DynamicPrintCon
       }
       if (!item.value().is_array())
         return "setting " + item.key() + " is neither a string nor an array";
-      const ConfigOptionDef* optdef = config_def->get(item.key());
-      if (optdef == nullptr)
+      const ConfigOptionDef* option_def = config_def->get(item.key());
+      if (option_def == nullptr)
         continue;
-      char single_sep = ',';
-      char array_sep = '#';  // currenty not used
+      char single_separator = ',';
+      char array_separator = '#';  // currenty not used
       bool escape_string_type = false;
-      switch (optdef->type)
+      switch (option_def->type)
       {
       case coStrings:
           escape_string_type = true;
-          single_sep = ';';
+          single_separator = ';';
           break;
       case coPointsGroups:
-          single_sep = '#';
+          single_separator = '#';
           break;
       default:
           break;
       }
       std::string value_str;
-      if (!parse_str_arr(item, single_sep, array_sep, escape_string_type, value_str))
+      if (!parse_str_arr(item, single_separator, array_separator, escape_string_type, value_str))
         return "setting " + item.key() + " is not an array of strings";
       key_values[item.key()] = value_str;
     }
@@ -119,8 +119,10 @@ std::string load_settings_json(const std::string& settings_json, DynamicPrintCon
     for (const auto& [key, definition] : print_config_def.options) {
       if (definition.type != coEnums || definition.enum_keys_map == nullptr) continue;
       ConfigOption* option = config.optptr(key);
-      if (auto* enums = dynamic_cast<ConfigOptionEnumsGeneric*>(option)) enums->keys_map = definition.enum_keys_map;
-      if (auto* nullableEnums = dynamic_cast<ConfigOptionEnumsGenericNullable*>(option)) nullableEnums->keys_map = definition.enum_keys_map;
+      if (auto* enums = dynamic_cast<ConfigOptionEnumsGeneric*>(option))
+        enums->keys_map = definition.enum_keys_map;
+      if (auto* nullable_enums = dynamic_cast<ConfigOptionEnumsGenericNullable*>(option))
+        nullable_enums->keys_map = definition.enum_keys_map;
     }
     config.load_string_map(key_values, ForwardCompatibilitySubstitutionRule::EnableSilent);
   } catch (const std::exception& error) {

@@ -12,18 +12,19 @@
 
 // Per-layer precomputation for PASS2 (geometry separation, infill line generation) — kept apart from emission (serial, gw/seam state).
 //  It holds only deterministic per-layer independent work, so mt builds can precompute it on workers (identical results, verified with golden).
-struct EmitPre {
-  Paths gapLines, solidLines, topLines, bridgeLines, sparseLines, supI, supB, flExtra, ironLines;
+struct EmitPrecompute {
+  Paths gapLines, solidLines, topLines, bridgeLines, sparseLines, supportInterfaceLines, supportBaseLines, skirtBrimLoops, ironLines;
   // Split out only when their flow ratio is not 1 (issue 63 round 1): upstream's exposed top (erTopSolidInfill) and
-  //  bottom (erBottomSurface) of the current layer, and the brim rings, which otherwise ride in flExtra with the skirt.
+  //  bottom (erBottomSurface) of the current layer, and the brim rings, which otherwise ride in skirtBrimLoops with the skirt.
   Paths topExposedLines, bottomLines, brimLoops;
-  bool brim=false; int fPrint=0, fBridge=0, fSup=0;
-  RoleFeeds feeds;   // the feed per role on this layer (emit.cpp role_feeds); every role at fPrint without per-role speeds
-  // The writer's per-layer regions (GW overhang_area / internal_area), empty when not checked.
+  bool brim=false;
+  int printFeed=0, bridgeFeed=0, supportFeed=0;
+  RoleFeeds feeds;   // the feed per role on this layer (emit.cpp role_feeds); every role at printFeed without per-role speeds
+  // The writer's per-layer regions (GcodeWriter overhang_area / internal_area), empty when not checked.
   Paths overhangArea, internalArea;
 };
 
-void emit_layer_any(GW& gw, std::vector<float>& tp, std::vector<float>& widths,
-                    int i, LayerData& ld, EmitPre& pre, const Params& p,
-                    double zE, double w, int N, int nraft, int fTravel,
-                    int seamMode, bool scarfOn, bool ironOn, SeamCtx& seamCtx);
+void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vector<float>& widths,
+                    int layerIndex, LayerData& layerData, EmitPrecompute& precompute, const Params& params,
+                    double layerZ, double defaultWidth, int layerCount, int raftLayers, int travelFeed,
+                    int seamMode, bool scarfOn, bool ironOn, SeamContext& seamContext);

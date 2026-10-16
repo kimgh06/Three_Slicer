@@ -14,7 +14,10 @@ import { leanSchema as schema } from './data.js'
 import { FFF_FALLBACKS, AUTO_LINE_WIDTH, SLA_FALLBACKS, MACHINE_LIMITS, BED_FALLBACK } from './kernel_defaults.js'
 
 export function schemaDefault(key) { return schema[key]?.default }
-export function settingRaw(settings, key) { return (settings && key in settings) ? settings[key] : schemaDefault(key) }
+export function settingRaw(settings, key) {
+  if (settings && key in settings) return settings[key]
+  return schemaDefault(key)
+}
 // Normalize to a scalar ([0] for vectors)
 // A per-extruder column reduced to the single value the kernel's scalar reader wants. The FIRST SET entry, not
 //  literally index 0: the filament card writes one column per extruder and leaves a null wherever that extruder has
@@ -143,7 +146,8 @@ function coerceScalar(type, value) {
       return asNumber(value.trim().replace(/%$/, ''))
     case 'coFloatOrPercent': case 'coFloatsOrPercents':
       // "50%" must stay a string — the percent IS the value, and Number('50%') is NaN anyway.
-      return value.trim().endsWith('%') ? value : asNumber(value)
+      if (value.trim().endsWith('%')) return value
+      return asNumber(value)
     case 'coPoint': case 'coPoints':
       return parsePoint(value) ?? value
     case 'coPointsGroups':
@@ -161,25 +165,34 @@ function coerceScalar(type, value) {
 //  so there the comma cannot also separate a point's own coordinates — hence two parsers rather than one regex.
 function parsePoint(text) {
   const split = String(text).split('x')
-  const pair = split.length === 2 ? split : String(text).split(',')
+  let pair = split
+  if (split.length !== 2) pair = String(text).split(',')
   if (pair.length !== 2) return null
   const x = Number(pair[0]), y = Number(pair[1])
-  return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null
+  if (Number.isFinite(x) && Number.isFinite(y)) return [x, y]
+  return null
 }
 function parsePointGroup(text) {
   const points = String(text).split(',').map(entry => {
     const [a, b] = entry.split('x')
     const x = Number(a), y = Number(b)
-    return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null
+    if (Number.isFinite(x) && Number.isFinite(y)) return [x, y]
+    return null
   })
-  return points.length && points.every(Boolean) ? points : null
+  if (points.length && points.every(Boolean)) return points
+  return null
 }
 // Number('') is 0 and Number('  ') is 0, neither of which means "the option was set to zero" — an unparsable
 //  value is handed back untouched so the schema default keeps applying instead of a fabricated 0.
 function asNumber(value) {
   if (value.trim() === '') return value
-  const n = Number(value)
-  return Number.isFinite(n) ? n : value
+  return finiteOr(Number(value), value)
+}
+// The number when it is finite, otherwise the fallback. The fallback is evaluated by the caller, so it is only
+//  used for values that are already at hand.
+function finiteOr(number, fallback) {
+  if (Number.isFinite(number)) return number
+  return fallback
 }
 
 /**
@@ -193,7 +206,8 @@ export function normalizeProjectSettings(raw) {
   for (const [key, value] of Object.entries(raw || {})) {
     const type = schema[key]?.type
     if (!type) { skipped.push(key); continue }
-    settings[key] = Array.isArray(value) ? value.map(entry => coerceScalar(type, entry)) : coerceScalar(type, value)
+    if (Array.isArray(value)) settings[key] = value.map(entry => coerceScalar(type, entry))
+    else settings[key] = coerceScalar(type, value)
     applied++
   }
   return { settings, applied, skipped }
@@ -204,17 +218,22 @@ export function normalizeProjectSettings(raw) {
 //  slicer's reader — and normalizeProjectSettings above — expects to coerce FROM. Writing the JS types raw would
 //  hand OrcaSlicer a bool it reads with its own string parser and this package a round-trip that only works here.
 //  Keys the schema does not define are dropped for the same reason normalize drops them: they could not be typed.
-const pointToText = (point) => (Array.isArray(point) ? `${point[0]}x${point[1]}` : String(point))
+const pointToText = (point) => {
+  if (Array.isArray(point)) return `${point[0]}x${point[1]}`
+  return String(point)
+}
 
 function serializeScalar(type, value) {
   if (value == null) return ''
   switch (type) {
     case 'coBool': case 'coBools':
-      return value ? '1' : '0'
+      if (value) return '1'
+      return '0'
     case 'coPoint': case 'coPoints':
       return pointToText(value)
     case 'coPointsGroups':
-      return Array.isArray(value) ? value.map(pointToText).join(',') : String(value)
+      if (Array.isArray(value)) return value.map(pointToText).join(',')
+      return String(value)
     default:
       return String(value)   // numbers, percents, strings, enums — String() is upstream's own spelling for all of them
   }
@@ -227,9 +246,8 @@ export function serializeProjectSettings(settings) {
     const type = schema[key]?.type
     if (!type) continue
     // A coPoint's value IS an array ([x, y]) — the generic array path would serialize its two numbers separately.
-    out[key] = (type !== 'coPoint' && Array.isArray(value))
-      ? value.map(entry => serializeScalar(type, entry))
-      : serializeScalar(type, value)
+    if (type !== 'coPoint' && Array.isArray(value)) out[key] = value.map(entry => serializeScalar(type, entry))
+    else out[key] = serializeScalar(type, value)
   }
   return out
 }
@@ -300,6 +318,22 @@ const BED_TEMP_KEYS = {
   'Engineering Plate': 'eng_plate_temp', 'High Temp Plate': 'hot_plate_temp', 'Textured PEI Plate': 'textured_plate_temp',
 }
 
+// A per-extruder column's first entry; a scalar is its own first entry.
+function firstEntryOf(value) {
+  if (Array.isArray(value)) return value[0]
+  return value
+}
+// A per-extruder column as a list; a scalar becomes a one-entry list.
+function asList(value) {
+  if (Array.isArray(value)) return value
+  return [value]
+}
+// The value when it is one of the accepted ones, otherwise the fallback.
+function allowedOr(value, accepted, fallback) {
+  if (accepted.includes(value)) return value
+  return fallback
+}
+
 // Right-panel settings values -> kernel parameters (derived from schema keys)
 //  opts.plate: which plate's entry to take from per-plate array options (wipe_tower_x/y — upstream coFloats,
 //  one entry per plate). Defaults to 0, so every existing caller reads exactly what it always did.
@@ -313,16 +347,23 @@ export function deriveKernelParams(settings, opts) {
   const presentOrTemplate = (key) => followsTemplate || (settings != null && key in settings && settings[key] != null && settings[key] !== '')
   const S = k => settingScalar(settings, k)
   const str = k => String(S(k) ?? FFF_FALLBACKS[k])
-  const num = (k, d = FFF_FALLBACKS[k]) => { const v = Number(S(k)); return Number.isFinite(v) ? v : d }
-  const bool = (k, d = FFF_FALLBACKS[k]) => { const v = settingRaw(settings, k); return typeof v === 'boolean' ? v : (Array.isArray(v) ? !!v[0] : (v == null ? d : !!v)) }
+  const num = (k, d = FFF_FALLBACKS[k]) => finiteOr(Number(S(k)), d)
+  const bool = (k, d = FFF_FALLBACKS[k]) => {
+    const v = settingRaw(settings, k)
+    if (typeof v === 'boolean') return v
+    if (Array.isArray(v)) return !!v[0]
+    if (v == null) return d
+    return !!v
+  }
   // Filament retraction overrides: upstream lets a material override the machine's retraction (TPU wants a
   //  different pull-back than PLA on the same printer). These schema keys are nullable and carry no default of
   //  their own — "unset" means keep the machine value — so this reads the settings map directly rather than
   //  through settingScalar, whose schema fallback would not distinguish the two.
   const override = (filamentKey, machineKey, fallback = FFF_FALLBACKS[machineKey]) => {
     const raw = settings?.[filamentKey]
-    const value = Number(Array.isArray(raw) ? raw[0] : raw)
-    return Number.isFinite(value) ? value : num(machineKey, fallback)
+    const value = Number(firstEntryOf(raw))
+    if (Number.isFinite(value)) return value
+    return num(machineKey, fallback)
   }
 
   let line_width = num('line_width'); if (!line_width) line_width = AUTO_LINE_WIDTH   // 0 = auto
@@ -364,7 +405,7 @@ export function deriveKernelParams(settings, opts) {
   }
 
   // Stage 21: per-feature widths — passed to the kernel verbatim (including strings like "120%"). Unedited keys are omitted -> the kernel derives auto(=line_width).
-  //  The 0=auto semantics are handled by the kernel's resolve_lw (upstream Flow formula). Defaults unchanged (no feature set -> line_width).
+  //  The 0=auto semantics are handled by the kernel's resolve_line_width (upstream Flow formula). Defaults unchanged (no feature set -> line_width).
   const widths = {}
   for (const k of ['outer_wall_line_width','inner_wall_line_width','top_surface_line_width',
                    'sparse_infill_line_width','internal_solid_infill_line_width','initial_layer_line_width']) {
@@ -402,9 +443,11 @@ export function deriveKernelParams(settings, opts) {
     //  the plate and disabled the automatic placement entirely — measured as a tower at z=-127.5 on a 200mm bed.
     //  Absent from the map means nobody chose one, and the placement beside the model stands.
     const chosen = (key) => { const raw = settings?.[key]
-      const v = Array.isArray(raw) ? raw[plate] : raw
+      let v = raw
+      if (Array.isArray(raw)) v = raw[plate]
       const n = Number(v)
-      return (v != null && v !== '' && Number.isFinite(n)) ? n : null }
+      if (v != null && v !== '' && Number.isFinite(n)) return n
+      return null }
     const towerX = chosen('wipe_tower_x'), towerY = chosen('wipe_tower_y')
     if (towerX != null) towerSettings.prime_tower_x = towerX
     if (towerY != null) towerSettings.prime_tower_y = towerY
@@ -442,20 +485,22 @@ export function deriveKernelParams(settings, opts) {
     for (const key of PASSTHROUGH_NUM_VECTOR) {
       if (!present(key)) continue
       const raw = settings[key]
-      passthrough[key] = (Array.isArray(raw) ? raw : [raw]).map(entry => { const n = Number(entry); return Number.isFinite(n) ? n : 0 })
+      passthrough[key] = asList(raw).map(entry => finiteOr(Number(entry), 0))
     }
     for (const key of PASSTHROUGH_STR_VECTOR) {
       if (!present(key)) continue
       const raw = settings[key]
-      passthrough[key] = (Array.isArray(raw) ? raw : [raw]).map(entry => String(entry ?? ''))
+      passthrough[key] = asList(raw).map(entry => String(entry ?? ''))
     }
     // support_line_width is coFloatOrPercent, but the kernel reads it with the plain number reader rather than the
-    //  percent-aware jwidth_raw the per-feature widths get. A "120%" would reach strtod as a quoted string and
+    //  percent-aware json_width_raw the per-feature widths get. A "120%" would reach strtod as a quoted string and
     //  parse to 0 == auto — the setting silently ignored. Resolved here against the nozzle, which is the same
-    //  thing jwidth_raw does for the widths that do get the percent-aware reader.
+    //  thing json_width_raw does for the widths that do get the percent-aware reader.
     if (present('support_line_width')) {
       const text = String(settingScalar(settings, 'support_line_width')).trim()
-      const width = text.endsWith('%') ? (parseFloat(text) / 100) * num('nozzle_diameter') : Number(text)
+      let width
+      if (text.endsWith('%')) width = (parseFloat(text) / 100) * num('nozzle_diameter')
+      else width = Number(text)
       if (Number.isFinite(width) && width > 0) passthrough.support_line_width = width
     }
   }
@@ -524,8 +569,7 @@ export function deriveKernelParams(settings, opts) {
     if (!Array.isArray(raw) || raw.length < 2) continue
     perExtruder[param] = raw.map(v => {
       if (v == null || v === '') return scalar        // null survives a JSON round-trip; Number(null) would be 0
-      const n = Number(Array.isArray(v) ? v[0] : v)
-      return Number.isFinite(n) ? n : scalar
+      return finiteOr(Number(firstEntryOf(v)), scalar)
     })
   }
 
@@ -595,7 +639,7 @@ export function deriveKernelParams(settings, opts) {
     support_expansion: num('support_expansion'),
     support_threshold_overlap: (() => { const v = settingRaw(settings, 'support_threshold_overlap')
       if (typeof v === 'string' && v.trim().endsWith('%')) return parseFloat(v) / 100
-      const n = Number(v); return Number.isFinite(n) ? n : 0.5 })(),   // "50%" -> 0.5 (ratio of extrusion width)
+      return finiteOr(Number(v), 0.5) })(),   // "50%" -> 0.5 (ratio of extrusion width)
     support_on_build_plate_only: bool('support_on_build_plate_only'),
     support_interface_bottom_layers: num('support_interface_bottom_layers'),
     ...supportTools,                                            // present only when a support extruder is mapped (see above)
@@ -623,7 +667,7 @@ export function deriveKernelParams(settings, opts) {
     reduce_crossing_wall: bool('reduce_crossing_wall'),
     max_volumetric_extrusion_rate_slope: num('max_volumetric_extrusion_rate_slope'),
     // Stage 7: wall generator classic|arachne (arachne = the real ported OrcaSlicer WallToolPaths, variable width)
-    wall_generator: (str('wall_generator') === 'arachne') ? 'arachne' : 'classic',
+    wall_generator: allowedOr(str('wall_generator'), ['arachne'], 'classic'),
     // support_density has no matching schema key, so the kernel default (0.15) is used; scarf_length likewise uses the kernel default (10mm)
   }
 }
@@ -634,7 +678,8 @@ export function deriveKernelParams(settings, opts) {
 //  path runs. The schema already carries the key (inherited from the upstream lineage), so an imported preset
 //  that names a resin printer routes itself.
 export function printerTechnology(settings) {
-  return String(settingRaw(settings, 'printer_technology') ?? 'FFF').toUpperCase() === 'SLA' ? 'SLA' : 'FFF'
+  if (String(settingRaw(settings, 'printer_technology') ?? 'FFF').toUpperCase() === 'SLA') return 'SLA'
+  return 'FFF'
 }
 
 // SLA settings provenance table. Rows come from the schema's `defined_in` marker so a new resin option cannot
@@ -649,13 +694,12 @@ const SLA_SETTING_OVERRIDES = {
 
 const SLA_SCHEMA_ROWS = Object.fromEntries(Object.entries(schema)
   .filter(([key, meta]) => key === 'printer_technology' || String(meta.defined_in ?? '').includes('sla_'))
-  .map(([key, meta]) => [key, {
-    source: 'config-schema.json',
-    omission: 'schema-default',
-    default: meta.default,
-    ...(meta.enum_values ? { enum: [...meta.enum_values] } : {}),
-    provenance: `${meta.defined_in}:${meta.line}`,
-  }]))
+  .map(([key, meta]) => {
+    const row = { source: 'config-schema.json', omission: 'schema-default', default: meta.default }
+    if (meta.enum_values) row.enum = [...meta.enum_values]
+    row.provenance = `${meta.defined_in}:${meta.line}`
+    return [key, row]
+  }))
 
 export const SLA_SETTING_CONTRACT = Object.freeze(Object.fromEntries(
   Object.entries({ ...SLA_SCHEMA_ROWS, ...SLA_SETTING_OVERRIDES }).map(([key, row]) => [key, Object.freeze({
@@ -671,27 +715,40 @@ export const slaSettingKeys = Object.freeze(Object.keys(SLA_SETTING_CONTRACT))
 //  and its empty-map key count is a pinned invariant — this one feeds the JS contour slicer and owes bytes to
 //  nobody yet. Keys the schema does not define (the resin display's pixel grid, the per-layer height override)
 //  are read from the map directly, so they follow the same omission-friendly rule: absent means the default.
+// The number when it is finite and above zero, otherwise the fallback.
+function positiveOr(number, fallback) {
+  if (Number.isFinite(number) && number > 0) return number
+  return fallback
+}
+// The number when it is finite and not negative (zero is legal), otherwise the fallback.
+function nonNegativeOr(number, fallback) {
+  if (Number.isFinite(number) && number >= 0) return number
+  return fallback
+}
+// A flag whose absence means on.
+function trueUnlessSet(value) {
+  if (value === undefined) return true
+  return !!value
+}
 export function deriveSlaParams(settings) {
   const S = k => settingScalar(settings, k)
-  const num = (k, d = SLA_FALLBACKS[k]) => { const v = Number(S(k)); return Number.isFinite(v) && v > 0 ? v : d }
+  const num = (k, d = SLA_FALLBACKS[k]) => positiveOr(Number(S(k)), d)
 
   // Read from the MAP, not through the schema fallback: the key is shared with FFF and its schema default is that
   //  technology's opinion (0.2mm) — four resin layers thick. Absent means the resin default here.
   const rawLayerHeight = settings?.layer_height
-  const mapLayerHeight = Number(Array.isArray(rawLayerHeight) ? rawLayerHeight[0] : rawLayerHeight)
-  const layer_height = Number.isFinite(mapLayerHeight) && mapLayerHeight > 0 ? mapLayerHeight : SLA_FALLBACKS.layer_height
+  const mapLayerHeight = Number(firstEntryOf(rawLayerHeight))
+  const layer_height = positiveOr(mapLayerHeight, SLA_FALLBACKS.layer_height)
   // Zero is a legal fade count (no fade band), so this one cannot go through the positives-only reader.
   const fadedRaw = Number(S('faded_layers'))
   const requestedSupportTree = String(S('support_tree_type') ?? 'default').toLowerCase()
-  const support_tree_type = ['default', 'branching', 'organic'].includes(requestedSupportTree)
-    ? requestedSupportTree
-    : 'default'
+  const support_tree_type = allowedOr(requestedSupportTree, ['default', 'branching', 'organic'], 'default')
   return {
     layer_height,
     initial_layer_height: num('initial_layer_height', layer_height),
     exposure_time: num('exposure_time'),
     initial_exposure_time: num('initial_exposure_time'),
-    faded_layers: Number.isFinite(fadedRaw) && fadedRaw >= 0 ? fadedRaw : 10,
+    faded_layers: nonNegativeOr(fadedRaw, 10),
     // The physical display and its pixel grid — what turns millimetres into raster pixels at export time.
     //  Fallbacks are the SL1's own panel, the reference machine of the format this exports to.
     display_width: num('display_width'),
@@ -700,8 +757,8 @@ export function deriveSlaParams(settings) {
     display_pixels_y: num('display_pixels_y'),
     // Panel mounting: the whole SL1 family is portrait with X mirrored (projection through the vat floor);
     //  the raster writer swaps the image axes for portrait exactly like upstream SL1.cpp create_raster.
-    display_orientation: String(S('display_orientation') ?? 'portrait') === 'landscape' ? 'landscape' : 'portrait',
-    display_mirror_x: settingRaw(settings, 'display_mirror_x') === undefined ? true : !!settingRaw(settings, 'display_mirror_x'),
+    display_orientation: allowedOr(String(S('display_orientation') ?? 'portrait'), ['landscape'], 'portrait'),
+    display_mirror_x: trueUnlessSet(settingRaw(settings, 'display_mirror_x')),
     display_mirror_y: !!settingRaw(settings, 'display_mirror_y'),
     // SL1 archive identity fields (config.ini): written as-is, empty when the host never set a named
     //  profile — the same thing upstream produces then. material_print_speed defaults to 'fast', the value
@@ -742,23 +799,23 @@ export function deriveSlaParams(settings) {
     //  percent sign is stripped here; widening factor and base safety distance are legally ZERO (zero safety
     //  falls back to the kernel's own safety_distance), so neither can go through the positives-only reader.
     support_small_pillar_diameter_percent:
-      (() => { const v = Number(String(S('support_small_pillar_diameter_percent') ?? '').replace('%', '')); return Number.isFinite(v) && v > 0 ? v : 50 })(),
+      positiveOr(Number(String(S('support_small_pillar_diameter_percent') ?? '').replace('%', '')), 50),
     support_pillar_widening_factor:
-      (() => { const v = Number(S('support_pillar_widening_factor')); return Number.isFinite(v) && v >= 0 ? v : 0 })(),
+      nonNegativeOr(Number(S('support_pillar_widening_factor')), 0),
     support_base_safety_distance:
-      (() => { const v = Number(S('support_base_safety_distance')); return Number.isFinite(v) && v >= 0 ? v : 1 })(),
+      nonNegativeOr(Number(S('support_base_safety_distance')), 1),
     support_max_bridges_on_pillar: num('support_max_bridges_on_pillar'),
     support_max_weight_on_model: num('support_max_weight_on_model'),
     // The generator's input slices are gap-closed with this radius, exactly like upstream slice_mesh_ex.
     slice_closing_radius: num('slice_closing_radius'),
-    support_object_elevation: (() => { const v = Number(S('support_object_elevation')); return Number.isFinite(v) && v >= 0 ? v : 5 })(),
+    support_object_elevation: nonNegativeOr(Number(S('support_object_elevation')), 5),
     support_pillar_connection_mode: String(S('support_pillar_connection_mode') ?? 'dynamic'),
     // The pad (upstream make_pad_cfg): wall height is legally ZERO (flat pad, no cavity), so it cannot go
     //  through the positives-only reader.
     pad_brim_size: num('pad_brim_size'),
     pad_wall_thickness: num('pad_wall_thickness'),
     pad_wall_height:
-      (() => { const v = Number(S('pad_wall_height')); return Number.isFinite(v) && v >= 0 ? v : 0 })(),
+      nonNegativeOr(Number(S('pad_wall_height')), 0),
     pad_wall_slope: num('pad_wall_slope'),
     pad_max_merge_distance: num('pad_max_merge_distance'),
     pad_around_object: !!settingRaw(settings, 'pad_around_object'),

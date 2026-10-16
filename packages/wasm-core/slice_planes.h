@@ -1,5 +1,5 @@
 // slice_planes.h — extracted from slicer_core.cpp; the static helpers became `inline`. Segments are oriented
-//  (tri_plane) so the loops can be filled NonZero, as upstream's Regular slicing mode does.
+//  (intersect_triangle_with_plane) so the loops can be filled NonZero, as upstream's Regular slicing mode does.
 #pragma once
 #include "clip_util.h"
 #include "stl_parse.h"
@@ -15,7 +15,7 @@ static constexpr double CHAIN_KEY_QUANTUM_MM = 1e-3;
 static constexpr long long CHAIN_KEY_Y_MASK = 0xffffffffLL;
 
 // ---- Triangle-plane intersection -> segments ------------------------------------
-struct Seg { double x0, y0, x1, y1; };
+struct SliceSegment { double x0, y0, x1, y1; };
 // The object's layers, upstream's generate_object_layers for a fixed layer height (Slicing.cpp:807): a layer exists
 //  while its middle is below the object's top, and it is cut at that middle (Layer::slice_z). The kernel used to cut
 //  at each layer's top and keep only tops below the object's height, so the top face's plane cut nothing and the
@@ -24,18 +24,21 @@ struct Seg { double x0, y0, x1, y1; };
 struct LayerPlan { std::vector<double> top, plane; };
 inline LayerPlan plan_layers(double first_layer_height, double layer_height, double height) {
   LayerPlan plan;
-  double h = first_layer_height;
-  for (double z = first_layer_height; z - 0.5 * h < height - 1e-4; z += layer_height, h = layer_height) {
+  double currentLayerHeight = first_layer_height;
+  for (double z = first_layer_height; z - 0.5 * currentLayerHeight < height - 1e-4; z += layer_height, currentLayerHeight = layer_height) {
     plan.top.push_back(z);
-    plan.plane.push_back(z - 0.5 * h);
+    plan.plane.push_back(z - 0.5 * currentLayerHeight);
   }
   return plan;
 }
 
-inline bool tri_plane(const Tri& t, double z, Seg& out) {
-  double crossingX[3], crossingY[3]; int crossingCount = 0;
+inline bool intersect_triangle_with_plane(const Triangle& triangle, double z, SliceSegment& out) {
+  double crossingX[3];
+  double crossingY[3];
+  int crossingCount = 0;
   for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex) {
-    const V3& edgeStart = t.v[edgeIndex]; const V3& edgeEnd = t.v[(edgeIndex + 1) % 3];
+    const Vertex& edgeStart = triangle.vertices[edgeIndex];
+    const Vertex& edgeEnd = triangle.vertices[(edgeIndex + 1) % 3];
     const bool edgeCrossesPlane = (edgeStart.z < z && edgeEnd.z >= z) || (edgeEnd.z < z && edgeStart.z >= z);
     if (edgeCrossesPlane) {
       const double crossingFraction = (z - edgeStart.z) / (edgeEnd.z - edgeStart.z);
@@ -52,12 +55,17 @@ inline bool tri_plane(const Tri& t, double z, Seg& out) {
   //  segment is flipped when that normal's XY part points to its left. Without this every segment's direction was
   //  whichever edge the loop above met first, so only an even-odd fill could make sense of the loops — and even-odd
   //  counts two coincident shells as "inside twice" = outside: two objects on the same spot sliced to nothing.
-  const double firstEdgeX = t.v[1].x - t.v[0].x, firstEdgeY = t.v[1].y - t.v[0].y, firstEdgeZ = t.v[1].z - t.v[0].z;
-  const double secondEdgeX = t.v[2].x - t.v[0].x, secondEdgeY = t.v[2].y - t.v[0].y, secondEdgeZ = t.v[2].z - t.v[0].z;
+  const double firstEdgeX = triangle.vertices[1].x - triangle.vertices[0].x;
+  const double firstEdgeY = triangle.vertices[1].y - triangle.vertices[0].y;
+  const double firstEdgeZ = triangle.vertices[1].z - triangle.vertices[0].z;
+  const double secondEdgeX = triangle.vertices[2].x - triangle.vertices[0].x;
+  const double secondEdgeY = triangle.vertices[2].y - triangle.vertices[0].y;
+  const double secondEdgeZ = triangle.vertices[2].z - triangle.vertices[0].z;
   // The XY part of the facet normal (firstEdge x secondEdge); its z part plays no role in a horizontal cut.
   const double normalX = firstEdgeY * secondEdgeZ - firstEdgeZ * secondEdgeY;
   const double normalY = firstEdgeZ * secondEdgeX - firstEdgeX * secondEdgeZ;
-  const double segmentDirectionX = crossingX[1] - crossingX[0], segmentDirectionY = crossingY[1] - crossingY[0];
+  const double segmentDirectionX = crossingX[1] - crossingX[0];
+  const double segmentDirectionY = crossingY[1] - crossingY[0];
   // The right-hand perpendicular of the travel direction is (dirY, -dirX); its dot with the normal is positive when
   //  the normal points right of travel, i.e. the solid is on the left.
   const double normalAlongRightHand = segmentDirectionY * normalX - segmentDirectionX * normalY;
@@ -66,54 +74,72 @@ inline bool tri_plane(const Tri& t, double z, Seg& out) {
   else out = { crossingX[0],crossingY[0],crossingX[1],crossingY[1] };
   return true;
 }
-inline long long qkey(double x, double y) {
+inline long long endpoint_key(double x, double y) {
   const long long quantisedX = (long long)std::llround(x/CHAIN_KEY_QUANTUM_MM);
   const long long quantisedY = (long long)std::llround(y/CHAIN_KEY_QUANTUM_MM);
   return (quantisedX << 32) ^ (quantisedY & CHAIN_KEY_Y_MASK);
 }
-// Segments arrive oriented (tri_plane), and a loop keeps the direction of its first segment: at each point the
+// Segments arrive oriented (intersect_triangle_with_plane), and a loop keeps the direction of its first segment: at each point the
 //  continuation that STARTS there is preferred, so where two shells touch or coincide (four segments meeting) the
 //  walk does not turn back along an incoming one. A loop assembled mostly against its segments' own direction — a
 //  shell with flipped facets — is reversed, so it still winds the way its majority of facets says. With a
 //  consistently oriented manifold mesh there is exactly one unused continuation and it always starts at the point,
 //  so the chain visits what it did before; only the direction of a loop can differ.
-inline Paths chain_polys(std::vector<Seg>& segs) {
-  const int segmentCount = (int)segs.size();
+inline Paths chain_polygons(std::vector<SliceSegment>& segments) {
+  const int segmentCount = (int)segments.size();
   std::vector<char> used(segmentCount,0);
   // Endpoint key -> references to the segment ends there, encoded as segment*2 + end (0 = its start, 1 = its end).
-  std::unordered_map<long long,std::vector<int>> endsAtPoint; endsAtPoint.reserve(segmentCount*2);
+  std::unordered_map<long long,std::vector<int>> endsAtPoint;
+  endsAtPoint.reserve(segmentCount*2);
   for (int segmentIndex=0;segmentIndex<segmentCount;++segmentIndex){
-    endsAtPoint[qkey(segs[segmentIndex].x0,segs[segmentIndex].y0)].push_back(segmentIndex*2);
-    endsAtPoint[qkey(segs[segmentIndex].x1,segs[segmentIndex].y1)].push_back(segmentIndex*2+1);
+    endsAtPoint[endpoint_key(segments[segmentIndex].x0,segments[segmentIndex].y0)].push_back(segmentIndex*2);
+    endsAtPoint[endpoint_key(segments[segmentIndex].x1,segments[segmentIndex].y1)].push_back(segmentIndex*2+1);
   }
   const auto toClipperPoint = [](double x, double y) { return IntPoint((cInt)std::llround(x*SCALE),(cInt)std::llround(y*SCALE)); };
   Paths out;
   for (int firstSegment=0;firstSegment<segmentCount;++firstSegment){
-    if (used[firstSegment]) continue; used[firstSegment]=1;
-    const double loopStartX=segs[firstSegment].x0, loopStartY=segs[firstSegment].y0;
-    double currentX=segs[firstSegment].x1, currentY=segs[firstSegment].y1;
-    Path poly;
-    poly.push_back(toClipperPoint(loopStartX, loopStartY));
-    poly.push_back(toClipperPoint(currentX, currentY));
-    int segmentsWalkedForward=1, segmentsWalkedBackward=0;
+    if (used[firstSegment]) continue;
+    used[firstSegment]=1;
+    const double loopStartX=segments[firstSegment].x0;
+    const double loopStartY=segments[firstSegment].y0;
+    double currentX=segments[firstSegment].x1;
+    double currentY=segments[firstSegment].y1;
+    Path polygon;
+    polygon.push_back(toClipperPoint(loopStartX, loopStartY));
+    polygon.push_back(toClipperPoint(currentX, currentY));
+    int segmentsWalkedForward=1;
+    int segmentsWalkedBackward=0;
     for (int step=0;step<segmentCount;++step){
-      if (qkey(currentX,currentY)==qkey(loopStartX,loopStartY)) break;
-      const auto endsHere=endsAtPoint.find(qkey(currentX,currentY));
-      int nextSegment=-1, nextEnd=-1;
+      if (endpoint_key(currentX,currentY)==endpoint_key(loopStartX,loopStartY)) break;
+      const auto endsHere=endsAtPoint.find(endpoint_key(currentX,currentY));
+      int nextSegment=-1;
+      int nextEnd=-1;
       if (endsHere!=endsAtPoint.end()) for (const int reference:endsHere->second){
-        const int candidateSegment=reference/2, candidateEnd=reference%2;
+        const int candidateSegment=reference/2;
+        const int candidateEnd=reference%2;
         if (used[candidateSegment]) continue;
         const bool candidateStartsHere = candidateEnd==0;
-        if (nextSegment<0 || (nextEnd!=0 && candidateStartsHere)) { nextSegment=candidateSegment; nextEnd=candidateEnd; }
+        if (nextSegment<0 || (nextEnd!=0 && candidateStartsHere)) {
+          nextSegment=candidateSegment;
+          nextEnd=candidateEnd;
+        }
         if (nextEnd==0) break;
       }
-      if (nextSegment<0) break; used[nextSegment]=1;
-      if (nextEnd==0){ currentX=segs[nextSegment].x1; currentY=segs[nextSegment].y1; ++segmentsWalkedForward; }
-      else           { currentX=segs[nextSegment].x0; currentY=segs[nextSegment].y0; ++segmentsWalkedBackward; }
-      poly.push_back(toClipperPoint(currentX, currentY));
+      if (nextSegment<0) break;
+      used[nextSegment]=1;
+      if (nextEnd==0){
+        currentX=segments[nextSegment].x1;
+        currentY=segments[nextSegment].y1;
+        ++segmentsWalkedForward;
+      } else {
+        currentX=segments[nextSegment].x0;
+        currentY=segments[nextSegment].y0;
+        ++segmentsWalkedBackward;
+      }
+      polygon.push_back(toClipperPoint(currentX, currentY));
     }
-    if (segmentsWalkedBackward > segmentsWalkedForward) std::reverse(poly.begin(), poly.end());
-    if (poly.size()>=3) out.push_back(std::move(poly));
+    if (segmentsWalkedBackward > segmentsWalkedForward) std::reverse(polygon.begin(), polygon.end());
+    if (polygon.size()>=3) out.push_back(std::move(polygon));
   }
   return out;
 }

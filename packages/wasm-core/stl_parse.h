@@ -4,7 +4,7 @@
 #include <vector>
 
 // ---- STL parser (binary + ASCII) ----------------------------------------------
-struct V3 { float x, y, z; };
-struct Tri { V3 v[3]; };
+struct Vertex { float x, y, z; };
+struct Triangle { Vertex vertices[3]; };
 
-std::vector<Tri> parse_stl(const std::vector<uint8_t>& b);
+std::vector<Triangle> parse_stl(const std::vector<uint8_t>& bytes);

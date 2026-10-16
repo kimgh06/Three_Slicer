@@ -45,14 +45,14 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   (`independent_support_layer_height` is true in the schema and false in the kernel, `printable_height` 100 vs 250),
   so a default-filled param would silently reslice every existing caller's model. The empty-map key count is the
   invariant that catches a violation. Two traps live in that list: `support_line_width` is `coFloatOrPercent` but is
-  read by the kernel's plain number reader, not the percent-aware `jwidth_raw` the per-feature widths get, so a
+  read by the kernel's plain number reader, not the percent-aware `json_width_raw` the per-feature widths get, so a
   `"120%"` would reach `strtod` as a quoted string and resolve to 0 == auto — it is resolved against the nozzle on
   the JS side instead; and the tree-support shape options exist upstream under two spellings (`…_organic` and
   suffix-less), which the kernel accepts both of and prefers `_organic`, so both are passed as written.
 - **The kernel parameter reference is generated, and must stay that way** (`types/gen_kernel_params.mjs` ->
-  `engine/PARAMS.md`). Its key column comes from the `j*(j,"…")` reader call sites in `params.cpp`, which are the
-  definition of the accepted set; its *From setting* column comes from PROBING `deriveKernelParams` with one schema
-  key at a time rather than parsing it, because that mapping includes renames, rescales (`sparse_infill_density` 15
+  `engine/PARAMS.md`). Its key column comes from the `json_*(params_json,"…")` reader call sites in `params.cpp`,
+  which are the definition of the accepted set; its *From setting* column comes from PROBING `deriveKernelParams`
+  with one schema key at a time rather than parsing it, because that mapping includes renames, rescales (`sparse_infill_density` 15
   -> `infill_density` 0.15) and a bbox over a point list, and a regex would have to re-implement each. Hand-written
   counts in docs drift — these ones did, from 89 to 93, before anything generated them. `test_kernel_params.mjs`
   fails the build if the table is stale or if a parameter no setting reaches is left unclassified in the prose
@@ -279,9 +279,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 - **The G-code text names the roles the stream records** (`Params::gcode_role_tags`, which the viewer turns on).
   A finished FFF slice is previewed from its own exported G-code read back (next rule), and an exported `.gcode` /
   `.gcode.3mf` opened again is read the same way, so the roles have to be in the TEXT; the multi-material path wrote
-  no role marks, and an opened painted model drew its object as prime tower. `GW::role_tag`
-  writes upstream's `;TYPE:<name>` from the same kernel type `push_seg` records — one call per run in every `emit_*`
-  path, re-stated after every layer marker (`GW::layer_begin`) and after the real WipeTower's own tagged block
+  no role marks, and an opened painted model drew its object as prime tower. `GcodeWriter::role_tag`
+  writes upstream's `;TYPE:<name>` from the same kernel type `push_toolpath_segment` records — one call per run in
+  every `emit_*` path, re-stated after every layer marker (`GcodeWriter::layer_begin`) and after the real WipeTower's own tagged block
   (`role_tag_unknown`). Upstream names where one exists; raft and thin wall, which upstream folds into Support and
   walls, keep `Raft` / `Thin wall` so a read-back here keeps their colours (OrcaSlicer reads them as Undefined). The
   flag is opt-in because the default G-code is golden-pinned; the tags change neither the time estimate nor the
@@ -386,8 +386,8 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   `deriveKernelParams` emits `placeholder_config` only when one of `CUSTOM_GCODE_KEYS` (`settings_core.js`) holds
   text, so every caller without a template stays on the raw path and golden is unchanged. It is the effective map in
   project_settings.config form (`serializeProjectSettings`) as a single escaped JSON string: the kernel's flat key search
-  (`jfind_val`) never looks inside a string, so a key the map omits cannot be read out of it. The parser is upstream
-  verbatim (`treesupport_port/libslic3r/PlaceholderParser.cpp`, in the tree-support group for the real `Flow`); the
+  (`json_find_value`) never looks inside a string, so a key the map omits cannot be read out of it. The parser is
+  upstream verbatim (`treesupport_port/libslic3r/PlaceholderParser.cpp`, in the tree-support group for the real `Flow`); the
   bridge (`custom_gcode_bridge_impl.cpp`) loads the settings with `load_string_map` (unknown keys skipped — the port's
   config is older than the profiles) and sets the variables in `GCode::_do_export`'s order from plain `Facts` the kernel
   computes: the first layer's outline (skirt, brim, raft), layer count, tools used, tool changes, the tower's extent.
@@ -414,18 +414,18 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 - **Extrusion follows upstream's multipliers and volumetric cap, and only for keys the host sends.** Upstream's E per
   mm is the section times `print_flow_ratio`, the filament's ratio and the path role's ratio (`GCode.cpp:7343-7390`),
   and its speed is capped at `filament_max_volumetric_speed / mm3_per_mm` (`:7492`). The kernel had the filament ratio
-  only. Now `GW` carries `print_flow` and `role_flow` into every `set_e_per_mm*` (a product with 1.0 is exact, so a
+  only. Now `GcodeWriter` carries `print_flow` and `role_flow` into every `set_e_per_mm*` (a product with 1.0 is exact, so a
   map without the keys stays byte-identical — golden and the multi-material/arachne/raft/tree/ironing dumps were
   compared), `role_flow_ratio` (`emit.cpp`) is the one copy of upstream's role rules for the st, raft and
-  multi-material paths, and `GW::capped_feed` caps every extrusion entry point, the dry run included so the chained
-  `curF` matches a real emit. A feature that keeps its width changes ratio through `GW::set_role_flow`, which rescales
+  multi-material paths, and `GcodeWriter::capped_feed` caps every extrusion entry point, the dry run included so the chained
+  `current_feed` matches a real emit. A feature that keeps its width changes ratio through `GcodeWriter::set_role_flow`, which rescales
   the current flow: recomputing it from the float ribbon width moved E with every ratio at 1. Two shapes follow
   upstream rather than the kernel's surface model: the top and bottom ratios apply to the current layer's exposed top and
   bottom (`pass2.cpp` splits them out of the shell region only when the ratio is not 1), and a thick bridge is a round
   thread of nozzle * sqrt(`bridge_flow`) (`LayerRegion::bridging_flow`). Not read, for want of the feature they scale:
   `internal_bridge_flow`, `overhang_flow_ratio`, `bridge_line_width`; spiral mode keeps role ratio 1.
   `test_flow.mjs` pins each multiplier against the slice without it.
-- **Arc fitting is upstream's `ArcFitter`** (`arcfit_bridge.cpp`, called from `GW::extrude_run` at upstream's per-role
+- **Arc fitting is upstream's `ArcFitter`** (`arcfit_bridge.cpp`, called from `GcodeWriter::extrude_run` at upstream's per-role
   tolerance: 0.04mm sparse infill, 0.0375mm support and raft, `resolution` otherwise). The kernel's own fitter accepted
   a run when its VERTICES lay on one circle, so a zigzag whose turning points sit on a round boundary became one arc:
   the preview (drawn from the stream) looked right while the exported G-code, and the print, did not (measured on a
@@ -474,7 +474,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   (`contour_gpu_shaders.js`) is the measured experiment's and is edited only with a measurement beside it.
   **The mesh route moves the cut and chain onto the GPU too.** MESH stops pass1 before the segment sweep and keeps the
   seated triangles and the layer planes; `contour_front_gpu.js` (shaders `contour_front_shaders.js`, same editing
-  rule) cuts in double-float, cancels coincident pairs, chains and lays the loops out as `chain_polys` and
+  rule) cuts in double-float, cancels coincident pairs, chains and lays the loops out as `chain_polygons` and
   `write_polygon` would, straight into the union's input buffers. Three things it depends on. **(a)** Metal compiles
   WGSL with fast math, which folds a two_sum's error term away; every intermediate the double-float depends on goes
   through `opaque()` (an XOR with a uniform zero), or the points are off by thousands of units. **(b)** A layer with a
@@ -501,9 +501,10 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   table fixtures 69 -> 70; every layer below the top shells byte-identical). `[layer count]` in `test.mjs` pins it.
 - **Layer loops are oriented and filled NonZero, not even-odd.** The kernel slices the merge of every object as ONE
   mesh, so even-odd counted two coincident shells as outside and two objects on the same spot sliced to nothing.
-  `tri_plane` orients each segment by its facet normal (solid on the left, upstream's `IntersectionLine`), and
-  `chain_polys` keeps a loop in its first segment's direction, prefers a continuation that STARTS at the current
-  point (four segments meet where shells coincide) and reverses a loop assembled mostly backwards (flipped facets).
+  `intersect_triangle_with_plane` orients each segment by its facet normal (solid on the left, upstream's
+  `IntersectionLine`), and `chain_polygons` keeps a loop in its first segment's direction, prefers a continuation
+  that STARTS at the current point (four segments meet where shells coincide) and reverses a loop assembled mostly
+  backwards (flipped facets).
   That is upstream's Regular mode; a fully inverted shell still prints, an inward-facing inner shell is still a void
   (`[overlapping shells]` in `test.mjs`). The golden fixtures stayed byte-identical; a clean mesh can still move
   by Clipper rounding (measured on the Benchy: under 0.0003 mm² per layer), which shifts point order in its G-code.

@@ -4,6 +4,7 @@
 //   Run: node packages/wasm-core/tests/test_machine_gcode.mjs
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
+import { boxTrianglesWithInwardBottom, trianglesToSTLBytes } from './stl_fixtures.mjs'
 
 let failures = 0
 const ok = (condition, message) => {
@@ -11,31 +12,21 @@ const ok = (condition, message) => {
   if (!condition) failures++
 }
 
-function boxTris(ox, oy, oz, sx, sy, sz) {
-  const c = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]].map(v => [v[0]+ox, v[1]+oy, v[2]+oz])
-  const q = (a,b,cc,d) => [[c[a],c[b],c[cc]],[c[a],c[cc],c[d]]]
-  return [...q(0,1,2,3), ...q(4,5,6,7), ...q(0,1,5,4), ...q(1,2,6,5), ...q(2,3,7,6), ...q(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buf = Buffer.alloc(84 + tris.length*50); buf.writeUInt32LE(tris.length, 80); let off = 84
-  for (const t of tris) { off += 12; for (const p of t) { buf.writeFloatLE(p[0],off); buf.writeFloatLE(p[1],off+4); buf.writeFloatLE(p[2],off+8); off += 12 } buf.writeUInt16LE(0,off); off += 2 }
-  return new Uint8Array(buf)
-}
-const cube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 2))
-const A = boxTris(-13, -5, 0, 10, 10, 2), B = boxTris(3, -5, 0, 10, 10, 2)
-const twoBoxes = trisToSTL([...A, ...B])
+const cube = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-10, -10, 0, 20, 20, 2))
+const leftBox = boxTrianglesWithInwardBottom(-13, -5, 0, 10, 10, 2), rightBox = boxTrianglesWithInwardBottom(3, -5, 0, 10, 10, 2)
+const twoBoxes = trianglesToSTLBytes([...leftBox, ...rightBox])
 
 const base = { layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2, infill_density: 0.15,
                nozzle_temp: 210, bed_temp: 60, bed_width: 200, bed_depth: 200, skirt_loops: 1, skirt_distance: 2 }
 const slicer = await createSlicer()
-const slice = (p, stl = cube) => slicer.slice(stl, JSON.stringify(p), () => {})
+const slice = (sliceParams, stl = cube) => slicer.slice(stl, JSON.stringify(sliceParams), () => {})
 // The text between a layer marker and the next one.
 const layerText = (gcode, marker) => {
-  const at = gcode.indexOf(marker)
-  if (at < 0) return ''
-  const next = gcode.indexOf('\n; LAYER', at + marker.length)
-  if (next < 0) return gcode.slice(at)
-  return gcode.slice(at, next)
+  const start = gcode.indexOf(marker)
+  if (start < 0) return ''
+  const next = gcode.indexOf('\n; LAYER', start + marker.length)
+  if (next < 0) return gcode.slice(start)
+  return gcode.slice(start, next)
 }
 const count = (text, pattern) => (text.match(pattern) ?? []).length
 
@@ -53,8 +44,8 @@ ok(/^G1 Z[\d.]+ F\d+\nM104 S210 ; set nozzle temperature\nM140 S60 ; set bed tem
    'the second layer sets the print temperatures right after its Z move')
 ok(count(switched.gcode, /; set nozzle temperature$/gm) === 1 && count(switched.gcode, /; set bed temperature$/gm) === 1,
    'the switch is written once')
-const sameTemps = slice({ ...base, first_layer_nozzle_temp: 210, first_layer_bed_temp: 60 })
-ok(!/set nozzle temperature|set bed temperature/.test(sameTemps.gcode), 'equal temperatures write no switch')
+const sameTemperatures = slice({ ...base, first_layer_nozzle_temp: 210, first_layer_bed_temp: 60 })
+ok(!/set nozzle temperature|set bed temperature/.test(sameTemperatures.gcode), 'equal temperatures write no switch')
 
 console.log('[temperatures: with a raft the raft\'s second layer is the second layer]')
 const rafted = slice({ ...firstLayer, raft_layers: 2 })
@@ -69,14 +60,14 @@ const mach3 = slice({ ...firstLayer, gcode_flavor: 'mach3' })
 ok(layerText(mach3.gcode, '; LAYER 1 ').includes('M104 P210 ; set nozzle temperature'), 'Mach3 takes the temperature as P')
 
 console.log('[temperatures: multi-material]')
-const mmParams = { ...base, extruder_count: 2, mm_group_split: A.length, extruder_nozzle_temp: [210, 230],
+const multiMaterialParams = { ...base, extruder_count: 2, mm_group_split: leftBox.length, extruder_nozzle_temp: [210, 230],
                    extruder_first_layer_temp: [215, 235], first_layer_nozzle_temp: 215 }
-const semm = slice(mmParams, twoBoxes)
-ok(!semm.error, `slices (${semm.error ?? 'no error'})`)
-const semmLayer1 = layerText(semm.gcode, '; LAYER 1 ')
-ok(/M104 S\d+ ; set nozzle temperature/.test(semmLayer1) && !/ ; set nozzle temperature[\s\S]* ; set nozzle temperature/.test(semmLayer1)
-   && !/M104 S\d+ T\d/.test(semmLayer1), 'one nozzle: only the loaded tool switches, without a tool word')
-const multi = slice({ ...mmParams, single_extruder_multi_material: false }, twoBoxes)
+const oneNozzle = slice(multiMaterialParams, twoBoxes)
+ok(!oneNozzle.error, `slices (${oneNozzle.error ?? 'no error'})`)
+const oneNozzleLayer1 = layerText(oneNozzle.gcode, '; LAYER 1 ')
+ok(/M104 S\d+ ; set nozzle temperature/.test(oneNozzleLayer1) && !/ ; set nozzle temperature[\s\S]* ; set nozzle temperature/.test(oneNozzleLayer1)
+   && !/M104 S\d+ T\d/.test(oneNozzleLayer1), 'one nozzle: only the loaded tool switches, without a tool word')
+const multi = slice({ ...multiMaterialParams, single_extruder_multi_material: false }, twoBoxes)
 const multiLayer1 = layerText(multi.gcode, '; LAYER 1 ')
 ok(multiLayer1.includes('M104 S210 T0 ; set nozzle temperature') && multiLayer1.includes('M104 S230 T1 ; set nozzle temperature'),
    'separate extruders: every used tool switches, named')
@@ -115,11 +106,11 @@ ok(!/^M8[23] /m.test(machinekit.gcode), 'Machinekit has no E mode command')
 ok(/^M2 ; end of program$/m.test(machinekit.gcode), 'Machinekit ends with M2')
 
 console.log('[flavor: pressure advance]')
-const pa = (flavor) => slice({ ...base, gcode_flavor: flavor, enable_pressure_advance: true, pressure_advance: 0.04 }).gcode
-ok(pa('klipper').includes('SET_PRESSURE_ADVANCE ADVANCE=0.04; Override pressure advance value'), 'Klipper: SET_PRESSURE_ADVANCE')
-ok(pa('reprapfirmware').includes('M572 D0 S0.04; Override pressure advance value'), 'RepRapFirmware: M572')
-ok(pa('marlin2').includes('M900 K0.04; Override pressure advance value'), 'Marlin: M900')
-ok(!pa('klipper').includes('M900'), 'Klipper gets no M900')
+const pressureAdvance = (flavor) => slice({ ...base, gcode_flavor: flavor, enable_pressure_advance: true, pressure_advance: 0.04 }).gcode
+ok(pressureAdvance('klipper').includes('SET_PRESSURE_ADVANCE ADVANCE=0.04; Override pressure advance value'), 'Klipper: SET_PRESSURE_ADVANCE')
+ok(pressureAdvance('reprapfirmware').includes('M572 D0 S0.04; Override pressure advance value'), 'RepRapFirmware: M572')
+ok(pressureAdvance('marlin2').includes('M900 K0.04; Override pressure advance value'), 'Marlin: M900')
+ok(!pressureAdvance('klipper').includes('M900'), 'Klipper gets no M900')
 
 console.log('[flavor: absolute E]')
 const absolute = slice({ ...base, gcode_flavor: 'marlin2', use_relative_e_distances: false, retract_length: 0.8 })
@@ -128,20 +119,26 @@ ok(/^M82 ; use absolute distances for extrusion\nG92 E0 ; reset extrusion distan
 const totalE = (gcode, absoluteMode) => {
   let position = 0, total = 0
   for (const line of gcode.split('\n')) {
-    if (/^G92 E0/.test(line)) { position = 0; continue }
+    if (/^G92 E0/.test(line)) {
+      position = 0
+      continue
+    }
     const match = /^G[0123] .*E(-?[\d.]+)/.exec(line)
     if (!match) continue
     const word = Number(match[1])
     let delta = word
-    if (absoluteMode) { delta = word - position; position = word }
+    if (absoluteMode) {
+      delta = word - position
+      position = word
+    }
     if (delta > 0) total += delta
   }
   return total
 }
 const relativeE = slice({ ...base, gcode_flavor: 'marlin2', retract_length: 0.8 })
-const absTotal = totalE(absolute.gcode.slice(absolute.gcode.indexOf('; LAYER 0')), true)
-const relTotal = totalE(relativeE.gcode.slice(relativeE.gcode.indexOf('; LAYER 0')), false)
-ok(Math.abs(absTotal - relTotal) < 1e-3 * relTotal, `absolute E extrudes what relative E does (${absTotal.toFixed(3)} vs ${relTotal.toFixed(3)} mm)`)
+const absoluteTotal = totalE(absolute.gcode.slice(absolute.gcode.indexOf('; LAYER 0')), true)
+const relativeTotal = totalE(relativeE.gcode.slice(relativeE.gcode.indexOf('; LAYER 0')), false)
+ok(Math.abs(absoluteTotal - relativeTotal) < 1e-3 * relativeTotal, `absolute E extrudes what relative E does (${absoluteTotal.toFixed(3)} vs ${relativeTotal.toFixed(3)} mm)`)
 const absoluteBody = absolute.gcode.slice(absolute.gcode.indexOf('; LAYER 0'))
 ok(/^G1 E-?[\d.]+ F\d+\nG92 E0\n/m.test(absoluteBody) && !/^G1 E-0\.8000 F/m.test(absoluteBody),
    'a retraction writes the retracted position and resets E (no relative E-0.8 move)')
@@ -162,44 +159,47 @@ const envelope = [1000, 1100, 200, 5000, 300, 310, 12, 25, 1500, 1200, 3000, 8, 
 const marlinLimits = slice({ ...base, gcode_flavor: 'marlin2', machine_envelope: envelope }).gcode
 ok(marlinLimits.includes('M201 X1000 Y1100 Z200 E5000\nM203 X300 Y310 Z12 E25\nM204 P1500 R1200 T3000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2\nM205 X8.00 Y9.00 Z0.40 E2.50 ; sets the jerk limits, mm/sec\nM205 J0.013 ; Junction Deviation'),
    'Marlin 2: M201/M203/M204 P R T/M205 and junction deviation')
-const rrfLimits = slice({ ...base, gcode_flavor: 'reprapfirmware', machine_envelope: envelope }).gcode
-ok(rrfLimits.includes('M203 X18000 Y18600 Z720 E1500') && rrfLimits.includes('M566 X480.00 Y540.00 Z24.00 E150.00'), 'RepRap: mm/min')
+const reprapLimits = slice({ ...base, gcode_flavor: 'reprapfirmware', machine_envelope: envelope }).gcode
+ok(reprapLimits.includes('M203 X18000 Y18600 Z720 E1500') && reprapLimits.includes('M566 X480.00 Y540.00 Z24.00 E150.00'), 'RepRap: mm/min')
 ok(!slice({ ...base, gcode_flavor: 'klipper', machine_envelope: envelope }).gcode.includes('M201'), 'Klipper: none')
 
 console.log('[speeds: per role]')
 // The feeds of each ;TYPE: section of one layer (role tags on): kernel type 1 is every wall, 2 sparse infill, 3 solid.
 const feedsByType = (gcode, marker) => {
-  const out = {}
+  const feeds = {}
   let type = ''
   let modal = 0   // F is modal: an extrusion line without it runs at the last one set (the cooling filter moves it to its own line)
   for (const line of layerText(gcode, marker).split('\n')) {
-    if (line.startsWith(';TYPE:')) { type = line.slice(6); continue }
+    if (line.startsWith(';TYPE:')) {
+      type = line.slice(6)
+      continue
+    }
     const feedWord = / F(\d+)/.exec(line)
     if (/^G[0123] /.test(line) && feedWord) modal = Number(feedWord[1])
-    if (/^G1 X.* E[\d.]+/.test(line)) (out[type] ??= new Set()).add(modal)
+    if (/^G1 X.* E[\d.]+/.test(line)) (feeds[type] ??= new Set()).add(modal)
   }
-  return out
+  return feeds
 }
-const tall = trisToSTL(boxTris(-10, -10, 0, 20, 20, 6))
+const tall = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-10, -10, 0, 20, 20, 6))
 const roles = { ...base, gcode_role_tags: true, wall_loops: 2, print_speed: 50, first_layer_speed: 20, slow_down_layer_time: 0,
                 inner_wall_speed: 100, sparse_infill_speed: 200, internal_solid_infill_speed: 150, initial_layer_infill_speed: 40 }
 const roleSlice = slice(roles, tall)
-const mid = feedsByType(roleSlice.gcode, '; LAYER 10 ')
-ok(mid['Outer wall']?.has(3000) && mid['Outer wall']?.has(6000), `walls: outer 50 and inner 100 mm/s (${[...(mid['Outer wall'] ?? [])]})`)
-ok(mid['Sparse infill']?.has(12000) && mid['Sparse infill'].size === 1, `sparse infill 200 mm/s (${[...(mid['Sparse infill'] ?? [])]})`)
-const first = feedsByType(roleSlice.gcode, '; LAYER 0 ')
-ok([...(first['Outer wall'] ?? [])].every(feed => feed === 1200), `first layer walls at initial_layer_speed (${[...(first['Outer wall'] ?? [])]})`)
-ok([...(first['Internal solid infill'] ?? [])].every(feed => feed === 2400), `first layer solid at initial_layer_infill_speed (${[...(first['Internal solid infill'] ?? [])]})`)
+const middleLayerFeeds = feedsByType(roleSlice.gcode, '; LAYER 10 ')
+ok(middleLayerFeeds['Outer wall']?.has(3000) && middleLayerFeeds['Outer wall']?.has(6000), `walls: outer 50 and inner 100 mm/s (${[...(middleLayerFeeds['Outer wall'] ?? [])]})`)
+ok(middleLayerFeeds['Sparse infill']?.has(12000) && middleLayerFeeds['Sparse infill'].size === 1, `sparse infill 200 mm/s (${[...(middleLayerFeeds['Sparse infill'] ?? [])]})`)
+const firstLayerFeeds = feedsByType(roleSlice.gcode, '; LAYER 0 ')
+ok([...(firstLayerFeeds['Outer wall'] ?? [])].every(feed => feed === 1200), `first layer walls at initial_layer_speed (${[...(firstLayerFeeds['Outer wall'] ?? [])]})`)
+ok([...(firstLayerFeeds['Internal solid infill'] ?? [])].every(feed => feed === 2400), `first layer solid at initial_layer_infill_speed (${[...(firstLayerFeeds['Internal solid infill'] ?? [])]})`)
 const legacyFeeds = feedsByType(slice({ ...base, gcode_role_tags: true, print_speed: 50, slow_down_layer_time: 0 }, tall).gcode, '; LAYER 10 ')
 ok(Object.values(legacyFeeds).every(set => [...set].every(feed => feed === 3000)), 'no per-role speed sent: every role at print_speed')
 const ramp = slice({ ...roles, slow_down_layers: 4 }, tall)
-const rampWalls = [...(feedsByType(ramp.gcode, '; LAYER 2 ')['Outer wall'] ?? [])].sort((a, b) => a - b)
+const rampWalls = [...(feedsByType(ramp.gcode, '; LAYER 2 ')['Outer wall'] ?? [])].sort((left, right) => left - right)
 // layer 2 of 4: halfway from 20 to 50 (outer) and from 20 to 100 (inner)
 ok(rampWalls.includes(2100) && rampWalls.includes(3600), `slow_down_layers ramps the walls up (${rampWalls})`)
 
 console.log('[speeds: small perimeters]')
 // A 3mm column's wall loops (~12mm) are within 2*pi*4 = 25mm: they print at small_perimeter_speed (20 mm/s).
-const column = trisToSTL(boxTris(-1.5, -1.5, 0, 3, 3, 3))
+const column = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-1.5, -1.5, 0, 3, 3, 3))
 const small = slice({ ...roles, small_perimeter_speed: 20, small_perimeter_threshold: 4 }, column)
 const smallWalls = feedsByType(small.gcode, '; LAYER 5 ')['Outer wall'] ?? new Set()
 ok([...smallWalls].every(feed => feed === 1200) && smallWalls.size > 0, `small loops at 20 mm/s (${[...smallWalls]})`)
@@ -210,11 +210,11 @@ console.log('[acceleration and jerk]')
 const motion = { ...roles, default_acceleration: 2000, outer_wall_acceleration: 1000, inner_wall_acceleration: 3000,
                  travel_acceleration: 5000, initial_layer_acceleration: 500, default_jerk: 8, outer_wall_jerk: 5 }
 const marlinMotion = slice({ ...motion, gcode_flavor: 'marlin2' }, tall).gcode
-const mid2 = layerText(marlinMotion, '; LAYER 10 ')
-ok(/^M204 P1000 ; adjust acceleration$/m.test(mid2) && /^M204 P3000 ; adjust acceleration$/m.test(mid2), 'Marlin 2: M204 P per wall role')
+const middleLayerMotion = layerText(marlinMotion, '; LAYER 10 ')
+ok(/^M204 P1000 ; adjust acceleration$/m.test(middleLayerMotion) && /^M204 P3000 ; adjust acceleration$/m.test(middleLayerMotion), 'Marlin 2: M204 P per wall role')
 ok(/^M204 T5000 ; adjust acceleration$/m.test(marlinMotion), 'Marlin 2: travel acceleration with its own T word')
 ok(/^M204 P500 ; adjust acceleration$/m.test(layerText(marlinMotion, '; LAYER 0 ')), 'the first layer at initial_layer_acceleration')
-ok(/^M205 X5 Y5 ; adjust jerk$/m.test(mid2) && /^M205 X8 Y8 ; adjust jerk$/m.test(mid2), 'jerk per role (outer 5, default 8)')
+ok(/^M205 X5 Y5 ; adjust jerk$/m.test(middleLayerMotion) && /^M205 X8 Y8 ; adjust jerk$/m.test(middleLayerMotion), 'jerk per role (outer 5, default 8)')
 ok(!/M204|M205/.test(slice(roles, tall).gcode), 'no default_acceleration / default_jerk: no command')
 const klipperMotion = slice({ ...motion, gcode_flavor: 'klipper', accel_to_decel_enable: true, accel_to_decel_factor: 50 }, tall).gcode
 ok(/^SET_VELOCITY_LIMIT ACCEL=1000 ACCEL_TO_DECEL=500 SQUARE_CORNER_VELOCITY=5 ; adjust VELOCITY_LIMIT\(accel\/jerk\)$/m.test(klipperMotion),
@@ -250,7 +250,7 @@ ok(slowFeeds.length > 0 && slowFeeds.every(feed => feed < 3000), `a short layer 
 // Two legs and a slab across them: the slab's underside is a bridge, which opens the overhang fan region. The
 //  overhang fan only takes over when it is faster than the layer's own fan (CoolingBuffer: overhang_fan_speed >
 //  fan_speed_new), so the layer fan is capped at 50% here.
-const bridgeModel = trisToSTL([...boxTris(-12, -4, 0, 4, 8, 3), ...boxTris(8, -4, 0, 4, 8, 3), ...boxTris(-12, -4, 3, 24, 8, 1.2)])
+const bridgeModel = trianglesToSTLBytes([...boxTrianglesWithInwardBottom(-12, -4, 0, 4, 8, 3), ...boxTrianglesWithInwardBottom(8, -4, 0, 4, 8, 3), ...boxTrianglesWithInwardBottom(-12, -4, 3, 24, 8, 1.2)])
 const bridged = slice(coolingTemplate({ enable_overhang_bridge_fan: ['1'], overhang_fan_speed: ['77'], fan_max_speed: ['50'] }), bridgeModel)
 ok(!bridged.error && /^M106 S196 ; enable fan$/m.test(bridged.gcode), 'the bridge prints under overhang_fan_speed (77% = S196)')
 const noBridgeFan = slice(coolingTemplate({ enable_overhang_bridge_fan: ['0'], overhang_fan_speed: ['77'], fan_max_speed: ['50'] }), bridgeModel)
@@ -299,7 +299,7 @@ const toolchangeConfig = (extra) => JSON.stringify({ machine_start_gcode: '; sta
   filament_end_gcode: ['; END A [layer_num]', '; END B [layer_num]'], filament_start_gcode: ['; START A', '; START B'],
   change_filament_gcode: '; CHANGE [previous_extruder]->[next_extruder] count [toolchange_count] flush {flush_length_1} temp [new_filament_temp] old [old_filament_temp] z [toolchange_z]',
   printable_area: ['0x0', '200x0', '200x200', '0x200'], ...extra })
-const toolchangeParams = (extra, params = {}) => ({ ...base, extruder_count: 2, mm_group_split: A.length, machine_start_gcode: '; start',
+const toolchangeParams = (extra, params = {}) => ({ ...base, extruder_count: 2, mm_group_split: leftBox.length, machine_start_gcode: '; start',
   flush_volumes_matrix: [0, 270, 270, 0], placeholder_config: toolchangeConfig(extra), ...params })
 const changed = slice(toolchangeParams({}), twoBoxes)
 ok(!changed.error, `slices (${changed.error ?? 'no error'})`)
@@ -336,24 +336,29 @@ console.log('[overhang fan: a wall that leaves the layer below]')
 // Upstream's per-segment rule (GCode::_extrude with ExtrusionQualityEstimator): with overhang_fan_threshold 50% a wall
 //  point outside the layer below gets the overhang fan (100% here), a wall over solid ground keeps the layer fan.
 function frustum(bottom, top, height) {
-  const b = bottom / 2, t = top / 2
-  const lo = [[-b,-b,0],[b,-b,0],[b,b,0],[-b,b,0]], hi = [[-t,-t,height],[t,-t,height],[t,t,height],[-t,t,height]]
-  const tris = [[lo[0],lo[2],lo[1]],[lo[0],lo[3],lo[2]],[hi[0],hi[1],hi[2]],[hi[0],hi[2],hi[3]]]
-  for (let k = 0; k < 4; k++) { const n = (k+1)%4; tris.push([lo[k],lo[n],hi[n]],[lo[k],hi[n],hi[k]]) }
-  return trisToSTL(tris)
+  const halfBottom = bottom / 2, halfTop = top / 2
+  const low = [[-halfBottom,-halfBottom,0],[halfBottom,-halfBottom,0],[halfBottom,halfBottom,0],[-halfBottom,halfBottom,0]], high = [[-halfTop,-halfTop,height],[halfTop,-halfTop,height],[halfTop,halfTop,height],[-halfTop,halfTop,height]]
+  const triangles = [[low[0],low[2],low[1]],[low[0],low[3],low[2]],[high[0],high[1],high[2]],[high[0],high[2],high[3]]]
+  for (let k = 0; k < 4; k++) {
+    const next = (k+1)%4
+    triangles.push([low[k],low[next],high[next]],[low[k],high[next],high[k]])
+  }
+  return trianglesToSTLBytes(triangles)
 }
 const overhangConfig = (threshold) => ({ ...base, gcode_role_tags: true, machine_start_gcode: '; start', enable_arc_fitting: true,
   placeholder_config: JSON.stringify({ machine_start_gcode: '; start', printable_area: ['0x0', '200x0', '200x200', '0x200'],
     enable_overhang_bridge_fan: ['1'], overhang_fan_threshold: [threshold], overhang_fan_speed: ['100'],
     fan_min_speed: ['40'], fan_max_speed: ['60'], close_fan_the_first_x_layers: ['1'] }) })
 const fullFanOnWalls = (gcode) => {
-  let role = '', fan = 0, count = 0
+  let role = '', fan = 0, fullFanMoves = 0
   for (const line of gcode.split('\n')) {
-    const tag = /^;TYPE:(.+)$/.exec(line); if (tag) role = tag[1]
-    const set = /^M106 S(\d+)/.exec(line); if (set) fan = +set[1]
-    if (fan === 255 && role === 'Outer wall' && /^G[123] .*E[\d.]/.test(line)) count++
+    const tag = /^;TYPE:(.+)$/.exec(line)
+    if (tag) role = tag[1]
+    const fanCommand = /^M106 S(\d+)/.exec(line)
+    if (fanCommand) fan = +fanCommand[1]
+    if (fan === 255 && role === 'Outer wall' && /^G[123] .*E[\d.]/.test(line)) fullFanMoves++
   }
-  return count
+  return fullFanMoves
 }
 const widening = slice(overhangConfig('50%'), frustum(10, 18, 2))     // 0.4 mm out per 0.2 mm layer
 ok(!widening.error && fullFanOnWalls(widening.gcode) > 0, `a wall that widens past the layer below runs the overhang fan (${fullFanOnWalls(widening.gcode)} moves)`)
@@ -368,7 +373,7 @@ const slicerMtOverhang = await createSlicerMt()
 ok(slicerMtOverhang.slice(frustum(10, 18, 2), JSON.stringify(overhangConfig('50%')), () => {}).gcode === widening.gcode, 'st == mt with the overhang fan')
 
 console.log('[reduce_infill_retraction: no retraction for a travel inside the infill]')
-const sparseCube = trisToSTL(boxTris(-10, -10, 0, 20, 20, 4))
+const sparseCube = trianglesToSTLBytes(boxTrianglesWithInwardBottom(-10, -10, 0, 20, 20, 4))
 const infillTravels = (reduce) => slice({ ...base, infill_density: 0.15, machine_start_gcode: '; start', reduce_infill_retraction: reduce,
   placeholder_config: JSON.stringify({ machine_start_gcode: '; start', printable_area: ['0x0', '200x0', '200x200', '0x200'] }) }, sparseCube)
 const retractions = (gcode) => (gcode.match(/^G1 E-/gm) ?? []).length
@@ -383,8 +388,8 @@ ok(slicerMtTravel.slice(sparseCube, JSON.stringify({ ...base, infill_density: 0.
 
 console.log('[temperatures: st == mt]')
 const slicerMt = await createSlicerMt()
-const mt = slicerMt.slice(cube, JSON.stringify(firstLayer), () => {})
-ok(mt.gcode === switched.gcode, 'the threaded kernel writes the same G-code')
+const mtResult = slicerMt.slice(cube, JSON.stringify(firstLayer), () => {})
+ok(mtResult.gcode === switched.gcode, 'the threaded kernel writes the same G-code')
 
 if (failures) {
   console.log(`\n${failures} CHECK(S) FAILED`)

@@ -9,17 +9,17 @@
 #include <vector>
 
 // ---- Stage 5 helpers: area · component split · morphological open · center line · tree shrink ------------------
-double paths_area(const Paths& ps);
-Paths morph_open(const Paths& in, double r);
+double paths_area(const Paths& paths);
+Paths morph_open(const Paths& in, double radius);
 std::vector<Paths> split_components(const Paths& in);
 Paths grid_snap(const Paths& region, double cell);
-Paths tree_taper(const Paths& in, double shrink, double minR);
-Paths build_sparse(const Paths& region, const std::string& pat, double base, double spacing, int layerIdx, double z, double lineW, double density);
-double paths_len(const Paths& ps, bool closed);
-double vwalls_len(const std::vector<Paths>& ws);
-int fan_S(int i, const Params& p);
+Paths tree_taper(const Paths& in, double shrink, double minRadius);
+Paths build_sparse(const Paths& region, const std::string& pattern, double base, double spacing, int layerIndex, double z, double lineWidth, double density);
+double paths_length(const Paths& paths, bool closed);
+double walls_length(const std::vector<Paths>& walls);
+int fan_S(int layerIndex, const Params& params);
 void sort_monotonic(Paths& lines, double angleDeg);   // (defined in geom_helpers.cpp) for zigzag ordering
-struct DPt { double x, y; };
+struct MillimetrePoint { double x, y; };
 // Seam context (aligned = the previous layer's seam, random = a deterministic LCG)
-struct SeamCtx { double lastX=0, lastY=0; bool has=false; uint32_t rng=1; };
-void rotate_seam(Path& p, int mode, SeamCtx& sc, double nozX, double nozY);
+struct SeamContext { double lastX=0, lastY=0; bool hasLast=false; uint32_t randomState=1; };
+void rotate_seam(Path& path, int mode, SeamContext& seamContext, double nozzleX, double nozzleY);

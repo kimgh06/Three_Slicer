@@ -23,11 +23,11 @@ struct Limits {
 };
 
 struct Result {
-    double total_s = 0.0;
-    std::vector<double> layer_s;
-    double first_layer_s = 0.0;
-    double extrude_s = 0.0, travel_s = 0.0;
-    std::map<int, double> role_s;       // ExtrusionRole int -> s
+    double total_seconds = 0.0;
+    std::vector<double> layer_seconds;
+    double first_layer_seconds = 0.0;
+    double extrude_seconds = 0.0, travel_seconds = 0.0;
+    std::map<int, double> role_seconds;       // ExtrusionRole int -> s
     double filament_mm = 0.0;
     long   moves = 0;
     bool   ok = false;
@@ -36,7 +36,7 @@ struct Result {
 
 // Run the real GCodeProcessor (apply_config -> process_buffer -> finalize) on the g-code and extract
 // the time breakdown from GCodeProcessorResult (modes[Normal].time) + per-move aggregation.
-Result estimate(const std::string& gcode, const Limits& lim);
+Result estimate(const std::string& gcode, const Limits& limits);
 
 // Stage 30 streaming time estimate: the kernel feeds layer chunks as it produces them (process_buffer is a stateful
 //  streaming parser — chunks end on '\n' boundaries, so many calls behave exactly like one big feed), which avoids
@@ -46,7 +46,7 @@ Result estimate(const std::string& gcode, const Limits& lim);
 //  reached; past the cap the kept text and every later chunk go to a gcode_time::Estimator instead, so the estimate still
 //  overlaps emission and end() returns a Result with `transcribed` set. Without it (streaming, where the text is released per
 //  layer on purpose) the cap ends the estimate as before and end() reports !ok.
-void   estimate_begin(const Limits& lim, const gcode_time::Limits* fallback);
+void   estimate_begin(const Limits& limits, const gcode_time::Limits* fallback);
 void   estimate_feed(const std::string& chunk);
 Result estimate_end();
 

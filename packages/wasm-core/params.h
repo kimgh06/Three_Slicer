@@ -19,7 +19,7 @@ struct Params {
   //  starts at them and switches at the second printed layer (upstream GCode.cpp:5631-5650).
   double first_layer_nozzle_temp=-1.0;   // nozzle_temperature_initial_layer (<0 = none sent)
   double first_layer_bed_temp=-1.0;      // the plate type's _initial_layer bed option (<0 = none sent)
-  inline double first_layer_nozzle_temp_of(int tool) const { return forTool(extruder_first_layer_temp, tool, first_layer_nozzle_temp); }
+  inline double first_layer_nozzle_temperature_of(int tool) const { return forTool(extruder_first_layer_temp, tool, first_layer_nozzle_temp); }
   bool   single_extruder_multi_material=true;   // one nozzle carries every filament: the switch names no tool
   // Upstream's gcode_flavor ("marlin", "marlin2", "klipper", "reprapfirmware", "repetier", ...). Empty = the host sent
   //  none: the commands the kernel always wrote keep their form, and new ones use Marlin's (machine_writer.h).
@@ -196,8 +196,9 @@ struct Params {
     if (filament_index > 0) return filament_index - 1;
     return -1;
   }
-  static double forTool(const std::vector<double>& per, int tool, double fallback) {
-    return (tool >= 0 && tool < (int)per.size()) ? per[tool] : fallback;
+  static double forTool(const std::vector<double>& perTool, int tool, double fallback) {
+    if (tool >= 0 && tool < (int)perTool.size()) return perTool[tool];
+    return fallback;
   }
   int    mm_group_split=0;                              // triangle group boundary index ([0,split)=T0, [split,N)=T1)
   // N-way grouping: every boundary in triangle order, so three materials are three groups rather than the second
@@ -241,11 +242,13 @@ struct Params {
   // How much filament a change from `from` to `to` has to purge, in mm³. Returns <0 when the host sent no table,
   //  which the caller reads as "keep the fixed tower you always printed".
   double flushVolume(int from, int to, int extruderCount) const {
-    const int n = extruderCount > 0 ? extruderCount : 1;
-    const size_t idx = (size_t)from * (size_t)n + (size_t)to;
-    if ((int)flush_volumes_matrix.size() < n * n || idx >= flush_volumes_matrix.size()) return -1.0;
-    const double mult = flush_multiplier > 1e-6 ? flush_multiplier : 1.0;
-    return std::max(0.0, flush_volumes_matrix[idx] * mult + prime_volume);
+    int count = 1;
+    if (extruderCount > 0) count = extruderCount;
+    const size_t entryIndex = (size_t)from * (size_t)count + (size_t)to;
+    if ((int)flush_volumes_matrix.size() < count * count || entryIndex >= flush_volumes_matrix.size()) return -1.0;
+    double multiplier = 1.0;
+    if (flush_multiplier > 1e-6) multiplier = flush_multiplier;
+    return std::max(0.0, flush_volumes_matrix[entryIndex] * multiplier + prime_volume);
   }
   // Per-filament material identity and physical constants. Upstream carries all of these as one entry per filament
   //  and reports them in the G-code footer; the kernel needs density/cost only to turn extruded millimetres into
@@ -253,7 +256,7 @@ struct Params {
   //  makes by material name (PETG's extra unretract, TPU on the first layer).
   std::vector<std::string> filament_type, filament_settings_id;
   std::vector<double> filament_density;      // g/cm3, per filament
-  std::vector<double> filament_max_volumetric_speed;   // mm³/s, per filament; empty = no cap (GW::capped_feed)
+  std::vector<double> filament_max_volumetric_speed;   // mm³/s, per filament; empty = no cap (GcodeWriter::capped_feed)
   std::vector<double> filament_cost;         // currency per kg, per filament
   // Upstream always writes the per-filament totals and the config dump. Here they are opt-in, because every byte the
   //  default path emits is pinned by golden.mjs — the viewer turns them on, so the shipped app matches upstream
@@ -266,7 +269,8 @@ struct Params {
   bool   gcode_role_tags=false;              // ;TYPE:<role> on every role change (upstream GCodeProcessor tag)
   std::string params_json;                   // the raw params object, for the config block above
   int    physicalExtruderOf(int tool) const {          // tool (0-based) -> physical extruder (0-based)
-    return (tool >= 0 && tool < (int)filament_map.size()) ? std::max(0, (int)filament_map[tool] - 1) : tool;
+    if (tool >= 0 && tool < (int)filament_map.size()) return std::max(0, (int)filament_map[tool] - 1);
+    return tool;
   }
   bool   auto_center=false;                             // stage 28: true = realign the combined bbox to the origin (stage-3 legacy). false (default) = trust the viewer coordinates (no realignment, only Z seating) -> the toolpath overlaps the on-screen model exactly. Upstream = only the plate origin offset (GCode.cpp:932).
   // Stage 33: the default switched to true. Evidence (compare_wipetower.mjs measurements, 2-box MM):
@@ -319,10 +323,10 @@ struct Params {
   //  and the time estimate (r.moves would stay resident in bulk) -> only G-code is streamed out to the end. Effective only on the
   //  streaming path with a layer sink installed (default false — no effect on the batch path).
   bool   economy=false;
-  // G003 incremental: decided and requested by the viewer (invalidation-map). 0 = full, 1 = reuse geometry (tris), 2 = reuse through support (L[]).
+  // G003 incremental: decided and requested by the viewer (invalidation-map). 0 = full, 1 = reuse geometry (triangles), 2 = reuse through support (layers[]).
   int    reuse_stages=0;
   bool   keep_stages=false;                             // keep the stages cached after slicing (skips the early release — a memory trade-off)
   bool   arachne_dump=false;   // temporary diagnostic: dump the PASS1 arachne input polygons to stderr
 };
 
-Params parse_params(const std::string& j);
+Params parse_params(const std::string& params_json);

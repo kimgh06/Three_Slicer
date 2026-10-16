@@ -2,7 +2,7 @@
 //
 // The mesh-direct SLA mask (sl1_parity_gpu.js) counts the surfaces above a pixel signed by each FACET's own facing,
 //  NonZero; the kernel builds its contours from oriented loops and reverses a loop assembled mostly backwards
-//  (slice_planes.h chain_polys). The two agree whenever the winding is consistent — including a fully inverted mesh
+//  (slice_planes.h chain_polygons). The two agree whenever the winding is consistent — including a fully inverted mesh
 //  and coincident copies — and part ways when only SOME facets are flipped: measured on a table whose top faces were
 //  flipped, the mask lit 6400 px at a height where the slice (and its supports) hold only the 256 px leg. So the
 //  export uses the mesh-direct mask only for a consistent mesh, and rasterizes the kernel's own contours otherwise.

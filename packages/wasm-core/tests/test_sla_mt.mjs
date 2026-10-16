@@ -5,21 +5,7 @@
 import assert from 'node:assert/strict'
 import createSlicer from '../../engine/src/slicer_core.js'
 import createSlicerMt from '../../engine/src/slicer_core.mt.js'
-
-function boxSTL() {
-  const vertices = [[-5,-5,0],[5,-5,0],[5,5,0],[-5,5,0],[-5,-5,5],[5,-5,5],[5,5,5],[-5,5,5]]
-  const faces = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
-  const buffer = Buffer.alloc(84 + faces.length * 50)
-  buffer.writeUInt32LE(faces.length, 80)
-  faces.forEach((face, index) => {
-    let offset = 84 + index * 50 + 12
-    for (const vertexIndex of face) for (const value of vertices[vertexIndex]) {
-      buffer.writeFloatLE(value, offset)
-      offset += 4
-    }
-  })
-  return new Uint8Array(buffer)
-}
+import { slaBoxSTL } from './stl_fixtures.mjs'
 
 const params = JSON.stringify({
   layer_height: 0.05,
@@ -31,9 +17,9 @@ const params = JSON.stringify({
   pad_enable: true,
 })
 
-const [st, mt] = [await createSlicer(), await createSlicerMt()]
-const expected = st.slice_sla(boxSTL(), params, undefined)
-const actual = mt.slice_sla(boxSTL(), params, undefined)
+const [singleThreadSlicer, threadedSlicer] = [await createSlicer(), await createSlicerMt()]
+const expected = singleThreadSlicer.slice_sla(slaBoxSTL(), params, undefined)
+const actual = threadedSlicer.slice_sla(slaBoxSTL(), params, undefined)
 
 assert.equal(actual.error, undefined, `mt slice_sla errored: ${actual.error}`)
 for (const key of ['layers', 'support_points', 'pad_layers', 'lift_layers', 'path_segments'])

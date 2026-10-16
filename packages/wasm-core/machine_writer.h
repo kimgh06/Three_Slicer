@@ -1,6 +1,6 @@
 // machine_writer.h — the machine commands of upstream's GCodeWriter (GCodeWriter.cpp) whose text depends on the
 // firmware flavor: temperatures, accelerations, jerk, pressure advance. Plain functions over the flavor, so the
-// kernel's own writer (GW) and the start / second-layer blocks format them one way. Header-only, like
+// kernel's own writer (GcodeWriter) and the start / second-layer blocks format them one way. Header-only, like
 // gcode_writer.h.
 //
 // The flavor comes from Params::gcode_flavor. When the host sends none (Flavor::Unset), every command the kernel
@@ -133,21 +133,21 @@ inline std::string machine_postamble(Flavor flavor) {
 }
 
 // GCodeWriter::set_pressure_advance (GCodeWriter.cpp:499). setprecision(4) as upstream: significant digits.
-inline std::string machine_set_pressure_advance(double pa, Flavor flavor, bool is_bbl) {
+inline std::string machine_set_pressure_advance(double pressure_advance, Flavor flavor, bool is_bbl) {
   flavor = flavor_or_marlin(flavor);
   std::ostringstream gcode;
-  if (pa < 0)
+  if (pressure_advance < 0)
     return gcode.str();
   if (is_bbl) {
-    gcode << "M900 K" << std::setprecision(4) << pa << " L1000 M10 ; Override pressure advance value\n";
+    gcode << "M900 K" << std::setprecision(4) << pressure_advance << " L1000 M10 ; Override pressure advance value\n";
   } else if (flavor == Flavor::Klipper) {
-    gcode << "SET_PRESSURE_ADVANCE ADVANCE=" << std::setprecision(4) << pa << "; Override pressure advance value\n";
+    gcode << "SET_PRESSURE_ADVANCE ADVANCE=" << std::setprecision(4) << pressure_advance << "; Override pressure advance value\n";
   } else if (flavor == Flavor::RepRapFirmware) {
-    gcode << ("M572 D0 S") << std::setprecision(4) << pa << "; Override pressure advance value\n";
+    gcode << ("M572 D0 S") << std::setprecision(4) << pressure_advance << "; Override pressure advance value\n";
   } else if (flavor == Flavor::Repetier) {
-    gcode << "M233 X" << std::setprecision(4) << pa << " Y" << std::setprecision(4) << pa << " ; Override pressure advance value\n";
+    gcode << "M233 X" << std::setprecision(4) << pressure_advance << " Y" << std::setprecision(4) << pressure_advance << " ; Override pressure advance value\n";
   } else {
-    gcode << "M900 K" << std::setprecision(4) << pa << "; Override pressure advance value\n";
+    gcode << "M900 K" << std::setprecision(4) << pressure_advance << "; Override pressure advance value\n";
   }
   return gcode.str();
 }
@@ -168,33 +168,45 @@ inline std::string machine_envelope_text(const std::vector<double>& limits, Flav
   flavor = flavor_or_marlin(flavor);
   if (limits.size() < 16) return "";
   if (!(flavor == Flavor::MarlinLegacy || flavor == Flavor::MarlinFirmware || flavor == Flavor::RepRapFirmware)) return "";
-  const double ax = limits[0], ay = limits[1], az = limits[2], ae = limits[3];
-  const double vx = limits[4], vy = limits[5], vz = limits[6], ve = limits[7];
-  const double extruding = limits[8], retracting = limits[9], travel = limits[10];
-  const double jx = limits[11], jy = limits[12], jz = limits[13], je = limits[14], junction = limits[15];
+  const double acceleration_x = limits[0];
+  const double acceleration_y = limits[1];
+  const double acceleration_z = limits[2];
+  const double acceleration_e = limits[3];
+  const double speed_x = limits[4];
+  const double speed_y = limits[5];
+  const double speed_z = limits[6];
+  const double speed_e = limits[7];
+  const double extruding = limits[8];
+  const double retracting = limits[9];
+  const double travel = limits[10];
+  const double jerk_x = limits[11];
+  const double jerk_y = limits[12];
+  const double jerk_z = limits[13];
+  const double jerk_e = limits[14];
+  const double junction = limits[15];
   int factor = 1;
   if (flavor == Flavor::RepRapFirmware) factor = 60;   // RRF M203 and M566 are in mm/min
   char line[192];
   std::string text;
-  std::snprintf(line, sizeof line, "M201 X%d Y%d Z%d E%d\n", int(ax + 0.5), int(ay + 0.5), int(az + 0.5), int(ae + 0.5));
+  std::snprintf(line, sizeof line, "M201 X%d Y%d Z%d E%d\n", int(acceleration_x + 0.5), int(acceleration_y + 0.5), int(acceleration_z + 0.5), int(acceleration_e + 0.5));
   text += line;
-  std::snprintf(line, sizeof line, "M203 X%d Y%d Z%d E%d\n", int(vx * factor + 0.5), int(vy * factor + 0.5), int(vz * factor + 0.5), int(ve * factor + 0.5));
+  std::snprintf(line, sizeof line, "M203 X%d Y%d Z%d E%d\n", int(speed_x * factor + 0.5), int(speed_y * factor + 0.5), int(speed_z * factor + 0.5), int(speed_e * factor + 0.5));
   text += line;
   // Legacy Marlin exports travel acceleration the same as printing acceleration; Marlin 2 has the two separated.
-  int travel_acc = int(travel + 0.5);
-  if (flavor == Flavor::MarlinLegacy) travel_acc = int(extruding + 0.5);
+  int travel_acceleration = int(travel + 0.5);
+  if (flavor == Flavor::MarlinLegacy) travel_acceleration = int(extruding + 0.5);
   if (flavor == Flavor::RepRapFirmware)
-    std::snprintf(line, sizeof line, "M204 P%d T%d ; sets acceleration (P, T), mm/sec^2\n", int(extruding + 0.5), travel_acc);
+    std::snprintf(line, sizeof line, "M204 P%d T%d ; sets acceleration (P, T), mm/sec^2\n", int(extruding + 0.5), travel_acceleration);
   else if (flavor == Flavor::MarlinFirmware)
     std::snprintf(line, sizeof line, "M204 P%d R%d T%d ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2\n",
                   int(extruding + 0.5), int(retracting + 0.5), int(travel + 0.5));
   else
-    std::snprintf(line, sizeof line, "M204 P%d R%d T%d\n", int(extruding + 0.5), int(retracting + 0.5), travel_acc);
+    std::snprintf(line, sizeof line, "M204 P%d R%d T%d\n", int(extruding + 0.5), int(retracting + 0.5), travel_acceleration);
   text += line;
   if (flavor == Flavor::RepRapFirmware)
-    std::snprintf(line, sizeof line, "M566 X%.2lf Y%.2lf Z%.2lf E%.2lf ; sets the jerk limits, mm/min\n", jx * factor, jy * factor, jz * factor, je * factor);
+    std::snprintf(line, sizeof line, "M566 X%.2lf Y%.2lf Z%.2lf E%.2lf ; sets the jerk limits, mm/min\n", jerk_x * factor, jerk_y * factor, jerk_z * factor, jerk_e * factor);
   else
-    std::snprintf(line, sizeof line, "M205 X%.2lf Y%.2lf Z%.2lf E%.2lf ; sets the jerk limits, mm/sec\n", jx * factor, jy * factor, jz * factor, je * factor);
+    std::snprintf(line, sizeof line, "M205 X%.2lf Y%.2lf Z%.2lf E%.2lf ; sets the jerk limits, mm/sec\n", jerk_x * factor, jerk_y * factor, jerk_z * factor, jerk_e * factor);
   text += line;
   // GCodeWriter::set_junction_deviation (GCodeWriter.cpp:481): Marlin 2 only, limit and value the same number here.
   if (flavor == Flavor::MarlinFirmware && junction > 0) {
@@ -217,10 +229,16 @@ inline std::string machine_acceleration_text(unsigned int acceleration, bool sep
   flavor = flavor_or_marlin(flavor);
   std::ostringstream gcode;
   if (flavor == Flavor::Repetier) {
-    if (separate_travel) gcode << "M202 X"; else gcode << "M201 X";
+    if (separate_travel)
+      gcode << "M202 X";
+    else
+      gcode << "M201 X";
     gcode << acceleration << " Y" << acceleration;
   } else if (flavor == Flavor::RepRapFirmware || flavor == Flavor::MarlinFirmware) {
-    if (separate_travel) gcode << "M204 T"; else gcode << "M204 P";
+    if (separate_travel)
+      gcode << "M204 T";
+    else
+      gcode << "M204 P";
     gcode << acceleration;
   } else if (flavor == Flavor::Klipper) {
     gcode << "SET_VELOCITY_LIMIT ACCEL=" << acceleration;
@@ -265,12 +283,12 @@ inline std::string machine_jerk_text(double jerk, Flavor flavor, double max_x, d
 
 // The text of GCodeWriter::set_accel_and_jerk (GCodeWriter.cpp:437), Klipper's one command for both. The caller has
 //  decided which of the two changed; neither = no text.
-inline std::string machine_klipper_velocity_limit(bool set_accel, unsigned int acceleration, bool accel_to_decel_enable,
+inline std::string machine_klipper_velocity_limit(bool set_acceleration, unsigned int acceleration, bool accel_to_decel_enable,
                                                   double accel_to_decel_factor, bool set_jerk, double jerk) {
-  if (!set_accel && !set_jerk) return "";
+  if (!set_acceleration && !set_jerk) return "";
   std::ostringstream gcode;
   gcode << "SET_VELOCITY_LIMIT";
-  if (set_accel) {
+  if (set_acceleration) {
     gcode << " ACCEL=" << acceleration;
     if (accel_to_decel_enable)
       gcode << " ACCEL_TO_DECEL=" << acceleration * accel_to_decel_factor / 100;

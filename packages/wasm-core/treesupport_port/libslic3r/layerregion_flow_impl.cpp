@@ -36,7 +36,9 @@ Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge) const
     if (thick_bridge) {
         // The old Slic3r way (different from all other slicers): Use rounded extrusions.
         // Get the configured nozzle_diameter for the extruder associated to the flow role requested.
-        float thread_diameter = has_bridge_width ? float(bridge_width) : nozzle_diameter;
+        float thread_diameter = nozzle_diameter;
+        if (has_bridge_width)
+            thread_diameter = float(bridge_width);
         if (bridge_flow_ratio > 0.)
             thread_diameter *= float(sqrt(bridge_flow_ratio));
         bridge_flow = Flow::bridging_flow(thread_diameter, nozzle_diameter);
