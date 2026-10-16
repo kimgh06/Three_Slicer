@@ -2,52 +2,31 @@
 //  (support penetrating below a model top surface into open space = bottom-contact defect) and a CUP
 //  fixture (support inside wall solid = hole/offset defect). Prints type5 counts by (x-region, z-band).
 import createSlicer from '../../engine/src/slicer_core.js'
-function boxTris(originX,originY,originZ,sizeX,sizeY,sizeZ){
-  const corners=[[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex=>[vertex[0]+originX,vertex[1]+originY,vertex[2]+originZ])
-  const quad=(first,second,third,fourth)=>[[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return [...quad(0,1,2,3),...quad(4,5,6,7),...quad(0,1,5,4),...quad(1,2,6,5),...quad(2,3,7,6),...quad(3,0,4,7)]
-}
-function trisToSTL(tris){
-  const buffer=Buffer.alloc(84+tris.length*50)
-  buffer.writeUInt32LE(tris.length,80)
-  let offset=84
-  for(const triangle of tris){
-    offset+=12
-    for(const point of triangle){
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset+=12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset+=2
-  }
-  return buffer
-}
+import { boxTrianglesWithInwardBottom, trianglesToSTL } from '../tests/stl_fixtures.mjs'
 
 // ROOF/table: two legs (x[-12,-8] and [8,12]) + roof slab z[12,15] spanning x[-14,14]; optional top
 //  cantilever arm sitting ON the roof (z[18,21]) reaching x[-2,14] — its underside overhangs and should
 //  rest ON the roof, not descend into the open gap between the legs (x[-8,8], z<12).
 function roofFixture(withArm){
-  const tris=[...boxTris(-12,-8,0,4,16,12), ...boxTris(8,-8,0,4,16,12), ...boxTris(-14,-10,12,28,20,3)]
+  const triangles=[...boxTrianglesWithInwardBottom(-12,-8,0,4,16,12), ...boxTrianglesWithInwardBottom(8,-8,0,4,16,12), ...boxTrianglesWithInwardBottom(-14,-10,12,28,20,3)]
   if(withArm){
-    tris.push(...boxTris(-2,-2,15,3,4,3))            // small riser on roof center (x[-2,1])
-    tris.push(...boxTris(-2,-2,18,16,4,3))           // cantilever arm z[18,21], x[-2,14] (overhangs)
+    triangles.push(...boxTrianglesWithInwardBottom(-2,-2,15,3,4,3))            // small riser on roof center (x[-2,1])
+    triangles.push(...boxTrianglesWithInwardBottom(-2,-2,18,16,4,3))           // cantilever arm z[18,21], x[-2,14] (overhangs)
   }
-  return trisToSTL(tris)
+  return trianglesToSTL(triangles)
 }
 // CUP: thick-wall (5mm) cup, outer x/y[-15,15] z[0,20], inner cavity x/y[-10,10] z[3,20] (open top),
 //  + an overhang ring shelf inside the cavity above the floor (annulus at z[10,12]).
 function cupFixture(){
-  const tris=[]
+  const triangles=[]
   // outer solid block then subtract... we can't boolean; build walls as 4 boxes + floor + inner shelf ring
   // floor:
-  tris.push(...boxTris(-15,-15,0,30,30,3))
+  triangles.push(...boxTrianglesWithInwardBottom(-15,-15,0,30,30,3))
   // 4 walls (thickness 5): left/right/front/back
-  tris.push(...boxTris(-15,-15,3,5,30,17), ...boxTris(10,-15,3,5,30,17), ...boxTris(-10,-15,3,20,5,17), ...boxTris(-10,10,3,20,5,17))
+  triangles.push(...boxTrianglesWithInwardBottom(-15,-15,3,5,30,17), ...boxTrianglesWithInwardBottom(10,-15,3,5,30,17), ...boxTrianglesWithInwardBottom(-10,-15,3,20,5,17), ...boxTrianglesWithInwardBottom(-10,10,3,20,5,17))
   // inner overhang shelf: a ring ledge protruding inward from the walls at z[12,14] (overhangs the cavity)
-  tris.push(...boxTris(-10,-10,12,20,2,2), ...boxTris(-10,8,12,20,2,2), ...boxTris(-10,-8,12,2,16,2), ...boxTris(8,-8,12,2,16,2))
-  return trisToSTL(tris)
+  triangles.push(...boxTrianglesWithInwardBottom(-10,-10,12,20,2,2), ...boxTrianglesWithInwardBottom(-10,8,12,20,2,2), ...boxTrianglesWithInwardBottom(-10,-8,12,2,16,2), ...boxTrianglesWithInwardBottom(8,-8,12,2,16,2))
+  return trianglesToSTL(triangles)
 }
 
 // time_engine:transcribed — bypass the full GCodeProcessor (crashes on this non-manifold overlapping-box
@@ -91,10 +70,10 @@ for(const style of ['grid','tree_lite','tree']){
     continue
   }
   // gap region below roof (x[-8,8], z[0,12]) — WITH-arm minus WITHOUT-arm = arm penetration below roof
-  const gapNo=count5(resultNoArm,[-8,8],[0,12]), gapArm=count5(resultArm,[-8,8],[0,12])
+  const gapNoArm=count5(resultNoArm,[-8,8],[0,12]), gapArm=count5(resultArm,[-8,8],[0,12])
   // arm rests-on-roof region (x[-8,8], z[15,18]) should have support (gap between arm z18 and roof z15)
   const onRoof=count5(resultArm,[-8,8],[15,18])
-  console.log(`  ${style}: total5 no-arm=${total5(resultNoArm)} arm=${total5(resultArm)} | gap<roof(z0-12) no-arm=${gapNo} arm=${gapArm} (Δ=${gapArm-gapNo}) | on-roof(z15-18)=${onRoof}`)
+  console.log(`  ${style}: total5 no-arm=${total5(resultNoArm)} arm=${total5(resultArm)} | gap<roof(z0-12) no-arm=${gapNoArm} arm=${gapArm} (Δ=${gapArm-gapNoArm}) | on-roof(z15-18)=${onRoof}`)
 }
 console.log('\n=== CUP fixture (wall solid = x[10,15]; cavity = x[-10,10]) ===')
 for(const style of ['grid','tree_lite','tree']){

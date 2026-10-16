@@ -1,51 +1,14 @@
 // 22-fix reproduction: replicate buildLayerRibbon vertex math in node and scan
 // generated geometry for NaN / huge coordinates (the "giant diagonal polygon" bug).
 import createSlicer from '../../engine/src/slicer_core.js'
-function boxTris(originX,originY,originZ,sizeX,sizeY,sizeZ){
-  const corners=[[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex=>[vertex[0]+originX,vertex[1]+originY,vertex[2]+originZ])
-  const quad=(first,second,third,fourth)=>[[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return[...quad(0,1,2,3),...quad(4,5,6,7),...quad(0,1,5,4),...quad(1,2,6,5),...quad(2,3,7,6),...quad(3,0,4,7)]
-}
+import { boxTrianglesWithInwardBottom, closedCylinderTriangles, trianglesToSTL } from '../tests/stl_fixtures.mjs'
 // thin cross (arms ~0.9mm wide → gapfill/thinwall)
-function crossTris(){
-  const tris=[]
+function crossTriangles(){
+  const triangles=[]
   const arm=0.9,length=16,height=6
-  tris.push(...boxTris(-length/2,-arm/2,0,length,arm,height))
-  tris.push(...boxTris(-arm/2,-length/2,0,arm,length,height))
-  return tris
-}
-function cylTris(centerX,centerY,radius,height,facetCount){
-  const tris=[]
-  const top=[],bottom=[]
-  for(let i=0;i<facetCount;i++){
-    const angle=2*Math.PI*i/facetCount
-    top.push([centerX+radius*Math.cos(angle),centerY+radius*Math.sin(angle),height])
-    bottom.push([centerX+radius*Math.cos(angle),centerY+radius*Math.sin(angle),0])
-  }
-  for(let i=0;i<facetCount;i++){
-    const j=(i+1)%facetCount
-    tris.push([bottom[i],bottom[j],top[j]],[bottom[i],top[j],top[i]])
-    tris.push([[centerX,centerY,height],top[i],top[j]])
-    tris.push([[centerX,centerY,0],bottom[j],bottom[i]])
-  }
-  return tris
-}
-function trisToSTL(tris){
-  const buffer=Buffer.alloc(84+tris.length*50)
-  buffer.writeUInt32LE(tris.length,80)
-  let offset=84
-  for(const triangle of tris){
-    offset+=12
-    for(const point of triangle){
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset+=12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset+=2
-  }
-  return buffer
+  triangles.push(...boxTrianglesWithInwardBottom(-length/2,-arm/2,0,length,arm,height))
+  triangles.push(...boxTrianglesWithInwardBottom(-arm/2,-length/2,0,arm,length,height))
+  return triangles
 }
 
 const base={layer_height:0.2,first_layer_height:0.2,line_width:0.42,wall_loops:2,infill_density:0.15,nozzle_diameter:0.4,filament_diameter:1.75,flow_ratio:1.0,print_speed:60,first_layer_speed:20,travel_speed:150,nozzle_temp:210,bed_temp:60,top_shell_layers:3,bottom_shell_layers:3,skirt_loops:0,skirt_distance:2,brim_width:0,retract_length:0.8,retract_speed:30,z_hop:0.4,infill_angle:45}
@@ -54,9 +17,9 @@ const slice=(stl,sliceParams)=>slicer.slice(new Uint8Array(stl),JSON.stringify(s
 const TYPE={0:'travel',1:'wall',2:'sparse',3:'solid',4:'skirt',5:'support',6:'raft',7:'gapfill',8:'thinwall',9:'bridge',10:'ironing',11:'primetower'}
 
 // exact replica of Viewport.jsx buildLayerRibbon vertex generation (current, pre-fix)
-function scanLayer(paths, lineWidth, layerH, widths, bound){
-  const height=Math.max(0.05,layerH)
-  const zEps=height*0.05
+function scanLayer(paths, lineWidth, layerHeight, widths, bound){
+  const height=Math.max(0.05,layerHeight)
+  const zMargin=height*0.05
   const bad=[]   // mirrors Viewport.jsx buildLayerRibbon (post 22-fix)
   const check=(coordinates,segment)=>{
     for(const value of coordinates){
@@ -81,16 +44,16 @@ function scanLayer(paths, lineWidth, layerH, widths, bound){
     if(!Number.isFinite(segmentWidth)||segmentWidth<=0) segmentWidth=lineWidth                                   // 22-fix(H1) width guard
     const halfWidth=Math.min(Math.max(0.05,segmentWidth)/2, 2.5)                                    // 22-fix(H1) half-width clamp
     const normalX=-dy*halfWidth,normalY=dx*halfWidth,extendX=dx*halfWidth,extendY=dy*halfWidth
-    const zTop=z0,zBottom=z0-height-zEps
-    const verts=[x0+normalX-extendX,y0+normalY-extendY,zTop, x0-normalX-extendX,y0-normalY-extendY,zTop, x1+normalX+extendX,y1+normalY+extendY,zTop, x1-normalX+extendX,y1-normalY+extendY,zTop, zBottom]
+    const zTop=z0,zBottom=z0-height-zMargin
+    const ribbonCoordinates=[x0+normalX-extendX,y0+normalY-extendY,zTop, x0-normalX-extendX,y0-normalY-extendY,zTop, x1+normalX+extendX,y1+normalY+extendY,zTop, x1-normalX+extendX,y1-normalY+extendY,zTop, zBottom]
     const segment={type:TYPE[type]||type,len:+length.toFixed(4),w:+(segmentWidth||0).toFixed(3),x0:+x0.toFixed(2),y0:+y0.toFixed(2),x1:+x1.toFixed(2),y1:+y1.toFixed(2)}
-    check(verts,segment)
+    check(ribbonCoordinates,segment)
   }
   return bad
 }
-function run(name, stl, sliceParams, bboxHalf){
+function run(name, stl, sliceParams, halfExtent){
   const result=slice(stl,sliceParams)
-  const bound=bboxHalf*3+50   // "sane" bound: 3x half-extent + margin
+  const bound=halfExtent*3+50   // "sane" bound: 3x half-extent + margin
   let total=0, allbad=[]
   for(let layerIndex=0;layerIndex<result.layers.length;layerIndex++){
     const layer=result.layers[layerIndex]
@@ -120,10 +83,10 @@ function run(name, stl, sliceParams, bboxHalf){
 }
 
 let bad=0
-bad+=run('cube20', trisToSTL(boxTris(0,0,0,20,20,20)), base, 10)
-bad+=run('thin-cross', trisToSTL(crossTris()), base, 8)
-bad+=run('cyl-r30', trisToSTL(cylTris(0,0,30,10,128)), base, 30)
-bad+=run('cube-scarf', trisToSTL(boxTris(0,0,0,20,20,20)), {...base,seam_slope_type:'external',scarf_length:10}, 10)
-bad+=run('cyl-spiral', trisToSTL(cylTris(0,0,15,20,96)), {...base,spiral_mode:true,wall_loops:1,top_shell_layers:0,bottom_shell_layers:0,infill_density:0}, 15)
-bad+=run('thin-cross-arachne', trisToSTL(crossTris()), {...base,wall_generator:'arachne'}, 8)
+bad+=run('cube20', trianglesToSTL(boxTrianglesWithInwardBottom(0,0,0,20,20,20)), base, 10)
+bad+=run('thin-cross', trianglesToSTL(crossTriangles()), base, 8)
+bad+=run('cyl-r30', trianglesToSTL(closedCylinderTriangles(0,0,30,10,128)), base, 30)
+bad+=run('cube-scarf', trianglesToSTL(boxTrianglesWithInwardBottom(0,0,0,20,20,20)), {...base,seam_slope_type:'external',scarf_length:10}, 10)
+bad+=run('cyl-spiral', trianglesToSTL(closedCylinderTriangles(0,0,15,20,96)), {...base,spiral_mode:true,wall_loops:1,top_shell_layers:0,bottom_shell_layers:0,infill_density:0}, 15)
+bad+=run('thin-cross-arachne', trianglesToSTL(crossTriangles()), {...base,wall_generator:'arachne'}, 8)
 console.log(`\n=== TOTAL BAD VERTS: ${bad} ===`)

@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-function arg(name) {
+function pathArgument(name) {
   const index = process.argv.indexOf(name)
   if (index < 0 || !process.argv[index + 1]) throw new Error(`Missing ${name}`)
   return resolve(process.argv[index + 1])
@@ -16,8 +16,8 @@ function arg(name) {
 const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest('hex')
 const stable = (value) => `${JSON.stringify(value, null, 2)}\n`
 
-const source = arg('--prusa-source')
-const outputDirectory = arg('--out')
+const source = pathArgument('--prusa-source')
+const outputDirectory = pathArgument('--out')
 const versionFile = join(source, 'version.inc')
 const versionText = readFileSync(versionFile, 'utf8')
 const version = /set\(SLIC3R_VERSION "([^"]+)"\)/.exec(versionText)?.[1]

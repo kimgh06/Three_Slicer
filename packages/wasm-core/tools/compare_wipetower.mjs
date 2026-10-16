@@ -1,33 +1,12 @@
 // S3 investigation: comparison of the two prime tower paths — default (square ring approximation) vs wipe_tower_real (the ported real WipeTower.generate()).
 //  Collects evidence for switching the default. Prints success and G-code plausibility indicators side by side (a human makes the call).
 import createSlicer from '../../engine/src/slicer_core.js'
+import { boxTrianglesWithInwardBottom, trianglesToSTL } from '../tests/stl_fixtures.mjs'
 
 // MM input: two boxes side by side — the kernel splits groups so the leading tris are ext1 and everything after split is ext2
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
-  const quad = (first,second,third,fourth) => [[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length * 50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const point of triangle) {
-      buffer.writeFloatLE(point[0], offset)
-      buffer.writeFloatLE(point[1], offset+4)
-      buffer.writeFloatLE(point[2], offset+8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0, offset)
-    offset += 2
-  }
-  return buffer
-}
-const boxA = boxTris(-25, -10, 0, 20, 20, 10)
-const boxB = boxTris(5, -10, 0, 20, 20, 10)
-const stl = new Uint8Array(trisToSTL([...boxA, ...boxB]))
+const boxA = boxTrianglesWithInwardBottom(-25, -10, 0, 20, 20, 10)
+const boxB = boxTrianglesWithInwardBottom(5, -10, 0, 20, 20, 10)
+const stl = new Uint8Array(trianglesToSTL([...boxA, ...boxB]))
 const SPLIT = boxA.length   // triangle index where ext2 starts
 
 const base = {
@@ -53,17 +32,17 @@ const probe = (label, extra) => {
   const towerRing = lines.filter(line => line.includes('prime tower')).length
   const cpToolchange = lines.filter(line => line.includes('CP TOOLCHANGE') || line.includes('WIPE_TOWER')).length
   // type 11 = prime tower toolpath segments
-  let towerSeg = 0
+  let towerSegments = 0
   for (const layer of result.layers || []) {
     const paths = layer.paths
     if (!paths) continue
-    for (let i = 0; i < paths.length; i += 8) if (paths[i+3] === 11) towerSeg++
+    for (let i = 0; i < paths.length; i += 8) if (paths[i+3] === 11) towerSegments++
   }
   console.log(`${label.padEnd(22)} layers ${String(result.stats.layers).padStart(3)}  tool changes ${String(toolChanges).padStart(3)}  ` +
-    `tower segs ${String(towerSeg).padStart(5)}  filament ${result.stats.filament_mm.toFixed(1).padStart(8)}mm  ` +
+    `tower segs ${String(towerSegments).padStart(5)}  filament ${result.stats.filament_mm.toFixed(1).padStart(8)}mm  ` +
     `gcode ${String(gcode.length).padStart(7)}B  ${elapsedMs.toFixed(0)}ms`)
   console.log(`${''.padEnd(22)}   markers: real tower ${towerReal} · ring ${towerRing} · CP/WIPE ${cpToolchange}`)
-  return { r: result, towerSeg, toolChanges, towerReal, cpToolchange }
+  return { result, towerSegments, toolChanges, towerReal, cpToolchange }
 }
 
 console.log('=== Prime tower path comparison (MM, 2 extruders) ===')
@@ -76,6 +55,6 @@ if (ring && real) {
   if (real.towerReal > 0) realPathVerdict = 'yes (real path ran)'
   console.log(`Real WipeTower markers emitted: ${realPathVerdict}`)
   console.log(`Ring fallback markers: default ${ring.towerRing ?? '-'} / real path ${real.towerRing ?? '-'}`)
-  console.log(`Tower toolpath segments: ring ${ring.towerSeg} vs real ${real.towerSeg}`)
+  console.log(`Tower toolpath segments: ring ${ring.towerSegments} vs real ${real.towerSegments}`)
 }
 process.exit(0)

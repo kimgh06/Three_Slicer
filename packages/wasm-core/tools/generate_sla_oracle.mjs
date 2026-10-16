@@ -5,13 +5,13 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-function arg(name) {
+function pathArgument(name) {
   const index = process.argv.indexOf(name)
   if (index < 0 || !process.argv[index + 1]) throw new Error(`Missing ${name}`)
   return resolve(process.argv[index + 1])
 }
 
-const fixtures = arg('--fixtures')
+const fixtures = pathArgument('--fixtures')
 const binary = process.env.PRUSA_SLICER_BIN
 const oracle = process.env.PRUSA_NATIVE_ORACLE
 if (!binary) throw new Error('PRUSA_SLICER_BIN is required for SLA oracle regeneration; no kernel fallback exists.')

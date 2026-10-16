@@ -3,33 +3,10 @@
 // "organic tree" g-code marker, (2) per-layer type5 distribution DIFFERS from tree_lite (organic
 // branch signature), (3) determinism (two identical runs).
 import createSlicer from '../../engine/src/slicer_core.js'
+import { boxTrianglesWithInwardBottom, tableTriangles, trianglesToSTL } from '../tests/stl_fixtures.mjs'
 
-// --- self-contained binary-STL box generator (avoids importing test.mjs, which runs+exits) ---
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]]
-    .map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
-  const quad = (first,second,third,fourth)=>[[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length*50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const point of triangle){
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset += 2
-  }
-  return buffer
-}
-// overhang table: 6x6x10 leg at (7,7) + 20x20x4 top at z=10 (same as test.mjs makeTableSTL)
-const tableSTL = trisToSTL([...boxTris(7,7,0,6,6,10), ...boxTris(0,0,10,20,20,4)])
+// overhang table: 6x6x10 leg at (7,7) + 20x20x4 top at z=10 (test.mjs makeTableSTL builds it with outward boxes)
+const tableSTL = trianglesToSTL(tableTriangles(boxTrianglesWithInwardBottom))
 
 const params = {
   layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2,
@@ -78,7 +55,7 @@ ok(rTree.gcode === rTree2.gcode, 'determinism: two tree runs produce identical g
 //     REAL per-path support width end-to-end (config -> support flow -> ExtrusionPath::width -> E + ribbon)
 //     by showing the emitted support width TRACKS support_line_width config (0.4 default vs explicit 0.6).
 //     (Note: this port's support_material_flow/interface_flow share one width key, so interface==body width.)
-const treeSupWidths = (result) => {
+const treeSupportWidths = (result) => {
   const widthSet = new Set()
   for (const layer of result.layers) {
     const widths = layer.widths
@@ -87,9 +64,9 @@ const treeSupWidths = (result) => {
   }
   return [...widthSet].sort((left,right)=>left-right)
 }
-const defaultWidths = treeSupWidths(rTree)
+const defaultWidths = treeSupportWidths(rTree)
 const resultWidth06 = slice({ ...params, support_style: 'tree', support_line_width: 0.6 })
-const widths06 = treeSupWidths(resultWidth06)
+const widths06 = treeSupportWidths(resultWidth06)
 console.log(`  support widths — default: [${defaultWidths.join(',')}]  support_line_width=0.6: [${widths06.join(',')}]`)
 ok(defaultWidths.length >= 1 && defaultWidths.every(width=>width>0), 'default: support paths carry real per-path width (non-zero, from support flow)')
 ok(widths06.includes(0.6) && !defaultWidths.includes(0.6), 'support width tracks config (0.6) — per-path width propagated to E + widths[]')
@@ -98,9 +75,9 @@ ok(widths06.includes(0.6) && !defaultWidths.includes(0.6), 'support width tracks
 const residualMatch = rTree.gcode.match(/tree_support layers=(\d+) z_resid_max=([0-9.]+)mm/)
 ok(!!residualMatch, 'g-code has tree_support z-alignment diagnostic')
 if (residualMatch) {
-  const resid = parseFloat(residualMatch[2])
-  console.log(`  tree_support layers=${residualMatch[1]} z_resid_max=${resid}mm`)
-  ok(resid < 1e-4, `support-layer Z exactly on object grid (z_resid_max=${resid}mm < 1e-4)`)
+  const residual = parseFloat(residualMatch[2])
+  console.log(`  tree_support layers=${residualMatch[1]} z_resid_max=${residual}mm`)
+  ok(residual < 1e-4, `support-layer Z exactly on object grid (z_resid_max=${residual}mm < 1e-4)`)
 }
 
 if (fail === 0) {
