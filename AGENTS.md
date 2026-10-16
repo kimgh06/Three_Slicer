@@ -418,7 +418,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   map without the keys stays byte-identical — golden and the multi-material/arachne/raft/tree/ironing dumps were
   compared), `role_flow_ratio` (`emit.cpp`) is the one copy of upstream's role rules for the st, raft and
   multi-material paths, and `GcodeWriter::capped_feed` caps every extrusion entry point, the dry run included so the chained
-  `curF` matches a real emit. A feature that keeps its width changes ratio through `GcodeWriter::set_role_flow`, which rescales
+  `current_feed` matches a real emit. A feature that keeps its width changes ratio through `GcodeWriter::set_role_flow`, which rescales
   the current flow: recomputing it from the float ribbon width moved E with every ratio at 1. Two shapes follow
   upstream rather than the kernel's surface model: the top and bottom ratios apply to the current layer's exposed top and
   bottom (`pass2.cpp` splits them out of the shell region only when the ratio is not 1), and a thick bridge is a round
