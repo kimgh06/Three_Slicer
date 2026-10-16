@@ -5,7 +5,7 @@
 //
 // Stage 30 (OOM tolerance): set_layer_sink lets the kernel emit layers as it produces them; each is transferred to main
 //  immediately (Float32Array buffers moved -> the worker copy is released at once) and the kernel frees that layer buffer
-//  from the heap. The resident result (the full gw.s + the full layersArr) disappears, so the WASM heap peak drops sharply
+//  from the heap. The resident result (the full GcodeWriter::gcode + the full layersArray) disappears, so the WASM heap peak drops sharply
 //  -> large models avoid OOM. The final 'done' carries stats only.
 //  In economy mode (params.economy) only G-code chunks are emitted, without toolpaths (finishes without a preview).
 //  The MM / real-PE paths fall back to batch mode.
