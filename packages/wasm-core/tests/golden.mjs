@@ -3,53 +3,13 @@
 // (proves the kernel's default paths never call the restored factory cases).
 import createSlicer from '../../engine/src/slicer_core.js'
 import { writeFileSync } from 'node:fs'
+import { boxTrianglesWithInwardBottom, centreXYSeatZ, tableTriangles, trianglesToSTL } from './stl_fixtures.mjs'
 
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]]
-    .map(corner => [corner[0]+originX, corner[1]+originY, corner[2]+originZ])
-  const quad = (first, second, third, fourth) => [[corners[first], corners[second], corners[third]], [corners[first], corners[third], corners[fourth]]]
-  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length*50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const vertex of triangle) {
-      buffer.writeFloatLE(vertex[0], offset)
-      buffer.writeFloatLE(vertex[1], offset+4)
-      buffer.writeFloatLE(vertex[2], offset+8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0, offset)
-    offset += 2
-  }
-  return buffer
-}
 // Stage 28 P2: the harness sends "bed-centered placement coordinates" (same as the viewer's bakeLocal: XY bbox center at the origin, minz=0).
 //  With the default auto_center=false (trusting the viewer's coordinates) these centered coordinates match the legacy realignment result -> golden stays byte-identical.
-function centerTris(tris) {
-  let minX = 1e9
-  let minY = 1e9
-  let minZ = 1e9
-  let maxX = -1e9
-  let maxY = -1e9
-  for (const triangle of tris) {
-    for (const vertex of triangle) {
-      minX = Math.min(minX, vertex[0])
-      maxX = Math.max(maxX, vertex[0])
-      minY = Math.min(minY, vertex[1])
-      maxY = Math.max(maxY, vertex[1])
-      minZ = Math.min(minZ, vertex[2])
-    }
-  }
-  const centerX = (minX+maxX)/2
-  const centerY = (minY+maxY)/2
-  return tris.map(triangle => triangle.map(vertex => [vertex[0]-centerX, vertex[1]-centerY, vertex[2]-minZ]))
-}
-const cubeSTL  = trisToSTL(centerTris(boxTris(0,0,0,20,20,20)))
-const tableSTL = trisToSTL(centerTris([...boxTris(7,7,0,6,6,10), ...boxTris(0,0,10,20,20,4)]))
+//  centreXYSeatZ (stl_fixtures.mjs) is that placement.
+const cubeSTL  = trianglesToSTL(centreXYSeatZ(boxTrianglesWithInwardBottom(0,0,0,20,20,20)))
+const tableSTL = trianglesToSTL(centreXYSeatZ(tableTriangles(boxTrianglesWithInwardBottom)))
 
 const params = {
   layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2,

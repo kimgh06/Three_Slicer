@@ -4,71 +4,29 @@ import createSlicer from '../../engine/src/slicer_core.js'
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { concatSTL, flipSTL, moveSTL, outwardBoxTriangles, tableTriangles, trianglesToSTL } from './stl_fixtures.mjs'
 
 // --- Box geometry ---
-function boxFaces(sizeX, sizeY, sizeZ) {
-  const vertices = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]]
-  const faces = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]]
-  return { vertices, faces }
-}
 export function makeBoxSTL(sizeX, sizeY, sizeZ) {              // binary cube
-  const { vertices, faces } = boxFaces(sizeX, sizeY, sizeZ)
-  const buffer = Buffer.alloc(84 + faces.length * 50)
-  buffer.writeUInt32LE(faces.length, 80)
-  let offset = 84
-  for (const face of faces) {
-    offset += 12
-    for (const vertexIndex of face) {
-      buffer.writeFloatLE(vertices[vertexIndex][0], offset)
-      buffer.writeFloatLE(vertices[vertexIndex][1], offset + 4)
-      buffer.writeFloatLE(vertices[vertexIndex][2], offset + 8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0, offset)
-    offset += 2
-  }
-  return buffer
+  return trianglesToSTL(outwardBoxTriangles(0, 0, 0, sizeX, sizeY, sizeZ))
 }
 export function makeAsciiBoxSTL(sizeX, sizeY, sizeZ) {         // ASCII cube
-  const { vertices, faces } = boxFaces(sizeX, sizeY, sizeZ)
   let text = 'solid cube\n'
-  for (const face of faces) {
+  for (const triangle of outwardBoxTriangles(0, 0, 0, sizeX, sizeY, sizeZ)) {
     text += ' facet normal 0 0 0\n  outer loop\n'
-    for (const vertexIndex of face) text += `   vertex ${vertices[vertexIndex][0]} ${vertices[vertexIndex][1]} ${vertices[vertexIndex][2]}\n`
+    for (const vertex of triangle) text += `   vertex ${vertex[0]} ${vertex[1]} ${vertex[2]}\n`
     text += '  endloop\n endfacet\n'
   }
   text += 'endsolid cube\n'
   return Buffer.from(text, 'utf8')
 }
-// Box triangles in absolute coordinates (for assembling the overhang table)
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const { vertices, faces } = boxFaces(sizeX, sizeY, sizeZ)
-  return faces.map(face => face.map(vertexIndex => [vertices[vertexIndex][0] + originX, vertices[vertexIndex][1] + originY, vertices[vertexIndex][2] + originZ]))
-}
 // Table / T shape (overhang): a wide 20x20x4 cap on a narrow 6x6x10 column -> the cap's underside overhangs into thin air
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length * 50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const vertex of triangle) {
-      buffer.writeFloatLE(vertex[0], offset)
-      buffer.writeFloatLE(vertex[1], offset + 4)
-      buffer.writeFloatLE(vertex[2], offset + 8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0, offset)
-    offset += 2
-  }
-  return buffer
-}
 export function makeTableSTL() {
-  return trisToSTL([...boxTris(7, 7, 0, 6, 6, 10), ...boxTris(0, 0, 10, 20, 20, 4)])
+  return trianglesToSTL(tableTriangles(outwardBoxTriangles))
 }
 // Cylinder (for arc fitting checks) — with the side split into segments the wall becomes an arc
 export function makeCylinderSTL(radius, height, segments) {
-  const tris = []
+  const triangles = []
   const top = height
   const bottom = 0
   for (let i = 0; i < segments; i++) {
@@ -78,12 +36,12 @@ export function makeCylinderSTL(radius, height, segments) {
     const y0 = radius * Math.sin(startAngle)
     const x1 = radius * Math.cos(endAngle)
     const y1 = radius * Math.sin(endAngle)
-    tris.push([[x0, y0, bottom], [x1, y1, bottom], [x1, y1, top]])
-    tris.push([[x0, y0, bottom], [x1, y1, top], [x0, y0, top]])
-    tris.push([[0, 0, bottom], [x1, y1, bottom], [x0, y0, bottom]])
-    tris.push([[0, 0, top], [x0, y0, top], [x1, y1, top]])
+    triangles.push([[x0, y0, bottom], [x1, y1, bottom], [x1, y1, top]])
+    triangles.push([[x0, y0, bottom], [x1, y1, top], [x0, y0, top]])
+    triangles.push([[0, 0, bottom], [x1, y1, bottom], [x0, y0, bottom]])
+    triangles.push([[0, 0, top], [x0, y0, top], [x1, y1, top]])
   }
-  return trisToSTL(tris)
+  return trianglesToSTL(triangles)
 }
 // Models for stage 5 -------------------------------------------------------------
 // Thin cross (thin wall): a thick hub (3x3, >=2w) with 4 thin arms (0.6mm ≈ 1.5w). Hub = 2 wall loops; an arm gets one
@@ -93,12 +51,12 @@ export function makeCrossSTL() {
   const arm = 0.6
   const armLength = 5
   const height = 3
-  return trisToSTL([
-    ...boxTris(-hub / 2, -hub / 2, 0, hub, hub, height),
-    ...boxTris(hub / 2, -arm / 2, 0, armLength, arm, height),
-    ...boxTris(-hub / 2 - armLength, -arm / 2, 0, armLength, arm, height),
-    ...boxTris(-arm / 2, hub / 2, 0, arm, armLength, height),
-    ...boxTris(-arm / 2, -hub / 2 - armLength, 0, arm, armLength, height),
+  return trianglesToSTL([
+    ...outwardBoxTriangles(-hub / 2, -hub / 2, 0, hub, hub, height),
+    ...outwardBoxTriangles(hub / 2, -arm / 2, 0, armLength, arm, height),
+    ...outwardBoxTriangles(-hub / 2 - armLength, -arm / 2, 0, armLength, arm, height),
+    ...outwardBoxTriangles(-arm / 2, hub / 2, 0, arm, armLength, height),
+    ...outwardBoxTriangles(-arm / 2, -hub / 2 - armLength, 0, arm, armLength, height),
   ])
 }
 // Thin ring/tube (gap fill): a square frame with 2.5w (≈1.05mm) walls -> 1 wall loop + a 0.5w leftover gap.
@@ -107,30 +65,30 @@ export function makeRingSTL() {
   const wallThickness = 2.5 * lineWidth
   const outer = 10
   const height = 3
-  return trisToSTL([
-    ...boxTris(-outer / 2, -outer / 2, 0, outer, wallThickness, height),
-    ...boxTris(-outer / 2, outer / 2 - wallThickness, 0, outer, wallThickness, height),
-    ...boxTris(-outer / 2, -outer / 2 + wallThickness, 0, wallThickness, outer - 2 * wallThickness, height),
-    ...boxTris(outer / 2 - wallThickness, -outer / 2 + wallThickness, 0, wallThickness, outer - 2 * wallThickness, height),
+  return trianglesToSTL([
+    ...outwardBoxTriangles(-outer / 2, -outer / 2, 0, outer, wallThickness, height),
+    ...outwardBoxTriangles(-outer / 2, outer / 2 - wallThickness, 0, outer, wallThickness, height),
+    ...outwardBoxTriangles(-outer / 2, -outer / 2 + wallThickness, 0, wallThickness, outer - 2 * wallThickness, height),
+    ...outwardBoxTriangles(outer / 2 - wallThickness, -outer / 2 + wallThickness, 0, wallThickness, outer - 2 * wallThickness, height),
   ])
 }
 // L shape (wall-avoiding travel): a concave notch -> a straight travel between the arms crosses the outer wall.
 export function makeLShapeSTL() {
-  return trisToSTL([...boxTris(0, 0, 0, 24, 8, 4), ...boxTris(0, 0, 0, 8, 24, 4)])
+  return trianglesToSTL([...outwardBoxTriangles(0, 0, 0, 24, 8, 4), ...outwardBoxTriangles(0, 0, 0, 8, 24, 4)])
 }
 // Two boxes side by side (multi-material): the first 12 triangles = group 0, the next 12 = group 1 (split=12).
 export function makeTwoBoxSTL() {
-  const firstBox = boxTris(0, 0, 0, 10, 10, 6)
-  const secondBox = boxTris(16, 0, 0, 10, 10, 6)
-  return { stl: trisToSTL([...firstBox, ...secondBox]), split: firstBox.length }
+  const firstBox = outwardBoxTriangles(0, 0, 0, 10, 10, 6)
+  const secondBox = outwardBoxTriangles(16, 0, 0, 10, 10, 6)
+  return { stl: trianglesToSTL([...firstBox, ...secondBox]), split: firstBox.length }
 }
 
 // Three boxes in triangle order, one per extruder — the N-way grouping fixture.
 export function makeThreeBoxSTL() {
-  const firstBox = boxTris(0, 0, 0, 10, 10, 6)
-  const secondBox = boxTris(16, 0, 0, 10, 10, 6)
-  const thirdBox = boxTris(32, 0, 0, 10, 10, 6)
-  return { stl: trisToSTL([...firstBox, ...secondBox, ...thirdBox]), splits: [firstBox.length, firstBox.length + secondBox.length] }
+  const firstBox = outwardBoxTriangles(0, 0, 0, 10, 10, 6)
+  const secondBox = outwardBoxTriangles(16, 0, 0, 10, 10, 6)
+  const thirdBox = outwardBoxTriangles(32, 0, 0, 10, 10, 6)
+  return { stl: trianglesToSTL([...firstBox, ...secondBox, ...thirdBox]), splits: [firstBox.length, firstBox.length + secondBox.length] }
 }
 // --- Painted multi-material fixtures ---------------------------------------------------------------------------
 // The facet projection behind painting (project_custom_facets_footprint) drops vertical faces — they project to a
@@ -141,17 +99,17 @@ export function makeThreeBoxSTL() {
 export const WEDGE_FACETS = 18
 export const WEDGE_SLOPE_FACET = 12
 export const WEDGE_PITCH = 25
-function wedgeTris(offsetX) {
+function wedgeTriangles(offsetX) {
   const point = (x, y, z) => [x + offsetX, y, z]
   return [
-    ...boxTris(offsetX, 0, 0, 20, 20, 10),                                                   // 0..11 base (top face = 2,3)
+    ...outwardBoxTriangles(offsetX, 0, 0, 20, 20, 10),                                                   // 0..11 base (top face = 2,3)
     [point(0,0,10), point(20,0,10), point(20,20,20)], [point(0,0,10), point(20,20,20), point(0,20,20)],      // 12,13 slanted face
     [point(0,20,10), point(20,20,10), point(20,20,20)], [point(0,20,10), point(20,20,20), point(0,20,20)],   // 14,15 back wall
     [point(0,0,10), point(0,20,20), point(0,20,10)], [point(20,0,10), point(20,20,10), point(20,20,20)],     // 16,17 ends
   ]
 }
 export function makeWedgeSTL(count) {
-  return trisToSTL(Array.from({ length: count }, (_, k) => wedgeTris(k * WEDGE_PITCH)).flat())
+  return trianglesToSTL(Array.from({ length: count }, (_, k) => wedgeTriangles(k * WEDGE_PITCH)).flat())
 }
 // Overlap fixture: a 6x6 leg and a 20x20 cap meeting at z=10.15. Both faces on that plane project onto the z=10.2
 //  slicing plane (0.05 away — inside the projector's half-layer tolerance) and the contour there is the whole cap,
@@ -163,7 +121,7 @@ export const OVERLAP_LEG_FACET = 2
 export const OVERLAP_CAP_FACET = 12
 export const OVERLAP_Z = 10.4
 export function makeOverlapSTL() {
-  return trisToSTL([...boxTris(7, 7, 0, 6, 6, 10.15), ...boxTris(0, 0, 10.15, 20, 20, 3.85)])
+  return trianglesToSTL([...outwardBoxTriangles(7, 7, 0, 6, 6, 10.15), ...outwardBoxTriangles(0, 0, 10.15, 20, 20, 3.85)])
 }
 
 const params = {
@@ -452,7 +410,7 @@ ok(typeTotal(rCube, 8) === 0, `solid cube has no thin-wall (type8=${typeTotal(rC
     const cosine = Math.cos(angle)
     const sine = Math.sin(angle)
     const turn = triangle => triangle.map(([x, y, z]) => [x * cosine - y * sine, x * sine + y * cosine, z])
-    return trisToSTL(boxTris(-10, -thickness / 2, 0, 20, thickness, 4).map(turn))
+    return trianglesToSTL(outwardBoxTriangles(-10, -thickness / 2, 0, 20, thickness, 4).map(turn))
   }
   const midWallLength = (result) => {
     const layer = result.layers[Math.floor(result.layers.length / 2)].paths
@@ -551,10 +509,10 @@ ok(typeTotal(rBridge, 9) > 0 && /^; bridge/m.test(rBridge.gcode), `unsupported o
 ok(typeTotal(rCube, 9) === 0, `solid cube has no bridge (type9=${typeTotal(rCube, 9)})`)
 
 // Backwards compatible: with every stage-5 parameter at its default, the cube result is unchanged (layer count, filament)
-const rCompat = Module.slice(new Uint8Array(cubeBinarySTL), JSON.stringify({
+const rStage5Defaults = Module.slice(new Uint8Array(cubeBinarySTL), JSON.stringify({
   ...params, seam_slope_type: 'none', enable_pressure_advance: false, support_style: 'grid',
 }), () => {})
-ok(rCompat.stats.layers === rCube.stats.layers && Math.abs(rCompat.stats.filament_mm - rCube.stats.filament_mm) < 1e-6,
+ok(rStage5Defaults.stats.layers === rCube.stats.layers && Math.abs(rStage5Defaults.stats.filament_mm - rCube.stats.filament_mm) < 1e-6,
    'stage-5 defaults keep cube result unchanged (backward compatible)')
 
 // ===== New in stage 6 (ironing · wall avoidance · PE-lite · multi-material) =====
@@ -710,9 +668,9 @@ const rMultiMaterialPerExtruder = Module.slice(new Uint8Array(multiMaterialSTL),
   extruder_nozzle_temp: [270, 220], extruder_flow_ratio: [0.95, 0.98],
   extruder_retract_length: [0.8, 0.4], extruder_z_hop: [0.4, 0.2] }), () => {})
 ok(!rMultiMaterialPerExtruder.error, `per-extruder filament slices ok`)
-const startTemp = rMultiMaterialPerExtruder.gcode.match(/^M109 S(\d+)/m)?.[1]
+const startTemperature = rMultiMaterialPerExtruder.gcode.match(/^M109 S(\d+)/m)?.[1]
 const afterT1 = rMultiMaterialPerExtruder.gcode.split(/^T1$/m)[1] ?? ''
-ok(startTemp === '270', `preamble heats to T0's material (M109 S${startTemp}, expected 270)`)
+ok(startTemperature === '270', `preamble heats to T0's material (M109 S${startTemperature}, expected 270)`)
 ok(/^M109 S220$/m.test(afterT1), `switching to T1 heats to its own material (M109 S220)`)
 ok(/^M109 S270$/m.test(afterT1.split(/^T0$/m)[1] ?? ''), `switching back to T0 restores its temperature`)
 ok(Math.abs(rMultiMaterialPerExtruder.stats.filament_mm - rMultiMaterial.stats.filament_mm) > 1e-6,
@@ -731,8 +689,8 @@ if (!rThreeMaterial.error) threeMaterialLayersText = rThreeMaterial.stats.layers
 ok(!rThreeMaterial.error, `three-material slice ok (layers=${threeMaterialLayersText})`)
 ok(/^T2$/m.test(rThreeMaterial.gcode), `third extruder gets its own tool (T2)`)
 ok(/^M109 S240$/m.test(rThreeMaterial.gcode), `third extruder heats to its own material (M109 S240)`)
-const threeMaterialTemps = [...rThreeMaterial.gcode.matchAll(/^M109 S(\d+)$/gm)].map(match => match[1])
-ok(new Set(threeMaterialTemps).size === 3, `all three materials reach the G-code (temps: ${[...new Set(threeMaterialTemps)].join(', ')})`)
+const threeMaterialTemperatures = [...rThreeMaterial.gcode.matchAll(/^M109 S(\d+)$/gm)].map(match => match[1])
+ok(new Set(threeMaterialTemperatures).size === 3, `all three materials reach the G-code (temps: ${[...new Set(threeMaterialTemperatures)].join(', ')})`)
 // The old single-boundary form on the same geometry proves what was broken: T2 never appears.
 const rThreeMaterialSingleSplit = Module.slice(new Uint8Array(threeMaterialSTL), JSON.stringify({ ...params,
   extruder_count: 3, mm_group_split: threeMaterialSplits[0],
@@ -1015,7 +973,7 @@ ok(!/^T\d+$/m.test(rSupport.gcode), `default support emits no tool change at all
 const rSupportFilamentT1 = Module.slice(new Uint8Array(makeTableSTL()), JSON.stringify({ ...supportParams, support_filament: 2, support_interface_filament: 2 }), () => {})
 ok(/^T1$/m.test(rSupportFilamentT1.gcode), `support_filament=2 prints support with T1`)
 ok(/^T0$/m.test(rSupportFilamentT1.gcode), `and switches back to the object tool afterwards`)
-// The default support_style=grid goes through the upstream port, which emits one support body (supTree) — so the
+// The default support_style=grid goes through the upstream port, which emits one support body (supportTree) — so the
 //  interface/base split, and with it a separate interface filament, only exists on the kernel's own grid path.
 const kernelGridSupportParams = { ...supportParams, support_style: 'grid_kernel' }
 const rSupportFilamentSplit = Module.slice(new Uint8Array(makeTableSTL()), JSON.stringify({ ...kernelGridSupportParams, support_filament: 3, support_interface_filament: 2 }), () => {})
@@ -1027,10 +985,10 @@ const rKernelGridSupportNone = Module.slice(new Uint8Array(makeTableSTL()), JSON
 ok(!/^T\d+$/m.test(rKernelGridSupportNone.gcode), `the same path with the default 0 emits no tool change`)
 
 // Backwards compatible: with every stage-6 parameter at its default, the cube result is unchanged
-const rCompat6 = Module.slice(new Uint8Array(cubeBinarySTL), JSON.stringify({
+const rStage6Defaults = Module.slice(new Uint8Array(cubeBinarySTL), JSON.stringify({
   ...params, ironing_type: 'no ironing', reduce_crossing_wall: false, max_volumetric_extrusion_rate_slope: 0, extruder_count: 1,
 }), () => {})
-ok(rCompat6.stats.layers === rCube.stats.layers && Math.abs(rCompat6.stats.filament_mm - rCube.stats.filament_mm) < 1e-6,
+ok(rStage6Defaults.stats.layers === rCube.stats.layers && Math.abs(rStage6Defaults.stats.filament_mm - rCube.stats.filament_mm) < 1e-6,
    'stage-6 defaults keep cube result unchanged (backward compatible)')
 
 // ===== Exact per-layer segmentation (the ported MultiMaterialSegmentation) ==========================================
@@ -1101,7 +1059,7 @@ for (const [label, facet, hitZ, key] of [
 //     (Note for anyone probing this by hand: the face must be wound the way an STL winds it. A bottom face given
 //      counter-clockwise reads as an UPWARD facing one, lands in the top projection, and is then occluded away by
 //      the layer above — which looks exactly like the paint being ignored.)
-const overhang = trisToSTL([...boxTris(7, 7, 0, 6, 6, 10), ...boxTris(0, 0, 10, 20, 20, 4)])
+const overhang = makeTableSTL()
 const overhangShell = (facet, hitZ) => {
   Module.selector_prepare(new Uint8Array(overhang))
   Module.selector_seed_fill(facet, 10, 10, hitZ, 30, 2)
@@ -1386,7 +1344,7 @@ Module.selector_clear()
 //  sensible set of facets — not that the resulting G-code differs, which the section above already covers.
 console.log('\n[paint tools]')
 const toolBox = makeBoxSTL(20, 20, 20)              // kernel coords: x,y in [0,20] (XY as-is), z in [0,20]
-const TOP_FACET = 2                                 // boxFaces order: 2,3 = top (z=20); 6,7 = the x=20 wall
+const TOP_FACET = 2                                 // outwardBoxTriangles order: 2,3 = top (z=20); 6,7 = the x=20 wall
 const WALL_FACET = 6
 const paintedTotal = () => {
   let total = 0
@@ -1558,10 +1516,10 @@ for (const pattern of ['gyroid', 'honeycomb', '3dhoneycomb', 'crosshatch', 'conc
 }
 // (2) Upstream gyroid (TPMS) vs the approximated gyroid: different segment structure
 const rGyroidReal = Module.slice(new Uint8Array(fillCube), JSON.stringify({ ...fillParams, sparse_infill_pattern: 'gyroid' }), () => {})
-const rGyroidApprox = Module.slice(new Uint8Array(fillCube), JSON.stringify({ ...fillParams, sparse_infill_pattern: 'gyroid_approx' }), () => {})
-console.log(`  gyroid real segs=${sparseSegments(rGyroidReal)} vs approx segs=${sparseSegments(rGyroidApprox)}`)
-ok(sparseSegments(rGyroidReal) > 0 && sparseSegments(rGyroidApprox) > 0 && sparseSegments(rGyroidReal) !== sparseSegments(rGyroidApprox),
-   `real gyroid (TPMS) differs from sine-approx (real=${sparseSegments(rGyroidReal)} != approx=${sparseSegments(rGyroidApprox)})`)
+const rGyroidApproximated = Module.slice(new Uint8Array(fillCube), JSON.stringify({ ...fillParams, sparse_infill_pattern: 'gyroid_approx' }), () => {})
+console.log(`  gyroid real segs=${sparseSegments(rGyroidReal)} vs approx segs=${sparseSegments(rGyroidApproximated)}`)
+ok(sparseSegments(rGyroidReal) > 0 && sparseSegments(rGyroidApproximated) > 0 && sparseSegments(rGyroidReal) !== sparseSegments(rGyroidApproximated),
+   `real gyroid (TPMS) differs from sine-approx (real=${sparseSegments(rGyroidReal)} != approx=${sparseSegments(rGyroidApproximated)})`)
 // (3) gyroid TPMS z phase: the sparse geometry differs between two z levels (the surface phase changes with z)
 const gyroidLayers = rGyroidReal.layers.filter(layer => {
   const paths = layer.paths
@@ -1586,7 +1544,7 @@ const highSignature = signatureOf(gyroidLayers[Math.floor(gyroidLayers.length * 
 console.log(`  gyroid TPMS z-phase: loLayer sig=${lowSignature} hiLayer sig=${highSignature}`)
 ok(lowSignature !== highSignature, `real gyroid has TPMS z-phase (geometry varies with z: ${lowSignature} != ${highSignature})`)
 // (4) Backwards compatible: gyroid_approx still uses the old sine approximation (present) and rectilinear's default is unchanged
-ok(sparseSegments(rGyroidApprox) > 0, `gyroid_approx (legacy sine) still available (segs=${sparseSegments(rGyroidApprox)})`)
+ok(sparseSegments(rGyroidApproximated) > 0, `gyroid_approx (legacy sine) still available (segs=${sparseSegments(rGyroidApproximated)})`)
 
 // (5) The real PressureEqualizer port (pe_lite:false): runs without crashing or mangling, preserves total E and keeps the structure.
 //  ⚠ The real PE only adjusts flow in g-code tagged with OrcaSlicer's ;_EXTRUDE_SET_SPEED -> it passes straight through our plain mini-kernel g-code.
@@ -1664,7 +1622,7 @@ console.log('\n[layer count] a layer exists while its middle is below the object
 // The kernel cut each layer at its top and kept only tops below the object height, so a 20 mm cube lost its last layer
 //  and printed 19.8 mm (OrcaSlicer 2.4.2 on the same cube: 100 layers, max_z_height 20.00).
 for (const [height, layers] of [[20, 100], [20.05, 100], [20.09, 100], [20.11, 101], [0.15, 1]]) {
-  const box = trisToSTL(boxTris(-5, -5, 0, 10, 10, height))
+  const box = trianglesToSTL(outwardBoxTriangles(-5, -5, 0, 10, 10, height))
   const result = Module.slice(new Uint8Array(box), JSON.stringify(params), () => {})
   const tops = result.layers.map(layer => layer.z)
   ok(!result.error && tops.length === layers && Math.abs(tops.at(-1) - 0.2 * layers) < 1e-6,
@@ -1678,18 +1636,7 @@ console.log('\n[bed origin]')
 //  bed -185..185: model at 185,186).
 {
   const originBox = makeBoxSTL(20, 20, 2)
-  const centredBox = (() => {   // makeBoxSTL builds x,y in [0,20]; the viewer hands the kernel plate-centred coordinates
-    const out = Buffer.from(originBox)
-    const facetCount = out.readUInt32LE(80)
-    for (let facet = 0, offset = 84; facet < facetCount; facet++, offset += 2) {
-      offset += 12
-      for (let k = 0; k < 3; k++, offset += 12) {
-        out.writeFloatLE(out.readFloatLE(offset) - 10, offset)
-        out.writeFloatLE(out.readFloatLE(offset + 4) - 10, offset + 4)
-      }
-    }
-    return out
-  })()
+  const centredBox = moveSTL(originBox, -10, -10, 0)   // makeBoxSTL builds x,y in [0,20]; the viewer hands the kernel plate-centred coordinates
   const extrusionCentre = (extra) => {
     const result = Module.slice(new Uint8Array(centredBox), JSON.stringify({ ...params, bed_width: 200, bed_depth: 200, skirt_loops: 0, ...extra }), () => {})
     let minX = Infinity
@@ -1715,21 +1662,9 @@ console.log('\n[bed origin]')
 
 console.log('\n[position invariance]')
 const positionBox = makeBoxSTL(20, 20, 20)   // tall enough that most layers are sparse, which is what went missing
-const translateSTL = (stl, dx, dy) => {
-  const out = Buffer.from(stl)
-  const facetCount = out.readUInt32LE(80)
-  for (let facet = 0, offset = 84; facet < facetCount; facet++, offset += 2) {
-    offset += 12
-    for (let k = 0; k < 3; k++, offset += 12) {
-      out.writeFloatLE(out.readFloatLE(offset) + dx, offset)
-      out.writeFloatLE(out.readFloatLE(offset + 4) + dy, offset + 4)
-    }
-  }
-  return out
-}
 const positionParams = { ...params, layer_height: 0.2, infill_density: 0.15, bed_width: 400, bed_depth: 400 }
 const rolesAt = (dx, dy) => {
-  const result = Module.slice(new Uint8Array(translateSTL(positionBox, dx, dy)), JSON.stringify(positionParams), () => {})
+  const result = Module.slice(new Uint8Array(moveSTL(positionBox, dx, dy, 0)), JSON.stringify(positionParams), () => {})
   const counts = { 0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0,10:0,11:0 }
   for (const layer of result.layers) for (let i = 0; i < layer.paths.length; i += 8) counts[ROLE_OF(layer.paths[i+3])]++
   return { counts, filament: result.stats.filament_mm }
@@ -1752,53 +1687,6 @@ for (const [name, dx, dy] of [['as built (x,y in [0,20])', 0, 0], ['off +x', 30,
 //  imported twice printed 1210mm of a 42984mm model). Segments are now oriented by the facet normal and filled
 //  NonZero. What must not change with it: a hole is still a hole, and a shell with every facet flipped still prints.
 console.log('\n[overlapping shells]')
-// Binary STL layout: an 80-byte header, the facet count (uint32), then 50 bytes per facet — a 12-byte normal, three
-//  12-byte vertices of float32 x/y/z, and a 2-byte attribute.
-const STL_COUNT_OFFSET = 80
-const STL_FACETS_OFFSET = 84
-const STL_FACET_BYTES = 50
-const STL_NORMAL_BYTES = 12
-const STL_VERTEX_BYTES = 12
-const STL_FLOAT_BYTES = 4
-const STL_SECOND_VERTEX_OFFSET = STL_NORMAL_BYTES + STL_VERTEX_BYTES
-const STL_THIRD_VERTEX_OFFSET = STL_NORMAL_BYTES + 2 * STL_VERTEX_BYTES
-const facetCountOf = (stl) => stl.readUInt32LE(STL_COUNT_OFFSET)
-const concatSTL = (...buffers) => {
-  const total = buffers.reduce((sum, buffer) => sum + facetCountOf(buffer), 0)
-  const out = Buffer.alloc(STL_FACETS_OFFSET + total * STL_FACET_BYTES)
-  out.writeUInt32LE(total, STL_COUNT_OFFSET)
-  let writeAt = STL_FACETS_OFFSET
-  for (const buffer of buffers) {
-    buffer.copy(out, writeAt, STL_FACETS_OFFSET)
-    writeAt += facetCountOf(buffer) * STL_FACET_BYTES
-  }
-  return out
-}
-const moveSTL = (stl, offsetX, offsetY, offsetZ) => {   // translateSTL above, with a z
-  const out = Buffer.from(stl)
-  for (let facet = 0; facet < facetCountOf(out); facet++) {
-    const facetStart = STL_FACETS_OFFSET + facet * STL_FACET_BYTES
-    for (let vertex = 0; vertex < 3; vertex++) {
-      const vertexStart = facetStart + STL_NORMAL_BYTES + vertex * STL_VERTEX_BYTES
-      const offsets = [offsetX, offsetY, offsetZ]
-      for (let axis = 0; axis < 3; axis++) {
-        const at = vertexStart + axis * STL_FLOAT_BYTES
-        out.writeFloatLE(out.readFloatLE(at) + offsets[axis], at)
-      }
-    }
-  }
-  return out
-}
-const flipSTL = (stl) => {                // swap each facet's 2nd and 3rd vertex: every normal inverted
-  const out = Buffer.from(stl)
-  for (let facet = 0; facet < facetCountOf(out); facet++) {
-    const facetStart = STL_FACETS_OFFSET + facet * STL_FACET_BYTES
-    const secondVertex = Buffer.from(out.subarray(facetStart + STL_SECOND_VERTEX_OFFSET, facetStart + STL_THIRD_VERTEX_OFFSET))
-    out.copy(out, facetStart + STL_SECOND_VERTEX_OFFSET, facetStart + STL_THIRD_VERTEX_OFFSET, facetStart + STL_THIRD_VERTEX_OFFSET + STL_VERTEX_BYTES)
-    secondVertex.copy(out, facetStart + STL_THIRD_VERTEX_OFFSET)
-  }
-  return out
-}
 const SHELL_BOX_MM = 20                    // the test box: [0, 20]^3
 const SHELL_BED_MM = 400                   // room for the offset copies below
 const HALF_OVERLAP_OFFSET_MM = SHELL_BOX_MM / 2
@@ -1822,7 +1710,7 @@ const filamentOf = (stl, sliceParams = shellParams) => {
 }
 const oneBox = filamentOf(shellBox)
 ok(Math.abs(filamentOf(concatSTL(shellBox, shellBox)) - oneBox) < FILAMENT_TOLERANCE_MM, `two coincident boxes print as one (${oneBox.toFixed(1)}mm)`)
-const overlapped = filamentOf(concatSTL(shellBox, translateSTL(shellBox, HALF_OVERLAP_OFFSET_MM, 0)))
+const overlapped = filamentOf(concatSTL(shellBox, moveSTL(shellBox, HALF_OVERLAP_OFFSET_MM, 0, 0)))
 ok(overlapped > oneBox * UNION_MORE_THAN_ONE && overlapped < oneBox * UNION_LESS_THAN_TWO,
    `two boxes overlapping by half print their union (${overlapped.toFixed(1)}mm, one box ${oneBox.toFixed(1)}mm)`)
 ok(Math.abs(filamentOf(flipSTL(shellBox)) - oneBox) < FILAMENT_TOLERANCE_MM, 'a box with every facet flipped still prints the same')
@@ -1845,7 +1733,7 @@ ok(hollowMid[WALL_ROLE] > solidMid[WALL_ROLE],
    'an inward-facing inner shell is still a void (walls around it at mid height, which a solid layer does not have)')
 //  The multi-material path slices each group on its own (slice_mm.cpp) and had the same even-odd fill.
 const multiMaterialShells = (secondGroup) => filamentOf(concatSTL(shellBox, secondGroup), { ...shellParams, extruder_count: 2, mm_group_split: BOX_FACETS })
-const separateBox = translateSTL(shellBox, SEPARATE_OFFSET_MM, 0)
+const separateBox = moveSTL(shellBox, SEPARATE_OFFSET_MM, 0, 0)
 const multiMaterialOne = multiMaterialShells(separateBox)
 const multiMaterialTwo = multiMaterialShells(concatSTL(separateBox, separateBox))
 ok(multiMaterialOne > 0 && Math.abs(multiMaterialTwo - multiMaterialOne) < FILAMENT_TOLERANCE_MM, `a group holding two coincident boxes prints one (${multiMaterialTwo.toFixed(1)}mm vs ${multiMaterialOne.toFixed(1)}mm)`)
@@ -1860,23 +1748,13 @@ Module.selector_prepare(new Uint8Array(moveBox))
 Module.selector_paint_state(2, 10, 10, 20, 10, 10, 60, 8.0, 2, 0)
 const paintedBeforeMove = Module.selector_painted_count_state(2)
 ok(paintedBeforeMove > 0, `a stroke marks facets to carry (${paintedBeforeMove})`)
-const keptAcrossMove = Module.selector_reprepare(new Uint8Array(translateSTL(moveBox, 40, 25)))
+const keptAcrossMove = Module.selector_reprepare(new Uint8Array(moveSTL(moveBox, 40, 25, 0)))
 ok(keptAcrossMove === true, `re-registering the moved mesh reports the marks kept`)
 ok(Module.selector_painted_count_state(2) === paintedBeforeMove,
    `the same facets are still painted after the move (${Module.selector_painted_count_state(2)})`)
 //  And the marks must not follow a mesh they were never on: a different face count is a different model, so the
 //  call says so instead of dropping the paint somewhere arbitrary.
-const twoTriangles = Buffer.alloc(84 + 2 * 50)
-twoTriangles.writeUInt32LE(2, 80)
-for (const [triangleIndex, triangle] of [[0, [[0,0,0],[20,0,0],[0,20,0]]], [1, [[0,0,0],[0,20,0],[0,0,20]]]]) {
-  let offset = 84 + triangleIndex * 50 + 12
-  for (const vertex of triangle) {
-    twoTriangles.writeFloatLE(vertex[0], offset)
-    twoTriangles.writeFloatLE(vertex[1], offset+4)
-    twoTriangles.writeFloatLE(vertex[2], offset+8)
-    offset += 12
-  }
-}
+const twoTriangles = trianglesToSTL([[[0,0,0],[20,0,0],[0,20,0]], [[0,0,0],[0,20,0],[0,0,20]]])
 ok(Module.selector_reprepare(new Uint8Array(twoTriangles)) === false,
    `a mesh with a different face count reports the marks NOT kept`)
 ok(Module.selector_painted_count_state(2) === 0,
@@ -1892,7 +1770,7 @@ console.log('\n[bed: judged on the emitted toolpaths]')
 const bedParams = { ...params, bed_width: 200, bed_depth: 200 }
 const sliceOnBed = (stl, extra) => Module.slice(new Uint8Array(stl), JSON.stringify({ ...bedParams, ...extra }), () => {})
 //  x 80..100 = flush against the +X bed edge. The model fits exactly; anything added around it does not.
-const cubeAtEdge = translateSTL(makeBoxSTL(20, 20, 20), 80, -10)
+const cubeAtEdge = moveSTL(makeBoxSTL(20, 20, 20), 80, -10, 0)
 
 //  Control first: without a skirt or brim nothing reaches past the model, so the new check must not invent an overflow.
 const bedFlush = sliceOnBed(cubeAtEdge, { skirt_loops: 0, brim_width: 0 })
@@ -1912,7 +1790,7 @@ ok(bedBrim.stats.over_bed_x > bedSkirt.stats.over_bed_x,
    `a 5mm brim reaches further out than a 2mm skirt (${bedBrim.stats.over_bed_x.toFixed(2)} > ${bedSkirt.stats.over_bed_x.toFixed(2)})`)
 
 //  The model check keeps its own job: a model genuinely off the bed is still reported AS the model being off.
-const bedModelOff = sliceOnBed(translateSTL(makeBoxSTL(20, 20, 20), 95, -10), { skirt_loops: 0, brim_width: 0 })
+const bedModelOff = sliceOnBed(moveSTL(makeBoxSTL(20, 20, 20), 95, -10, 0), { skirt_loops: 0, brim_width: 0 })
 ok(bedModelOff.stats.over_bed === true && bedModelOff.stats.over_bed_model === true,
    `a model past the bed edge is still reported by the model check`)
 ok(bedModelOff.stats.over_bed_x > 14, `...and now carries how far past it reaches (${bedModelOff.stats.over_bed_x.toFixed(2)}mm)`)
@@ -1940,7 +1818,7 @@ ok(raftLift({ raft_layers: 3, bed_height: 0 }).stats.over_bed === false,
 //  wherever the model stands. The clip window used to be centred on the model rather than the bed — it travelled
 //  with the object, so support beside a model at the edge was clipped against a bed that was not there.
 console.log('\n[bed: tree support is clipped to the BED, not to the model]')
-const tableAtEdge = translateSTL(makeTableSTL(), 80, -10)     // cap x 80..100 — flush against the +X edge
+const tableAtEdge = moveSTL(makeTableSTL(), 80, -10, 0)     // cap x 80..100 — flush against the +X edge
 const treeNoSkirt = { enable_support: true, support_style: 'tree', support_threshold_angle: 30,
                       support_top_z_distance: 0.2, support_xy_distance: 0.35, skirt_loops: 0, brim_width: 0 }
 const bedTreeEdge = sliceOnBed(tableAtEdge, treeNoSkirt)
