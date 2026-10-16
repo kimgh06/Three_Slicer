@@ -5,30 +5,9 @@
 // (get_triangle_as_string, slicer/src/libslic3r/Model.cpp:3542: four bits per digit, most significant nibble first.)
 import createSlicer from '../../engine/src/slicer_core.js'
 import { decodePaintStates, splitPaintByObject, mergedPaint, paintTriangles } from '../../../viewer-package/src/core/paint_store.js'
+import { boxTrianglesWithInwardBottom, trianglesToSTL } from './stl_fixtures.mjs'
 
-function boxTris(originX, originY, originZ, sizeX, sizeY, sizeZ) {
-  const corners = [[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex => [vertex[0]+originX, vertex[1]+originY, vertex[2]+originZ])
-  const quad = (first,second,third,fourth) => [[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return [...quad(0,1,2,3), ...quad(4,5,6,7), ...quad(0,1,5,4), ...quad(1,2,6,5), ...quad(2,3,7,6), ...quad(3,0,4,7)]
-}
-function trisToSTL(tris) {
-  const buffer = Buffer.alloc(84 + tris.length*50)
-  buffer.writeUInt32LE(tris.length, 80)
-  let offset = 84
-  for (const triangle of tris) {
-    offset += 12
-    for (const point of triangle) {
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset += 12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset += 2
-  }
-  return buffer
-}
-const cubeSTL = trisToSTL(boxTris(0, 0, 0, 20, 20, 20))   // 12 facets
+const cubeSTL = trianglesToSTL(boxTrianglesWithInwardBottom(0, 0, 0, 20, 20, 20))   // 12 facets
 
 const HEX = { 1: '4', 2: '8', 3: '0C', 4: '1C', 5: '2C' }   // state -> unsplit-facet hex
 
@@ -132,7 +111,7 @@ console.log('\n[export survives a move]')
 prepare()
 importPaint([1, 4], [HEX[2], HEX[3]])
 const beforeMove = exportPaint()
-const movedSTL = trisToSTL(boxTris(30, 15, 0, 20, 20, 20))   // same topology, elsewhere
+const movedSTL = trianglesToSTL(boxTrianglesWithInwardBottom(30, 15, 0, 20, 20, 20))   // same topology, elsewhere
 ok(slicer.selector_reprepare(new Uint8Array(movedSTL)) === true, 'the move keeps the paint')
 ok(JSON.stringify(exportPaint().pairs) === JSON.stringify(beforeMove.pairs), 'and the export is unchanged by it')
 
@@ -209,7 +188,7 @@ console.log('\n[a reused kernel: leftover paint, and clearing it]')
 {
   const CUBE_FACETS = 12, STL_COUNT_OFFSET = 80, STL_FACETS_OFFSET = 84, STL_FACET_BYTES = 50
   const SECOND_CUBE_OFFSET_MM = 40
-  const secondCube = trisToSTL(boxTris(SECOND_CUBE_OFFSET_MM, 0, 0, 20, 20, 20))
+  const secondCube = trianglesToSTL(boxTrianglesWithInwardBottom(SECOND_CUBE_OFFSET_MM, 0, 0, 20, 20, 20))
   const plateY = Buffer.alloc(STL_FACETS_OFFSET + 2 * CUBE_FACETS * STL_FACET_BYTES)
   plateY.writeUInt32LE(2 * CUBE_FACETS, STL_COUNT_OFFSET)
   cubeSTL.copy(plateY, STL_FACETS_OFFSET, STL_FACETS_OFFSET)

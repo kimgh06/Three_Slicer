@@ -2,30 +2,9 @@
 //  enforcer (manual mode, auto off): baseline 0 support -> paint enforcer on overhang -> support appears.
 //  blocker  (auto mode): full support -> paint blocker on part of overhang -> that region suppressed, rest kept.
 import createSlicer from '../../engine/src/slicer_core.js'
-function boxTris(originX,originY,originZ,sizeX,sizeY,sizeZ){
-  const corners=[[0,0,0],[sizeX,0,0],[sizeX,sizeY,0],[0,sizeY,0],[0,0,sizeZ],[sizeX,0,sizeZ],[sizeX,sizeY,sizeZ],[0,sizeY,sizeZ]].map(vertex=>[vertex[0]+originX,vertex[1]+originY,vertex[2]+originZ])
-  const quad=(first,second,third,fourth)=>[[corners[first],corners[second],corners[third]],[corners[first],corners[third],corners[fourth]]]
-  return[...quad(0,1,2,3),...quad(4,5,6,7),...quad(0,1,5,4),...quad(1,2,6,5),...quad(2,3,7,6),...quad(3,0,4,7)]
-}
-function trisToSTL(tris){
-  const buffer=Buffer.alloc(84+tris.length*50)
-  buffer.writeUInt32LE(tris.length,80)
-  let offset=84
-  for(const triangle of tris){
-    offset+=12
-    for(const point of triangle){
-      buffer.writeFloatLE(point[0],offset)
-      buffer.writeFloatLE(point[1],offset+4)
-      buffer.writeFloatLE(point[2],offset+8)
-      offset+=12
-    }
-    buffer.writeUInt16LE(0,offset)
-    offset+=2
-  }
-  return buffer
-}
+import { boxTrianglesWithInwardBottom, tableTriangles, trianglesToSTL } from './stl_fixtures.mjs'
 // overhang table: leg (tris 0..11) + cap (12..23). Cap underside overhang = tris 12,13 (z=10). Kernel coords: XY-centered, z-min=0.
-const tableSTL=trisToSTL([...boxTris(7,7,0,6,6,10), ...boxTris(0,0,10,20,20,4)])
+const tableSTL=trianglesToSTL(tableTriangles(boxTrianglesWithInwardBottom))
 const base={layer_height:0.2,first_layer_height:0.2,line_width:0.42,wall_loops:2,infill_density:0.15,nozzle_diameter:0.4,filament_diameter:1.75,flow_ratio:1.0,print_speed:60,first_layer_speed:20,travel_speed:150,nozzle_temp:210,bed_temp:60,top_shell_layers:4,bottom_shell_layers:3,skirt_loops:1,skirt_distance:2,brim_width:0,retract_length:0.8,retract_speed:30,z_hop:0.4,infill_angle:45,
   enable_support:true,support_threshold_angle:30,support_top_z_distance:0.2,support_xy_distance:0.35,support_interface_top_layers:2}
 // Stage 33: the support-quantity metric was corrected from "segment count" to "real path length (mm)".
@@ -59,9 +38,9 @@ for (const style of ['tree','grid']) {
   slicer.selector_prepare(new Uint8Array(tableSTL))
   slicer.selector_paint(12, 0,0,10, 0,0,-40, 20.0, true)   // enforcer over the whole cap underside
   const enforcerFacets = slicer.selector_painted_count(true)
-  const manualEnf = type5(slice({...base, support_style:style, support_auto:false}))
-  console.log(`  enforcer facets=${enforcerFacets}  manual: base=${manualBase} +enforcer=${manualEnf}`)
-  ok(manualBase===0 && manualEnf>0, `enforcer forces support in manual mode (0 -> ${manualEnf})`)
+  const manualWithEnforcer = type5(slice({...base, support_style:style, support_auto:false}))
+  console.log(`  enforcer facets=${enforcerFacets}  manual: base=${manualBase} +enforcer=${manualWithEnforcer}`)
+  ok(manualBase===0 && manualWithEnforcer>0, `enforcer forces support in manual mode (0 -> ${manualWithEnforcer})`)
 
   // --- BLOCKER (auto mode), partial on one quadrant of the overhang ---
   slicer.selector_prepare(new Uint8Array(tableSTL))
@@ -70,9 +49,9 @@ for (const style of ['tree','grid']) {
   slicer.selector_prepare(new Uint8Array(tableSTL))
   slicer.selector_paint(12, 6,6,10, 6,6,-40, 7.0, false)   // blocker on one corner region
   const blockerFacets = slicer.selector_painted_count(false)
-  const autoBlk = type5(slice({...base, support_style:style, support_auto:true}))
-  console.log(`  blocker facets=${blockerFacets}  auto: base=${autoBase} +blocker=${autoBlk}`)
-  ok(blockerFacets>0 && autoBlk < autoBase && autoBlk > 0, `blocker suppresses part, rest kept (${autoBase} -> ${autoBlk})`)
+  const autoWithBlocker = type5(slice({...base, support_style:style, support_auto:true}))
+  console.log(`  blocker facets=${blockerFacets}  auto: base=${autoBase} +blocker=${autoWithBlocker}`)
+  ok(blockerFacets>0 && autoWithBlocker < autoBase && autoWithBlocker > 0, `blocker suppresses part, rest kept (${autoBase} -> ${autoWithBlocker})`)
 
   // --- determinism (enforcer case) ---
   slicer.selector_prepare(new Uint8Array(tableSTL))
