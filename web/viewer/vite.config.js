@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { resolve } from 'node:path'
+import { resolve, join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 
 // `vite preview` is the production server here (Cloudflare reverse-proxies onto it), so two things it does by
 // default have to be corrected in it rather than in a host config that does not exist:
@@ -30,6 +31,22 @@ const routeHtmlMiddleware = (req, res, next) => {
   next()
 }
 
+// The SPA fallback answered every unknown path with the landing page and a 200, which Google files as a soft 404
+// and a duplicate of /. A path that is neither a route entry nor something in the build (a file, or a folder such
+// as public/demos/<name>/) now gets the same index.html with a 404, so the router still renders its own not-found
+// view (and /testbed, a router-only route, still works in a browser) while crawlers see the status.
+// sirv writes its own 200, so the body is sent here rather than by rewriting req.url.
+const DIST_DIR = resolve(__dirname, 'dist')
+
+const notFoundMiddleware = (req, res, next) => {
+  const [path] = (req.url || '/').split('?')
+  const isRoute = path === '/' || ROUTE_HTML[path.replace(/\/$/, '')]
+  if (isRoute || existsSync(join(DIST_DIR, path))) return next()
+  res.statusCode = 404
+  res.setHeader('content-type', 'text/html')
+  res.end(readFileSync(join(DIST_DIR, 'index.html')))
+}
+
 // One line per crawler request, read with `make logs`. Googlebot sends no Referer, so the user agent is the signal;
 // behind Cloudflare the socket peer is an edge node and the client address is CF-Connecting-IP.
 // ponytail: user-agent match only, so a spoofed "Googlebot" is logged too — check the IP's reverse DNS
@@ -52,6 +69,7 @@ const serveRouteHtml = {
   configureServer(server) { server.middlewares.use(routeHtmlMiddleware) },
   configurePreviewServer(server) {
     server.middlewares.use(crawlerLogMiddleware)
+    server.middlewares.use(notFoundMiddleware)
     server.middlewares.use(routeHtmlMiddleware)
   },
 }

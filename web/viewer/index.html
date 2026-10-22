@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Online 3D Printing Slicer in Your Browser — STL to G-code | Three Slicer</title>
-    <meta name="description" content="Free online slicer for 3D printing. Convert STL, OBJ, 3MF and STEP models to G-code in your browser — an OrcaSlicer WebAssembly kernel, no install and no upload." />
+    <title>Web Slicer for 3D Printing — Online STL to G-code | Three Slicer</title>
+    <meta name="description" content="Free web slicer for 3D printing. Convert STL, OBJ, 3MF and STEP models to G-code in your browser — an OrcaSlicer WebAssembly kernel, no install and no upload." />
     <link rel="canonical" href="https://slicer.kimgh06.com/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://img.shields.io" />
@@ -12,7 +12,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Three Slicer" />
     <meta property="og:url" content="https://slicer.kimgh06.com/" />
-    <meta property="og:title" content="Three Slicer — Online STL to G-code Slicer in the Browser" />
+    <meta property="og:title" content="Three Slicer — Web Slicer for 3D Printing, STL to G-code in the Browser" />
     <meta property="og:description" content="Slice STL, OBJ, 3MF and STEP models to G-code entirely in your browser with WebAssembly. No install, no upload." />
     <meta property="og:image" content="https://slicer.kimgh06.com/og-cover.png" />
     <meta property="og:image:width" content="1200" />
@@ -31,13 +31,13 @@
           "@id": "https://slicer.kimgh06.com/#website",
           "url": "https://slicer.kimgh06.com/",
           "name": "Three Slicer",
-          "description": "An online 3D printing slicer that runs entirely in the browser."
+          "description": "A web slicer for 3D printing that runs entirely in the browser."
         },
         {
           "@type": "SoftwareApplication",
           "@id": "https://slicer.kimgh06.com/#app",
           "name": "Three Slicer",
-          "alternateName": "Web Three Slicer",
+          "alternateName": ["Three Slicer Web Slicer", "Web Three Slicer"],
           "url": "https://slicer.kimgh06.com/",
           "applicationCategory": "DesignApplication",
           "applicationSubCategory": "3D printing slicer",
@@ -48,7 +48,7 @@
           "license": "https://www.gnu.org/licenses/agpl-3.0.html",
           "softwareHelp": "https://github.com/kimgh06/Three_Slicer",
           "screenshot": "https://slicer.kimgh06.com/og-cover.png",
-          "description": "A browser-based 3D printing slicer built on a WebAssembly port of the OrcaSlicer kernel. It converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code locally, without uploading anything to a server. Resin printers are supported as a second technology, sliced to an .sl1 archive through PrusaSlicer's ported support and pad chain.",
+          "description": "A web slicer for 3D printing built on a WebAssembly port of the OrcaSlicer kernel. It converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code locally, without uploading anything to a server. Resin printers are supported as a second technology, sliced to an .sl1 archive through PrusaSlicer's ported support and pad chain.",
           "featureList": [
             "STL, OBJ, 3MF, AMF, PLY and STEP model import",
             "3MF project import with plate layout, settings and painting",
@@ -136,7 +136,7 @@
          does not run the 1.7MB bundle does, and without it the raw HTML carries 54 words and no links.
          Keep it in sync with the JSON-LD above: contradicting the structured data is worse than omitting it. -->
     <div id="root">
-      <h1>Three Slicer — an online 3D printing slicer that runs in your browser</h1>
+      <h1>Three Slicer — a web slicer for 3D printing that runs in your browser</h1>
       <p>
         Three Slicer converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code directly in the
         browser, using a WebAssembly build of the OrcaSlicer kernel. There is nothing to install and

@@ -217,8 +217,8 @@ export default function Landing() {
       <header className="lp-head">
         <div className="lp-kicker">three-slicer · Browser/WASM 3D printing slicer</div>
         {/* Googlebot indexes this rendered page, not index.html's pre-render fallback (createRoot clears it),
-            so the heading and the opening copy say what the <title> and the JSON-LD say: an online slicer. */}
-        <h1>Three Slicer — an online 3D printing slicer that runs in your browser</h1>
+            so the heading and the opening copy say what the <title> and the JSON-LD say: a web slicer. */}
+        <h1>Three Slicer — a web slicer for 3D printing that runs in your browser</h1>
         <p className="lp-lede">Slice STL to G-code right in your browser — nothing installs, nothing uploads.</p>
         <p>Three Slicer converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code directly in the browser, using
           a WebAssembly build of the OrcaSlicer kernel. There is nothing to install and no account, and nothing is
