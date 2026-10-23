@@ -1,7 +1,7 @@
 // The two packages ship as a locked pair, as a check rather than a convention.
 //   Run: node viewer-package/tests/test_version_lockstep.mjs
 //
-// three-slicer re-exports three-slicer-viewer (viewer/toolpath, viewer/gcode). If the dependency were a
+// three-slicer imports three-slicer-viewer at runtime (its settings, toggle and paint subpaths). If the dependency were a
 // RANGE, `three-slicer@0.3.0` would happily resolve a later `0.3.7` of this package, and the first place that
 // combination ever got assembled would be a user's node_modules — a pair nobody built and nobody tested.
 //
@@ -11,7 +11,7 @@
 // The cost of lockstep is that a kernel-only release still bumps this package. That is cosmetic churn traded
 // against a correctness failure, which is the right way round.
 import assert from 'node:assert'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -85,17 +85,20 @@ console.log('\n[lockstep: the licenses are what the split assumed]')
 check(`${permissive.name} is permissively licensed`, permissive.license === 'MIT', permissive.license)
 check(`${agpl.name} is still AGPL`, /^AGPL-3\.0/.test(agpl.license || ''), agpl.license)
 
-console.log('\n[lockstep: every re-exported subpath exists on the other side]')
-// three-slicer/viewer/toolpath and /viewer/gcode are entry points consumers already depend on. They now
-//  resolve THROUGH this package, so a rename here breaks them silently — the AGPL build would still emit a
-//  shim, and the shim would export nothing.
-const REEXPORTED = { './viewer': '.', './viewer/toolpath': './toolpath', './viewer/gcode': './gcode', './viewer/loaders': './loaders' }
-for (const [agplPathKey, permissiveKey] of Object.entries(REEXPORTED)) {
-  check(`${agpl.name} publishes ${agplPathKey}`, !!agpl.exports?.[agplPathKey])
+console.log('\n[lockstep: every subpath the AGPL package imports exists on this side]')
+// three-slicer/settings, /toggle and the slicer worker import this package by subpath, so a rename here breaks
+//  them silently until a consumer loads one. The list is read from the importing sources, not typed out.
+const agplSrc = join(here, '..', 'packages', 'engine', 'src')
+const imported = new Set()
+for (const name of readdirSync(agplSrc).filter(f => f.endsWith('.js')))
+  for (const [, sub] of readFileSync(join(agplSrc, name), 'utf8').matchAll(/from 'three-slicer-viewer(\/[\w-]+)?'/g))
+    imported.add('.' + (sub ?? ''))
+check(`${agpl.name} imports ${permissive.name} somewhere`, imported.size > 0)
+for (const permissiveKey of imported) {
   check(`${permissive.name} publishes ${permissiveKey}`, !!permissive.exports?.[permissiveKey])
   const target = permissive.exports?.[permissiveKey]
   const file = typeof target === 'string' ? target : target?.default
-  if (file) check(`${permissiveKey} resolves to a file that the build produces (${file})`,
+  if (file) check(`${permissiveKey} resolves to a file that exists (${file})`,
     existsSync(join(here, file)), 'run `npm run build -w three-slicer-viewer` first')
 }
 
