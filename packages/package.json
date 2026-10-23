@@ -33,26 +33,6 @@
       "types": "./types/wasm.d.ts",
       "default": "./engine/src/slicer_core.mt.js"
     },
-    "./viewer": {
-      "types": "./types/viewer.d.ts",
-      "default": "./viewer/dist/Viewport.js"
-    },
-    "./viewer/toolpath": {
-      "types": "./types/viewer-toolpath.d.ts",
-      "default": "./viewer/dist/toolpath_reexport.js"
-    },
-    "./viewer/loaders": {
-      "types": "./types/viewer-loaders.d.ts",
-      "default": "./viewer/dist/loaders_reexport.js"
-    },
-    "./viewer/gcode": {
-      "types": "./types/viewer-gcode.d.ts",
-      "default": "./viewer/dist/gcode_reexport.js"
-    },
-    "./components": {
-      "types": "./types/components.d.ts",
-      "default": "./components/dist/SettingsPanel.js"
-    },
     "./data": {
       "types": "./types/data.d.ts",
       "default": "./engine/src/data.js"
@@ -65,24 +45,8 @@
   },
   "sideEffects": false,
   "scripts": {
-    "build": "node types/gen_settings_types.mjs && node types/gen_kernel_params.mjs && vite build --config components/vite.config.js && vite build --config viewer/vite.config.js",
+    "build": "node types/gen_settings_types.mjs && node types/gen_kernel_params.mjs",
     "check": "bash pack_check.sh"
-  },
-  "peerDependencies": {
-    "react": ">=18",
-    "react-dom": ">=18",
-    "three": "^0.160.0"
-  },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    },
-    "three": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "typescript": "^5.6.0",
@@ -93,8 +57,6 @@
     "types",
     "!**/tests/**",
     "!types/gen_*.mjs",
-    "components/dist",
-    "viewer/dist",
     "data",
     "data/ui-tree-keys.json",
     "data/config-schema-lean.json",
