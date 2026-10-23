@@ -140,15 +140,15 @@ cat > src/check.ts <<'EOF'
 import { createSlicer, type SlicerSettings } from 'three-slicer'
 import { deriveKernelParams, settingScalar, filamentPresets, type FilamentPreset } from 'three-slicer/settings'
 import { makeCfg, disabledKeys } from 'three-slicer/toggle'
-import { buildSegmentData, computeColors, VIEW_TYPES } from 'three-slicer/viewer/toolpath'
-import { loadModel, SUPPORTED_EXT, splitConnectedComponents } from 'three-slicer/viewer/loaders'
+import { buildSegmentData, computeColors, VIEW_TYPES } from 'three-slicer-viewer/toolpath'
+import { loadModel, SUPPORTED_EXT, splitConnectedComponents } from 'three-slicer-viewer/loaders'
 import { schema, uiTree } from 'three-slicer/data'
 import rawSchema from 'three-slicer/data/config-schema.json'
 // Everything below this line is here because it is USED IN THE DOCUMENTATION. A README that shows an API the
-//  declarations do not carry compiles for nobody, and that is exactly how `only` (documented in viewer.d.ts as the
-//  way to build the motion panel) and the five printer helpers reached a release undeclared: the type gate never
-//  imported them. Adding a documented example here is cheaper than discovering it from a consumer's bug report.
-import type { SettingsPanelProps } from 'three-slicer/components'
+//  declarations do not carry compiles for nobody, and that is exactly how `only` (documented in three-slicer-viewer's
+//  viewer.d.ts as the way to build the motion panel) and the five printer helpers reached a release undeclared: the
+//  type gate never imported them. Adding a documented example here is cheaper than discovering it from a consumer's bug report.
+import type { SettingsPanelProps } from 'three-slicer-viewer/components'
 import {
   printerSettings, printersByVendor, printerKeys, printerDefaultPreset, machineLimitKeys,
   normalizeProjectSettings, serializeProjectSettings, processPresets,
@@ -182,7 +182,7 @@ export async function main(buf: ArrayBuffer) {
   const material: string = materials[0].type
 
   // --- the documented examples, type-checked ---------------------------------
-  // The motion-limits panel exactly as types/viewer.d.ts tells a host to build it.
+  // The motion-limits panel exactly as three-slicer-viewer's viewer.d.ts tells a host to build it.
   const motionPanel: SettingsPanelProps = {
     settings: s, setSettings: () => {}, embedded: true,
     only: { builder: 'TabPrinter::build_kinematics_page' },
@@ -256,16 +256,23 @@ EOF
 cat > src/main.jsx <<'EOF'
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import Viewport from 'three-slicer/viewer'
-import SettingsPanel from 'three-slicer/components'
+// The host composition the README documents: the permissive viewer and panel, with the kernel worker, the
+//  bundled catalog and upstream's schema plugged in.
+import Viewport, { useSlicer } from 'three-slicer-viewer'
+import SettingsPanel from 'three-slicer-viewer/components'
+import { bundledCatalog } from 'three-slicer/settings'
+import { schema, uiTree } from 'three-slicer/data'
+import { makeCfg, disabledKeys } from 'three-slicer/toggle'
 // The no-argument client, which is the path a first-time consumer takes: it must reach dist as a real worker
 //  chunk whose kernel imports were emitted too (see the dist integrity check below).
-import { createSlicerClient } from 'three-slicer/client'
+import { createSlicerClient, makeSlicerWorker } from 'three-slicer/client'
+const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })
+const toggle = { makeCfg, disabledKeys }
 function App() {
   const [settings, setSettings] = useState({})
   return (<><button onClick={() => createSlicerClient().warmup()}>warm</button>
-    <Viewport settings={settings} setSettings={setSettings} />
-    <SettingsPanel settings={settings} setSettings={setSettings} /></>)
+    <Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings} />
+    <SettingsPanel schema={schema} uiTree={uiTree} toggle={toggle} settings={settings} setSettings={setSettings} /></>)
 }
 createRoot(document.getElementById('root')).render(<App />)
 EOF
@@ -320,15 +327,30 @@ EOF
 cat > pages/_app.jsx <<'EOF'
 export default function App({ Component, pageProps }) { return <Component {...pageProps} /> }
 EOF
+mkdir -p slicer
+cat > slicer/Slicer.jsx <<'EOF'
+// The host composition, kept out of pages/ so the page can load it client-side only.
+import React from 'react'
+import Viewport, { useSlicer } from 'three-slicer-viewer'
+import SettingsPanel from 'three-slicer-viewer/components'
+import { makeSlicerWorker } from 'three-slicer/client'
+import { bundledCatalog } from 'three-slicer/settings'
+import { schema, uiTree } from 'three-slicer/data'
+import { makeCfg, disabledKeys } from 'three-slicer/toggle'
+const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })
+const toggle = { makeCfg, disabledKeys }
+export default function Slicer({ settings, setSettings }) {
+  return (<><Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings} />
+    <SettingsPanel schema={schema} uiTree={uiTree} toggle={toggle} settings={settings} setSettings={setSettings} /></>)
+}
+EOF
 cat > pages/index.jsx <<'EOF'
 import dynamic from 'next/dynamic'
 import React, { useState } from 'react'
-const Viewport = dynamic(() => import('three-slicer/viewer'), { ssr: false })
-const SettingsPanel = dynamic(() => import('three-slicer/components'), { ssr: false })
+const Slicer = dynamic(() => import('../slicer/Slicer.jsx'), { ssr: false })
 export default function Home() {
   const [settings, setSettings] = useState({})
-  return (<><Viewport settings={settings} setSettings={setSettings} />
-    <SettingsPanel settings={settings} setSettings={setSettings} /></>)
+  return <Slicer settings={settings} setSettings={setSettings} />
 }
 EOF
 npm i --no-audit --no-fund next@14 react@18 react-dom@18 three@0.160.1 "${T[@]}" >/dev/null
