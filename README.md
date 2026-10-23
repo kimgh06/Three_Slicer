@@ -22,7 +22,6 @@ Two packages, released as a locked pair (same version; `three-slicer` pins `thre
 |---|---|---|
 | `three-slicer` | AGPL | WASM slicing kernel SDK — FFF batch/streaming slice, SLA slice, worker protocol, settings mapping. Headless-capable (Node or browser), **no three.js dependency** |
 | `three-slicer/data` | AGPL | Extracted OrcaSlicer metadata: config schema, UI tree, toggle rules, invalidation map, and the printer/process/filament/resin preset catalogs |
-| `three-slicer/viewer`, `three-slicer/components` | AGPL | The viewer and settings panel below with the kernel and the vendor presets plugged in — thin wrappers over `three-slicer-viewer` |
 | `three-slicer-viewer` | MIT | React `<Viewport/>` — three.js scene, model import, GPU volumetric toolpath preview, G-code parsing, SLA preview and `.sl1` import/export, Shadow DOM isolated. Displays and exports; slicing is a prop |
 | `three-slicer-viewer/components` | MIT | React `<SettingsPanel/>` — schema-driven settings form, props-only, Shadow DOM isolated |
 
@@ -30,14 +29,21 @@ Quick taste (slicer included — AGPL):
 
 ```jsx
 import { useState } from 'react'
-import Viewport from 'three-slicer/viewer'
-import SettingsPanel from 'three-slicer/components'
+import Viewport, { useSlicer } from 'three-slicer-viewer'
+import SettingsPanel from 'three-slicer-viewer/components'
+import { makeSlicerWorker } from 'three-slicer/client'          // the WASM kernel's worker
+import { bundledCatalog } from 'three-slicer/settings'          // OrcaSlicer's vendor presets
+import { schema, uiTree } from 'three-slicer/data'              // upstream's labels and tab tree
+import { makeCfg, disabledKeys } from 'three-slicer/toggle'     // upstream's enable/disable rules
+
+const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })   // module-level: it is a hook
+const toggle = { makeCfg, disabledKeys }
 
 function App() {
   const [settings, setSettings] = useState({})       // OrcaSlicer schema keys, sparse
   return (<>
-    <Viewport settings={settings} setSettings={setSettings} />
-    <SettingsPanel settings={settings} setSettings={setSettings} />
+    <Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings} />
+    <SettingsPanel schema={schema} uiTree={uiTree} toggle={toggle} settings={settings} setSettings={setSettings} />
   </>)
 }
 ```

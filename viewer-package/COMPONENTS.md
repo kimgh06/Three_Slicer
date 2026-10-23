@@ -1,7 +1,8 @@
 # three-slicer-viewer/components — the settings form
 
-(Published as `three-slicer-viewer/components`, MIT. `three-slicer/components` is the same component with upstream's
-schema, tab tree and toggle rules plugged in; everything below applies to both.)
+(Published as `three-slicer-viewer/components`, MIT. Upstream's labels, tab tree and toggle rules come from
+`three-slicer` through the `schema`, `uiTree` and `toggle` props, as below; without them every field is labelled by
+its key and nothing is disabled.)
 
 Reusable React components for the browser slicer. Props-driven — no global state, no React context, no router coupling (proven standalone by the tarball consumer gate `packages/pack_check.sh`).
 
@@ -12,16 +13,20 @@ An OrcaSlicer-style settings form generated from `three-slicer/data` (schema + U
 The tab set follows the printer profile's technology: a settings map whose `printer_technology` says SLA swaps the FFF tabs for the SLA ones (print/material/printer builders carry the technology in their upstream builder name, which is what the filter reads). No prop needed — change the profile in the shared settings map and the panel follows.
 
 ```bash
-npm i three-slicer react react-dom     # react is an OPTIONAL peer — npm does not install it for you
+npm i three-slicer three-slicer-viewer react react-dom   # same version for the two; react is an OPTIONAL peer — npm does not install it for you
 ```
 
 ```jsx
 import { useState } from 'react'
-import SettingsPanel from 'three-slicer/components'
+import SettingsPanel from 'three-slicer-viewer/components'
+import { schema, uiTree } from 'three-slicer/data'                 // upstream's labels, tooltips and tab tree (AGPL)
+import { makeCfg, disabledKeys } from 'three-slicer/toggle'         // the evaluator bound to upstream's rules (AGPL)
+
+const toggle = { makeCfg, disabledKeys }
 
 function App() {
   const [settings, setSettings] = useState({})   // sparse map: edited keys only; missing = schema default
-  return <SettingsPanel settings={settings} setSettings={setSettings} />
+  return <SettingsPanel schema={schema} uiTree={uiTree} toggle={toggle} settings={settings} setSettings={setSettings} />
 }
 ```
 
@@ -36,11 +41,11 @@ Props:
 | `customWidgets` | `{ [schemaKey]: Component }` (optional) | Replace schema-driven widgets per key (e.g. `{ printable_area: MyBedEditor }`) |
 | `only` | `{ builder, page? }` (optional) | Pins the panel to one builder/page and drops the search/page/mode chrome — how `<Viewport/>`'s `motionPanel` slot is meant to be filled |
 
-The same `settings` object feeds `deriveKernelParams()` in `three-slicer` and the `<Viewport/>` in `three-slicer/viewer` — one state connects all three.
+The same `settings` object feeds `deriveKernelParams()` in `three-slicer` and `three-slicer-viewer`'s `<Viewport/>` — one state connects all three.
 
 Ships transpiled ESM (`dist/`); react is an optional peer dependency. The panel arrives fully styled: its stylesheet is inlined into the bundle and injected into a Shadow DOM root, so host CSS neither styles it nor collides with it.
 
-The 3D viewport lives in its own package: `three-slicer/viewer`.
+The 3D viewport is the package's main entry, `three-slicer-viewer` ([VIEWER.md](VIEWER.md)).
 
 ## License
 
