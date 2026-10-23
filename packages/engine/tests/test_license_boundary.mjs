@@ -1,5 +1,5 @@
 // The license boundary, as a check rather than a document.
-//   Run: node packages/viewer/test_license_boundary.mjs
+//   Run: node packages/engine/tests/test_license_boundary.mjs
 //
 // packages/PROVENANCE.md decides which files in this viewer are derived from upstream (OrcaSlicer /
 // PrusaSlicer, AGPL) and which are our own. That verdict is what a permissive relicense of the viewer rests
@@ -24,8 +24,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const here = join(dirname(fileURLToPath(import.meta.url)), '..')   // the package root, one above tests/
-// The viewer's source lives in the permissive package now; what is left beside this test is the AGPL residue
-//  (the slicing hook, the kernel worker factory, the bundled catalog and three re-export shims).
+// The viewer's source lives in the permissive package; this package keeps only the kernel side of it (the
+//  kernel worker factory and the bundled catalog), and a host binds the two.
 const src = join(here, '..', '..', 'viewer-package', 'src')
 
 /** Derived from upstream — cannot carry a license other than AGPL-3.0-or-later without being replaced.
