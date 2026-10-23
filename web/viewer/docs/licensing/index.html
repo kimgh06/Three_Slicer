@@ -130,9 +130,7 @@ const slicer = (deps) =&gt; useSlicer({ ...deps, makeWorker: makeSlicerWorker })
 
 &lt;Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings} /&gt;</code></pre>
       <p>
-        <code>three-slicer/viewer</code> is the same composition prepackaged:
-        <code>import Viewport from 'three-slicer/viewer'</code> gives the viewer with the kernel and the
-        presets already plugged in. Either way, the application now contains AGPL code. If you distribute
+        With these imports the application contains AGPL code. If you distribute
         it, or offer it to users over a network — a website that slices in the browser does both — its
         complete source has to be available to those users under the AGPL.
       </p>
