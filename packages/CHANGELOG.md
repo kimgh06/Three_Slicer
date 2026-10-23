@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0 — unreleased
+
+### Removed (breaking)
+
+- `three-slicer/viewer`, `three-slicer/viewer/toolpath`, `three-slicer/viewer/loaders`, `three-slicer/viewer/gcode`
+  and `three-slicer/components`. They were wrappers over `three-slicer-viewer` kept for the pre-split import paths.
+  `three-slicer` now contains no React code and no longer declares `react`, `react-dom` or `three` as peers.
+  Migration: import the components from `three-slicer-viewer` (list it in your own dependencies at the same
+  version as `three-slicer`) and pass the kernel and upstream's data as props:
+
+  ```jsx
+  import Viewport, { useSlicer } from 'three-slicer-viewer'
+  import SettingsPanel from 'three-slicer-viewer/components'
+  import { makeSlicerWorker } from 'three-slicer/client'
+  import { bundledCatalog } from 'three-slicer/settings'
+  import { schema, uiTree } from 'three-slicer/data'
+  import { makeCfg, disabledKeys } from 'three-slicer/toggle'
+
+  const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })   // module-level: it is a hook
+  const toggle = { makeCfg, disabledKeys }
+
+  <Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings} />
+  <SettingsPanel schema={schema} uiTree={uiTree} toggle={toggle} settings={settings} setSettings={setSettings} />
+  ```
+
+  The subpaths `/viewer/toolpath`, `/viewer/loaders` and `/viewer/gcode` are `three-slicer-viewer/toolpath`,
+  `/loaders` and `/gcode`, unchanged.
+
 ## 0.3.5 — 2026-10-16
 
 ### Fixed
