@@ -265,11 +265,14 @@ Findings that only surfaced by doing it, for the record:
   `is_code`, `multiline`, `sidetext`) — facts, not text — and still carries no label, tooltip or enum label, so the
   bare panel names every field by its key. `three-slicer/toggle` became `makeToggle(rules, schema)` in the
   permissive package, bound on the AGPL side; unbound, it disables nothing.
+- 0.4.0 removed the remaining wrappers (`three-slicer/viewer`, its three re-export subpaths, and
+  `three-slicer/components`). A host binds the two packages itself, as `/slice` already did; the AGPL package has no
+  React code left, and its remaining imports of the permissive one are `/settings`, `/toggle` and `/paint`.
 
 ## 5.1 Foundations
 
 - `PROVENANCE.md` — the per-file verdict: which code is derived, which is ours, and the evidence for each.
-- `viewer/test_license_boundary.mjs` — the verdict as a check, wired into `npm run test:viewer`. It asserts
+- `engine/tests/test_license_boundary.mjs` — the verdict as a check, wired into `npm run test:viewer`. It asserts
   the four derived files exist and carry their `LICENSE-PROVENANCE:` header, that no unlisted file declares
   itself a port, and that the verified-clean files import neither `three-slicer` nor anything derived.
   Both drift modes were negative-tested. It has already earned its place once: the eighteen new source files

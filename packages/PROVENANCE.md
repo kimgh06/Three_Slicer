@@ -189,8 +189,8 @@ C in place, which is what made the ordering free. B is a strict subset of C, so 
 lines) and produces something publishable, while the grey question in §5's middle row goes to counsel.
 
 Direction matters: the permissive package must not import the AGPL one. The AGPL package depending on the
-permissive one is fine, and is how `three-slicer/viewer/toolpath` and `/viewer/gcode` keep working for
-existing consumers — the AGPL package re-exports them.
+permissive one is fine: `three-slicer/settings` and `/toggle` re-export its settings transforms and evaluator. (The
+`three-slicer/viewer/*` and `/components` re-exports existed for consumers of the pre-split paths until 0.4.0.)
 
 Two facts make this viable rather than cosmetic. The toolpath and G-code surfaces already form a closed
 import island — closure B reaches nothing in the kernel, and closure A (rendering alone, 7 files, 783
