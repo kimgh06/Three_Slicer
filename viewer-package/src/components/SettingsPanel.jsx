@@ -1,6 +1,6 @@
-// three-slicer/components — <SettingsPanel/> : config-schema-driven slicer settings form.
-// Independent & props-driven: NO global state, NO React context, NO router. Depends only on React,
-// @three-slicer/data (schema/ui-tree/toggle-rules), and three-slicer (settingRaw/disabledKeys/makeCfg).
+// three-slicer-viewer/components — <SettingsPanel/> : config-schema-driven slicer settings form.
+// Independent & props-driven: NO global state, NO React context, NO router. Depends only on React and this
+// package's own settings and reduced data; the full schema, ui-tree and bound toggle come in as props.
 // Props:
 //   settings     : sparse map {optKey: value} (edited keys only; missing = schema default)
 //   setSettings  : (updater) => void   (React setState-style; the ONLY way state leaves the component)
@@ -32,8 +32,8 @@ const builderTech = b => (/SLA|build_sla\b/.test(b) ? 'SLA' : 'FFF')
 
 // The three data props and their defaults. This package ships no upstream text: `leanSchema` carries types,
 //  defaults, enum values, layout flags and units but no label or tooltip, so a field is labelled by its key;
-//  the default tree is one flat page per builder; and the unbound toggle disables nothing. `three-slicer/components`
-//  passes the full schema, the real ui-tree and the rule-bound toggle, which is what makes the desktop panel read
+//  the default tree is one flat page per builder; and the unbound toggle disables nothing. A host passing
+//  three-slicer's full schema, real ui-tree and rule-bound toggle which is what makes the desktop panel read
 //  as it does. A host with its own labels (a translation, its own vocabulary) passes its own schema.
 const DEFAULT_TREE = Object.fromEntries(Object.entries(uiTreeKeys)
   .map(([builder, keys]) => [builder, keys.length ? [{ page: 'Settings', groups: [{ group: builderLabel(builder), options: keys }] }] : []]))

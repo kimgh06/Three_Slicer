@@ -1,8 +1,5 @@
 // The package's public barrel. The implementation lives in one-job modules; this file only re-exports the
 // surface, so consumers and the tests keep a single import path.
-//
-// It is also reachable as `three-slicer/viewer/toolpath`, which the AGPL package re-exports from here — the
-// entry point existing consumers already use did not move when the code did.
 export {
   TYPE_COLOR, TYPE_LABEL, TOOL_COLOR, DEFAULT_RANGES_COLORS,
   // The colour primitives were internal while this lived inside the viewer. They cross a package boundary

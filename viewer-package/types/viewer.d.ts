@@ -1,4 +1,4 @@
-// three-slicer/viewer
+// three-slicer-viewer
 import type * as React from 'react'
 import type { SlicerSettings } from './settings-keys.d.ts'
 import type { ProcessPresetsApi, FilamentPresetsApi } from './settings.d.ts'
@@ -114,8 +114,8 @@ export interface ViewportProps {
    */
   slicer?: (deps: Record<string, unknown>) => SlicerHandle
   /**
-   * The vendor preset catalog. This package ships none — nothing passed means empty pickers. `three-slicer/viewer`
-   * passes its bundled OrcaSlicer extraction; a host with its own fleet passes its own (a partial object is
+   * The vendor preset catalog. This package ships none — nothing passed means empty pickers. `three-slicer/settings`'
+   * `bundledCatalog` is the OrcaSlicer extraction; a host with its own fleet passes its own (a partial object is
    * merged over the empty catalog).
    */
   catalog?: Catalog | null
@@ -254,5 +254,5 @@ export function resolveCatalog(catalog?: Partial<Catalog> | null): Catalog
 export function useNoopSlicer(): SlicerHandle
 
 /** The slicing hook, unbound. `deps.makeWorker` must return a Worker speaking this package's slice protocol —
- *  three-slicer/viewer supplies its WASM kernel worker and re-exports the bound hook. */
+ *  three-slicer/client's makeSlicerWorker is the WASM kernel's. */
 export function useSlicer(deps: Record<string, unknown> & { makeWorker: () => Worker }): SlicerHandle

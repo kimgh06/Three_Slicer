@@ -20,8 +20,8 @@ const PAINT_STATES_ALL = Array.from({ length: MAX_PAINT_EXTRUDERS }, (_, index) 
 // A real hook: it owns the refs nobody else touches (SAB view, poll timer, stream accumulator) and the two
 //  worker lifetime effects; the refs shared with the other concerns (workerRef, layer range, apiRef, …) come in as deps.
 // `makeWorker` is the ONLY tie to a kernel: a factory returning a Worker that speaks this hook's protocol. This
-//  package ships no such worker — three-slicer/viewer binds its makeSlicerWorker (the WASM kernel, AGPL) and
-//  re-exports the bound hook; a host with its own slicing worker passes its own. Everything else in here —
+//  package ships no such worker — a host binds three-slicer/client's makeSlicerWorker (the WASM kernel, AGPL), or
+//  passes its own slicing worker. Everything else in here —
 //  the message protocol, progress, the pool, the economy/classic ladder — is this package's.
 export function useSlicer(deps) {
   const { makeWorker } = deps

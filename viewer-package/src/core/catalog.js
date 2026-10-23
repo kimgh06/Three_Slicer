@@ -20,7 +20,7 @@ export const emptyCatalog = Object.freeze({
 })
 
 /** Fill a partial catalog from the empty one. Nothing passed means no presets — there is no bundled default in
- *  this package; `three-slicer/viewer` is the one that supplies it. */
+ *  this package; a host passes `three-slicer/settings`' `bundledCatalog` or its own. */
 export function resolveCatalog(catalog) {
   if (!catalog) return emptyCatalog
   return Object.freeze({ ...emptyCatalog, ...catalog })
