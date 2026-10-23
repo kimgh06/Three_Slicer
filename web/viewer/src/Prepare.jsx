@@ -1,10 +1,6 @@
 import { useState } from 'react'
-import Viewport, { useSlicer } from 'three-slicer-viewer'            // the viewer and the slicing hook (MIT)
-import { makeSlicerWorker } from 'three-slicer/client'                // the WASM kernel's worker (AGPL)
-import { bundledCatalog } from 'three-slicer/settings'                // OrcaSlicer's vendor presets (AGPL)
-import SettingsPanelCore from 'three-slicer-viewer/components'  // the settings form (MIT)
-import { schema, uiTree } from 'three-slicer/data'                // upstream's labels, tooltips and tab tree (AGPL)
-import { makeCfg, disabledKeys } from 'three-slicer/toggle'         // the evaluator bound to upstream's toggle rules (AGPL)
+import Viewport from './kernel_viewport.jsx'
+import SettingsPanel from './settings_panel.jsx'
 import './step_loader.js'   // registers the .step/.stp loader (the OCCT WASM only loads when such a file is actually opened)
 
 // The slicer screen. Viewport owns the desktop-style shell (top bar + left gizmo rail + center viewport
@@ -22,14 +18,6 @@ const webglAvailable = (() => {
     return !!(probeCanvas.getContext('webgl2') || probeCanvas.getContext('webgl'))
   } catch { return false }
 })()
-
-// The permissive panel with upstream's data plugged in — the same composition three-slicer/components makes,
-//  spelled out here so the page shows which half is which. Four panels below share it.
-const PANEL_DATA = { schema, uiTree, toggle: { makeCfg, disabledKeys } }
-// The slicing hook bound to the kernel worker. Module-level on purpose: it is called as a hook, so its identity
-//  must not change between renders.
-const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })
-const SettingsPanel = (props) => <SettingsPanelCore {...PANEL_DATA} {...props} />
 
 export default function Prepare() {
   const [settings, setSettings] = useState({})   // sparse map (edited keys only). Reset on reload.
@@ -56,7 +44,7 @@ export default function Prepare() {
   )
   return (
     <div className="prepare">
-      <Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings}
+      <Viewport settings={settings} setSettings={setSettings}
         plateSettings={plateSettings} setPlateSettings={setPlateSettings}
         processPanel={(panelSettings, setPanelSettings, meta) =>
           /* A function, not a node: with >1 plate the card's Global|Plate toggle hands down the selected

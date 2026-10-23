@@ -2,7 +2,7 @@
 // Why it lives in the **app** rather than the package (three-slicer): it is a 7.6MB wasm dependency, and keeping it out
 //  preserves the "zero runtime dependencies" of the kernel and viewer. Any consumer can attach arbitrary formats the same way by copying the 6 lines below.
 // Dynamic import — the glue + wasm are fetched only when a .step file is actually opened (zero impact on the initial bundle).
-import { registerLoader } from 'three-slicer/viewer/loaders'
+import { registerLoader } from 'three-slicer-viewer/loaders'
 
 let occtP = null
 const getOcct = () => (occtP ||= (async () => {
