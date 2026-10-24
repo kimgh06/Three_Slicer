@@ -4,7 +4,7 @@ Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. The r
 
 - **`slicers/`** — the upstream reference checkouts, untracked: OrcaSlicer at `slicers/slicer` (the extraction/porting source — its own guide is `slicers/slicer/AGENTS.md`) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 - **`packages/`** — the published npm package `three-slicer` (AGPL) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
-- **`viewer-package/`** — the published npm package `three-slicer-viewer` (MIT): the viewer without the slicer — model loading, G-code parsing, GPU toolpath rendering, the catalog-free settings transforms, the toggle evaluator (unbound), `<SettingsPanel/>` and `<Viewport/>` themselves. `three-slicer/viewer` is a thin wrapper that plugs the kernel and the vendor catalog into it. The two publish as a locked pair (same version, exact pin — `packages/RELICENSE.md`).
+- **`viewer-package/`** — the published npm package `three-slicer-viewer` (MIT): the viewer without the slicer — model loading, G-code parsing, GPU toolpath rendering, the catalog-free settings transforms, the toggle evaluator (unbound), `<SettingsPanel/>` and `<Viewport/>` themselves. A host plugs the kernel worker and the vendor catalog into it through props (`web/viewer/src/kernel_viewport.jsx` and `settings_panel.jsx` are the demo's binding); `three-slicer` itself has no React code. The two publish as a locked pair (same version, exact pin — `packages/RELICENSE.md`).
 - **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md` (the stage log is split out as `web/HISTORY.md`), `web/GUIDE.md`, `web/SPECS.md`.
 
 The root `package.json` is the npm workspaces root (`viewer-package`, `packages`, `web/viewer`) — a single `npm i` at the root installs everything. `viewer-package` comes first because `packages` depends on it.
@@ -633,7 +633,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   upstream `fill_iniconf`'s field set in `std::map` (alphabetical) order with 6-decimal floats.
   `test_sla_mt.mjs` pins the mt (pthread) kernel byte-identical to the st one over the same SLA slice.
 - Licensed AGPL-3.0-or-later (`LICENSE.txt`) — except `viewer-package/`, which is MIT and must never import the
-  AGPL package (`packages/viewer/tests/test_license_boundary.mjs` enforces it). Which code may carry which licence, and
+  AGPL package (`packages/engine/tests/test_license_boundary.mjs` enforces it). Which code may carry which licence, and
   why, is `packages/PROVENANCE.md`.
 
 ## Code review checklist
@@ -730,7 +730,7 @@ make publish        # DRY=1 to rehearse
 ```
 
 ```bash
-# Install (once, at the root) + build the packages (components/viewer dist)
+# Install (once, at the root) + build the packages (the viewer dist, the generated types)
 npm i && npm run build
 
 # The viewer demo app on its own — prefer `make dev`, which also builds the package and the demos
@@ -820,17 +820,14 @@ All of `packages/` is **one npm package, `three-slicer`** (consumed piecewise vi
   Prefer consuming `three-slicer/data` (named exports, import attribute included) — the raw `three-slicer/data/*.json` is available too.
   **When importing a new JSON file, always add it to `engine/src/data.js`**: Vite/esbuild strip
   `with { type: 'json' }` from bundle output, so with more than one import site the consumer's bundler warns about mismatched attributes.
-- `packages/components/` — `three-slicer/components`: a wrapper that hands upstream's data to the permissive panel — the full
-  schema (labels and tooltips are OrcaSlicer's text), the real tab tree, and `three-slicer/toggle` bound to upstream's rules.
-  The `<SettingsPanel/>` itself is `viewer-package/src/components/` (`three-slicer-viewer/components`), which takes those three
-  as props and, without them, labels every field by its key and disables nothing.
-- `packages/viewer/` — `three-slicer/viewer`: the kernel plugged into the permissive viewer. `Viewport.jsx` binds
-  `three-slicer-viewer`'s own `useSlicer` to the WASM worker factory (`makeSlicerWorker`, `three-slicer/client`) and hands
-  it plus the bundled vendor presets (`bundledCatalog`, `three-slicer/settings`) to the permissive `<Viewport/>` through
-  the `slicer` and `catalog` props; three re-export shims keep the old subpaths. Nothing else is here — the two things
-  that cannot be permissive live where they belong, beside the kernel and beside the catalog functions. The slicing hook itself
+- The React half is not in this package. A host binds it: `three-slicer-viewer`'s `useSlicer` with the WASM worker factory
+  (`makeSlicerWorker`, `three-slicer/client`) and the bundled vendor presets (`bundledCatalog`, `three-slicer/settings`)
+  go to `<Viewport/>` through the `slicer` and `catalog` props; the full schema, the real tab tree and `three-slicer/toggle`
+  go to `<SettingsPanel/>` (`three-slicer-viewer/components`) as `schema`, `uiTree` and `toggle`. The slicing hook itself
   (the worker protocol, progress, the pool, the economy/classic ladder) is the permissive package's: its only tie to a
-  kernel is `deps.makeWorker`.
+  kernel is `deps.makeWorker`. `three-slicer/viewer` and `three-slicer/components` were that binding as wrappers until
+  0.4.0. `packages/engine/tests/` holds the tests that cross the boundary (the G-code round trip through the kernel, the
+  license boundary, the preset file against the vendor catalog, the bed-frame round trip).
 - `viewer-package/src/` — the viewer itself (`three-slicer-viewer`). Everything the AGPL package used to hold under
   `viewer/src/` lives here now, with the same layout; the guards (`test_layers.mjs`, `test_wiring.mjs`) moved with it.
   `src/` is laid out by ONE question — **can this run under node?** — because that is the only boundary that was

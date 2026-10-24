@@ -1,26 +1,30 @@
 # three-slicer-viewer — the viewer
 
-(Published as `three-slicer-viewer`, MIT. `three-slicer/viewer` is the same component with the WASM kernel and the
-vendor catalog plugged in; everything below applies to both.)
+(Published as `three-slicer-viewer`, MIT. Slicing and the vendor presets come from `three-slicer` through the
+`slicer` and `catalog` props, as below; without them the viewer loads, displays and exports, but never slices.)
 
 3D slicer viewer as a React component: three.js viewport (orbit/transform gizmos), model import (STL/OBJ/3MF/AMF/PLY + pluggable formats such as STEP, multi-object, drag & drop), Web Worker slicing via `three-slicer`, support and material painting, per-extruder filament presets, multi-plate, and a GPU-instanced volumetric toolpath preview ported from OrcaSlicer's libvgcode (millions of segments in a single draw path, per-feature colors, layer range slider, G-code export).
 
 ![The Prepare tab — drag-and-drop viewport with the printer, filament and process cards in the right sidebar](../../slice-sidebar.png)
 
 ```bash
-npm i three-slicer react react-dom three     # the three are optional peers; the viewer needs all of them
+npm i three-slicer three-slicer-viewer react react-dom three   # same version for the two; the last three are optional peers the viewer needs
 ```
 
 ```jsx
 import { useState } from 'react'
-import Viewport from 'three-slicer/viewer'
+import Viewport, { useSlicer } from 'three-slicer-viewer'
+import { makeSlicerWorker } from 'three-slicer/client'     // the WASM kernel's worker (AGPL)
+import { bundledCatalog } from 'three-slicer/settings'     // OrcaSlicer's vendor presets (AGPL)
+
+const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })   // module-level: it is a hook
 
 function App() {
   const [settings, setSettings] = useState({})   // OrcaSlicer schema keys; sparse — defaults fill the rest
   // The container matters — see Layout below.
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
-      <Viewport settings={settings} setSettings={setSettings} />
+      <Viewport slicer={slicer} catalog={bundledCatalog} settings={settings} setSettings={setSettings} />
     </div>
   )
 }
@@ -37,7 +41,7 @@ the initial containing block instead, which usually looks like the viewer coveri
 
 There is no width or height prop: the component always fills that container, and resizes with it.
 
-Slice parameters are derived from `settings` via `three-slicer`'s schema mapping — pair it with `three-slicer/components`' `<SettingsPanel/>` sharing the same state for a full slicer UI.
+Slice parameters are derived from `settings` via `three-slicer`'s schema mapping — pair it with `three-slicer-viewer/components`' `<SettingsPanel/>` ([COMPONENTS.md](COMPONENTS.md)) sharing the same state for a full slicer UI.
 
 A `.3mf` written by a slicer (OrcaSlicer/BambuStudio save, MakerWorld download) imports as a **project**: plate layout, project settings, and support/material painting are restored, not just the meshes. Where a facet carries both paint kinds, material paint wins and the dropped support paint is reported.
 
@@ -47,9 +51,9 @@ next to the material picker) takes a **function** `(settings, setSettings) => Re
 card binds each extruder's per-extruder values.
 
 Subpath exports for custom UIs (framework-free, no React):
-- `three-slicer/viewer/toolpath` — GPU toolpath renderer (`buildSegmentData`, `makeToolpath`, view-type colorers)
-- `three-slicer/viewer/loaders` — model loaders returning unified triangle soup
-- `three-slicer/viewer/gcode` — `parseGcode(text)`, G-code back into the layer stream the renderer consumes
+- `three-slicer-viewer/toolpath` — GPU toolpath renderer (`buildSegmentData`, `makeToolpath`, view-type colorers)
+- `three-slicer-viewer/loaders` — model loaders returning unified triangle soup
+- `three-slicer-viewer/gcode` — `parseGcode(text)`, G-code back into the layer stream the renderer consumes
 
 ## Embedding it without the panels
 
@@ -233,7 +237,7 @@ Two limits to expect while using it:
 - Painting a region onto a second extruder only takes effect with **support turned off**. The painted multi-material path emits no support, so a support-enabled slice deliberately stays on the single-material path (where painted support keeps working as before).
 - On a machine with two or more extruders, a support *blocker* paint and an *Extruder 2* paint are the same mark and cannot be told apart.
 
-If you consume `three-slicer/viewer/toolpath` directly, note that the stride-8 role field `paths[k+3]` now carries the printing extruder alongside the role as `role + tool * 16`. Mask it — `& 15` for the role, `>>> 4` for the tool. Streams produced before this encoding are entirely below 16 and decode to their own role with tool 0, so older data still reads correctly.
+If you consume `three-slicer-viewer/toolpath` directly, note that the stride-8 role field `paths[k+3]` now carries the printing extruder alongside the role as `role + tool * 16`. Mask it — `& 15` for the role, `>>> 4` for the tool. Streams produced before this encoding are entirely below 16 and decode to their own role with tool 0, so older data still reads correctly.
 
 ## Turning behaviour off
 
@@ -336,7 +340,7 @@ The component owns its scene, and the props are the whole interface — there is
 - Everything else the component owns — camera, selection, plate count, paint state — is reported through `onEvent`
   and settable only by the user.
 
-If you need programmatic control over the scene, build on the subpath exports (`three-slicer/viewer/toolpath`,
+If you need programmatic control over the scene, build on the subpath exports (`three-slicer-viewer/toolpath`,
 `/loaders`, `/gcode`) and `three-slicer/client` rather than on `<Viewport/>`.
 
 ## Multithreaded slicing (automatic)

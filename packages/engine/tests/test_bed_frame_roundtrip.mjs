@@ -5,7 +5,7 @@
 //   -> write3MFProject (printer frame, upstream's layout)  -> parse3MFProject -> platePlacements (back to the offset)
 //   -> the kernel slice of the object at that offset       -> layer 0's extrusions, centred at bed centre + offset
 // Stays on the AGPL side because it slices with the kernel.
-//   Run: node packages/viewer/tests/test_bed_frame_roundtrip.mjs
+//   Run: node packages/engine/tests/test_bed_frame_roundtrip.mjs
 import createSlicer from '../../engine/src/slicer_core.js'
 import { deriveKernelParams, bedCenter, bedOrigin } from 'three-slicer-viewer/settings'
 import { write3MFProject } from '../../../viewer-package/src/core/write_3mf.js'

@@ -15,7 +15,7 @@ const webglAvailable = (() => {
 
 // Lazy on purpose, twice over: the chunk (three.js + the viewer) only downloads once the section
 // scrolls into view, and the kernel WASM only downloads if the visitor actually presses Slice.
-const Viewport = React.lazy(() => import('three-slicer/viewer'))
+const Viewport = React.lazy(() => import('./kernel_viewport.jsx'))
 
 // Written out rather than imported: `Object.keys(config-schema.json).length` pulled all 382KB of the schema
 // into the landing chunk to produce one integer, on the one page that has no other use for it.
@@ -63,8 +63,6 @@ const FAQ = [
 const ROUTES = [
   ['Engine', 'three-slicer', 'Slice a binary STL into G-code, or into SLA layer masks, in Node or the browser'],
   ['Settings', 'three-slicer/settings', 'Convert an OrcaSlicer settings map into kernel parameters'],
-  ['Viewer', 'three-slicer/viewer', 'React 3D viewer with the kernel plugged in: model loading, worker slicing, toolpath preview'],
-  ['Components', 'three-slicer/components', `React SettingsPanel driven by the ${OPTION_COUNT}-option schema`],
   ['Viewer (MIT)', 'three-slicer-viewer', 'The same viewer and settings panel without the slicer — model and G-code preview, no AGPL'],
   ['Data', 'three-slicer/data', 'config schema, UI tree, toggle rules, printer / process / filament catalogs'],
   ['Worker', 'three-slicer/worker', 'Layer streaming off the browser main thread'],

@@ -1,5 +1,5 @@
-// three-slicer/viewer/gcode — G-code text -> kernel-shaped layer stream (renderable without slicing).
-// Feed the returned layers straight into buildSegmentData (three-slicer/viewer/toolpath).
+// three-slicer-viewer/gcode — G-code text -> kernel-shaped layer stream (renderable without slicing).
+// Feed the returned layers straight into buildSegmentData (three-slicer-viewer/toolpath).
 
 export interface GcodeLayer {
   z: number

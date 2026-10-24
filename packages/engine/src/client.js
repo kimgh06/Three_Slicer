@@ -41,8 +41,8 @@ const slaTransferables = (job) => job.objects.flatMap(object => [object, ...(obj
 //  keeps make_worker.js out of its own bundle. Do not factor this expression out.
 /**
  * The WASM kernel's worker, as a factory. This is the one thing a slicing viewer needs that the permissive
- * package cannot ship: `three-slicer-viewer`'s `useSlicer` takes it as `deps.makeWorker`, and
- * `three-slicer/viewer` binds it. Written as the full literal expression for the same reason as below.
+ * package cannot ship: `three-slicer-viewer`'s `useSlicer` takes it as `deps.makeWorker`, and a
+ * host binds it there. Written as the full literal expression for the same reason as below.
  */
 export function makeSlicerWorker() {
   return new Worker(new URL('./slicer.worker.js', import.meta.url), { type: 'module' })

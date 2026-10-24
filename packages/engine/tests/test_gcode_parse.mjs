@@ -1,6 +1,6 @@
 // gcode_parse self-check — (1) synthetic G-code covering every recognized convention, (2) round-trip:
 //  slice a cube with the kernel, parse its own G-code back, compare layers/z/extruded length against r.layers.
-//   Run: node packages/viewer/test_gcode_parse.mjs
+//   Run: node packages/engine/tests/test_gcode_parse.mjs
 import assert from 'node:assert'
 // This is a ROUND TRIP across the license boundary — slice with the AGPL kernel, read the result
 //  back with the permissive parser — so it stays on the AGPL side. The permissive package must not

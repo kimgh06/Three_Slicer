@@ -1,4 +1,4 @@
-/* @three-slicer/components — SettingsPanel styles.
+/* three-slicer-viewer/components — SettingsPanel styles.
    Shadow DOM isolation (shadow_host.jsx): inlined into the bundle via ?inline and injected into the
    panel's shadow root. Fully isolated from host app CSS in both directions — class names cannot collide. */
 :host { display: contents; }

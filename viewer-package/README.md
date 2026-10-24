@@ -6,7 +6,7 @@ commercial products.
 
 This is [`three-slicer`](https://www.npmjs.com/package/three-slicer) with the kernel taken out. It displays and
 exports; it does not slice. Slicing is plugged in through two props — `slicer` (a hook driving a kernel) and
-`catalog` (vendor presets) — which `three-slicer/viewer` supplies. Install `three-slicer` for that, and note that
+`catalog` (vendor presets) — which `three-slicer` supplies (below). Install `three-slicer` for that, and note that
 doing so puts your application under AGPL.
 
 Developed in the [`Three_Slicer`](https://github.com/kimgh06/Three_Slicer) monorepo (`viewer-package/`), where it
@@ -41,7 +41,7 @@ const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })   
 import SettingsPanel from 'three-slicer-viewer/components'
 
 // Bare: fields labelled by key, nothing disabled. Pass `schema`, `uiTree` and `toggle` for labels, tabs and
-// enable/disable rules — three-slicer/components does that with OrcaSlicer's data; a host may pass its own.
+// enable/disable rules — three-slicer/data and /toggle carry OrcaSlicer's; a host may pass its own.
 <SettingsPanel settings={settings} setSettings={setSettings} />
 ```
 

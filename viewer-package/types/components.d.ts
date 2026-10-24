@@ -1,12 +1,12 @@
-// three-slicer/components
+// three-slicer-viewer/components
 import type * as React from 'react'
 import type { SlicerSettings } from './settings-keys.d.ts'
 
 export interface SettingsPanelProps {
   /**
    * The config schema to render from. Defaults to this package's reduced schema — types, defaults, enum values,
-   * layout flags and units, but no label or tooltip, so a field is labelled by its key. `three-slicer/components`
-   * passes the full schema; a host may pass its own (a translation, its own vocabulary).
+   * layout flags and units, but no label or tooltip, so a field is labelled by its key. Pass
+   * three-slicer/data's full schema for upstream's labels; a host may pass its own (a translation, its own vocabulary).
    */
   schema?: Record<string, Record<string, unknown>>
   /** The tab/page/group tree. Defaults to one flat page per builder over this package's ui-tree keys. */

@@ -128,7 +128,7 @@ export function printerDefaultBedType(profileName) { return printerEntry(profile
 
 // ---- The catalog as one object -------------------------------------------------------------------------------
 // What `three-slicer-viewer`'s `<Viewport catalog>` takes: the ten lookups above, bundled. The permissive package
-//  ships no catalog (these are OrcaSlicer's profile bundles); `three-slicer/viewer` passes this one by default.
+//  ships no catalog (these are OrcaSlicer's profile bundles); a host passes this one.
 export const bundledCatalog = Object.freeze({
   printerKeys, printerSettings, printersByVendor, printerTechByVendor, printerDefaultPreset, printerDefaultBedType,
   processPresets, filamentPresets, resinCatalog, resinSettingsFor,

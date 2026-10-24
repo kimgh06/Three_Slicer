@@ -1,17 +1,16 @@
 # three-slicer
 
-Browser/WASM 3D-printing slicer package derived from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). It can slice binary STL files to G-code in Node or the browser, and it also ships React UI pieces for building a browser slicer: a three.js viewport, GPU toolpath preview, and a schema-driven settings panel. SLA (resin) printers are a second technology in the same kernel — supports and pad from PrusaSlicer's ported chain, previewed in the same viewer, exported as an `.sl1` archive.
+Browser/WASM 3D-printing slicer package derived from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). It can slice binary STL files to G-code in Node or the browser, and it supplies the kernel worker, OrcaSlicer's vendor presets and its settings schema to the React viewer and settings panel in [`three-slicer-viewer`](https://www.npmjs.com/package/three-slicer-viewer). SLA (resin) printers are a second technology in the same kernel — supports and pad from PrusaSlicer's ported chain, previewed in the same viewer, exported as an `.sl1` archive.
 
-The package is published as a single npm package, `three-slicer`, with subpath exports for the engine, viewer, components, worker, and extracted OrcaSlicer data.
+The package is published as a single npm package, `three-slicer`, with subpath exports for the engine, settings, worker, client, and extracted OrcaSlicer data.
 
 ![A sliced Benchy in the viewer's Preview tab — organic tree supports, per-feature toolpath colors, dual layer-range slider, filament and print-time estimates](https://raw.githubusercontent.com/kimgh06/Three_Slicer/main/web/viewer/public/usage.png)
 
 ## Links
 
 - Permissive viewer: [`three-slicer-viewer`](https://www.npmjs.com/package/three-slicer-viewer) (MIT) — the
-  viewer, the settings form, G-code parsing and toolpath rendering without the slicer. This package plugs the
-  kernel and OrcaSlicer's vendor presets into it; `three-slicer/viewer` and `three-slicer/components` are that
-  composition. Which code carries which licence, and why: [`PROVENANCE.md`](PROVENANCE.md).
+  viewer, the settings form, G-code parsing and toolpath rendering without the slicer. A host plugs this
+  package's kernel worker and OrcaSlicer's vendor presets into it (see the React quick starts below). Which code carries which licence, and why: [`PROVENANCE.md`](PROVENANCE.md).
 
 - Package: [npmjs.com/package/three-slicer](https://www.npmjs.com/package/three-slicer)
 - Source: [kimgh06/Three_Slicer](https://github.com/kimgh06/Three_Slicer)
@@ -26,7 +25,7 @@ reading whole; everything else is lookup.
 | --- | --- | --- | --- |
 | "Just the numbers" — quotes, farms, automation. No UI, no React | **Headless** | [Quick Start: Headless Slicing](#quick-start-headless-slicing) | [engine/README](engine/README.md) (134 lines), params via [PARAMS.md](engine/PARAMS.md) as lookup |
 | A slicer inside your existing page | **Embed** | [Quick Start: React Viewer](#quick-start-react-viewer) | [viewer/README](../viewer-package/VIEWER.md) (330 lines — the props contracts live there) |
-| The full slicer UI — viewport + settings panel | **Full UI** | [Full React Example](#full-react-example) | viewer/README + [components/README](components/README.md) |
+| The full slicer UI — viewport + settings panel | **Full UI** | [Full React Example](#full-react-example) | viewer/README + [COMPONENTS.md](../viewer-package/COMPONENTS.md) |
 
 Whichever path: read [Before You Ship](#before-you-ship) before deploying — those traps return plausible
 results instead of errors, and the first two never show up in `npm run dev`.
@@ -53,19 +52,21 @@ results instead of errors, and the first two never show up in `npm run dev`.
 npm i three-slicer
 ```
 
-`react`, `react-dom`, and `three` are **optional** peer dependencies. They stay peers rather than dependencies because React and three must be single instances — a duplicate copy breaks hooks and `instanceof` — and optional because only the UI half needs them: a headless consumer installs none of the three.
-
-Install them yourself when you use the viewer or the settings panel:
+Nothing in `three-slicer` needs React or three.js; a headless consumer installs neither. The React viewer and the
+settings panel are [`three-slicer-viewer`](https://www.npmjs.com/package/three-slicer-viewer), which `three-slicer`
+depends on at the same exact version. Import it by its own name, so list it in your own `package.json` at that
+version, together with its optional peers:
 
 ```bash
-npm i three-slicer react react-dom three
+npm i three-slicer three-slicer-viewer@<same version> react react-dom three
 ```
 
 | Import path | Needs react/three |
 | --- | --- |
-| `three-slicer`, `/settings`, `/toggle`, `/client`, `/worker`, `/wasm`, `/data`, `/viewer/gcode`, `/viewer/toolpath` | no — `makeToolpath(THREE, data)` takes `three` as an argument |
-| `three-slicer/viewer`, `/viewer/loaders` | yes |
-| `three-slicer/components` | react only |
+| `three-slicer`, `/settings`, `/toggle`, `/client`, `/worker`, `/wasm`, `/data` | no |
+| `three-slicer-viewer`, `/loaders` | yes |
+| `three-slicer-viewer/components` | react only |
+| `three-slicer-viewer/gcode`, `/toolpath` | no — `makeToolpath(THREE, data)` takes `three` as an argument |
 
 ## Quick Start: Headless Slicing
 
@@ -147,11 +148,19 @@ When `onLayer` is set, the returned result carries stats; assemble G-code from t
 
 ## Quick Start: React Viewer
 
-Use `three-slicer/viewer` when you want a ready-made browser slicer viewport.
+Use `three-slicer-viewer`'s `<Viewport/>` with this package's kernel worker and vendor presets plugged in when you
+want a ready-made browser slicer viewport. Without the `slicer` and `catalog` props it loads, displays and exports,
+but never starts a kernel and offers no presets.
 
 ```jsx
 import { useState } from 'react'
-import Viewport from 'three-slicer/viewer'
+import Viewport, { useSlicer } from 'three-slicer-viewer'
+import { makeSlicerWorker } from 'three-slicer/client'
+import { bundledCatalog } from 'three-slicer/settings'
+
+// The slicing hook bound to the WASM kernel's worker. Module-level: it is called as a hook, so its identity
+//  must not change between renders.
+const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })
 
 export default function App() {
   const [settings, setSettings] = useState({})
@@ -159,6 +168,8 @@ export default function App() {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
       <Viewport
+        slicer={slicer}
+        catalog={bundledCatalog}
         settings={settings}
         setSettings={setSettings}
       />
@@ -176,11 +187,18 @@ The viewer handles model loading, drag and drop, transform controls, multi-plate
 
 ## Quick Start: Settings Panel
 
-Use `three-slicer/components` when you want the OrcaSlicer-style settings UI without building the form yourself.
+Use `three-slicer-viewer/components`' `<SettingsPanel/>` with this package's schema, tab tree and toggle rules
+plugged in when you want the OrcaSlicer-style settings UI without building the form yourself. Without them it labels
+every field by its key and disables nothing.
 
 ```jsx
 import { useState } from 'react'
-import SettingsPanel from 'three-slicer/components'
+import SettingsPanelCore from 'three-slicer-viewer/components'
+import { schema, uiTree } from 'three-slicer/data'
+import { makeCfg, disabledKeys } from 'three-slicer/toggle'
+
+const toggle = { makeCfg, disabledKeys }
+const SettingsPanel = (props) => <SettingsPanelCore schema={schema} uiTree={uiTree} toggle={toggle} {...props} />
 
 export default function App() {
   const [settings, setSettings] = useState({})
@@ -202,8 +220,19 @@ The viewer and settings panel are designed to share the same `settings` state.
 
 ```jsx
 import { useState } from 'react'
-import Viewport from 'three-slicer/viewer'
-import SettingsPanel from 'three-slicer/components'
+import Viewport, { useSlicer } from 'three-slicer-viewer'
+import { makeSlicerWorker } from 'three-slicer/client'
+import { bundledCatalog } from 'three-slicer/settings'
+
+// The slicing hook bound to the WASM kernel's worker. Module-level: it is called as a hook, so its identity
+//  must not change between renders.
+const slicer = (deps) => useSlicer({ ...deps, makeWorker: makeSlicerWorker })
+import SettingsPanelCore from 'three-slicer-viewer/components'
+import { schema, uiTree } from 'three-slicer/data'
+import { makeCfg, disabledKeys } from 'three-slicer/toggle'
+
+const toggle = { makeCfg, disabledKeys }
+const SettingsPanel = (props) => <SettingsPanelCore schema={schema} uiTree={uiTree} toggle={toggle} {...props} />
 
 export default function App() {
   const [settings, setSettings] = useState({})
@@ -211,6 +240,8 @@ export default function App() {
   return (
     <main style={{ display: 'flex', height: '100vh' }}>
       <Viewport
+        slicer={slicer}
+        catalog={bundledCatalog}
         settings={settings}
         setSettings={setSettings}
       />
@@ -231,8 +262,7 @@ The same sparse settings map can feed the settings panel, the viewer, and `deriv
 import { createSlicer, engineWorkerURL } from 'three-slicer'
 import { deriveKernelParams } from 'three-slicer/settings'
 import { disabledKeys, makeCfg } from 'three-slicer/toggle'
-import Viewport from 'three-slicer/viewer'
-import SettingsPanel from 'three-slicer/components'
+import { makeSlicerWorker } from 'three-slicer/client'
 import { schema, uiTree } from 'three-slicer/data'
 ```
 
@@ -247,40 +277,33 @@ Available subpaths:
 | `three-slicer/client` | `createSlicerClient()` — promises over that protocol |
 | `three-slicer/wasm` | Single-threaded Emscripten WASM glue |
 | `three-slicer/wasm-mt` | Multithreaded Emscripten WASM glue |
-| `three-slicer/viewer` | React `<Viewport/>` |
-| `three-slicer/viewer/toolpath` | GPU toolpath renderer utilities |
-| `three-slicer/viewer/loaders` | Model loaders |
-| `three-slicer/viewer/gcode` | `parseGcode(text)` — G-code back into the layer stream the renderer consumes |
-| `three-slicer/components` | React `<SettingsPanel/>` |
 | `three-slicer/data` | Named exports for extracted metadata |
 | `three-slicer/data/*.json` | Extracted OrcaSlicer metadata |
 
 ## Architecture: How the Pieces Connect
 
-One npm package, five modules. The dependency direction is one-way: `wasm-core` →(build)→ `engine`
-←(data)← `data`, with `components` and `viewer` consuming different surfaces of the engine, `types`
-generating and gating the contract from the side — and the glue at the top is always a single sparse
-settings map held by the host app.
+One npm package, four modules, beside the separately published React half (`three-slicer-viewer`). The dependency
+direction is one-way: `wasm-core` →(build)→ `engine` ←(data)← `data`, with `types` generating and gating the
+contract from the side. The host composes the React half with the kernel worker, the vendor catalog and the schema —
+and the glue at the top is always a single sparse settings map held by the host app.
 
 | Module | Role | Published as | Depends on | Consumed by |
 | --- | --- | --- | --- | --- |
 | `wasm-core` | C++ kernel sources + vendored third_party | not published | (ported upstream sources) | `engine` — as build output only |
-| `engine` | kernel SDK: direct handle, worker, client, settings derivation | `three-slicer` root + `/settings` `/toggle` `/client` `/worker` `/wasm(-mt)` `/data` | committed wasm-core output, `data`, the generated `kernel_setting_keys.js` | `components`, `viewer`, every consumer |
-| `data` | extracted schema + catalogs (config-schema, printers, processes, filaments…) | `/data` | `extract_all.py` ← upstream | `engine`'s settings, `components`, `viewer` |
+| `engine` | kernel SDK: direct handle, worker, client, the vendor catalog; re-exports the settings derivation and toggle evaluator from `three-slicer-viewer` | `three-slicer` root + `/settings` `/toggle` `/client` `/worker` `/wasm(-mt)` `/data` | committed wasm-core output, `data`, `three-slicer-viewer`'s `/settings` `/toggle` `/paint` | host apps, every consumer |
+| `data` | extracted schema + catalogs (config-schema, printers, processes, filaments…) | `/data` | `extract_all.py` ← upstream | `engine`'s settings, host apps (passed to the React half as props) |
 | `types` | every `.d.ts` + two generators | attached per subpath via the exports map's `types` fields | runs `engine` at generation time (probing), reads `data`'s schema | consumers' IDE/TS — no runtime dependency |
-| `components` | `<SettingsPanel/>` (Shadow DOM) | `/components` | `data` (schema + UI tree), `engine`'s `/toggle` | host apps |
-| `viewer` | `<Viewport/>` (three.js, Shadow DOM) | `/viewer` + `/viewer/toolpath` `/loaders` `/gcode` | `engine`'s `/settings`, the worker, `/data`; `three` (peer) | host apps |
 
 Some of the connections are not imports, and knowing which is which explains most of the layout:
 
 | Connection | Mechanism | Notes |
 | --- | --- | --- |
 | `wasm-core` → `engine` | `build.sh` (emscripten) commits its output into `engine/src/` | not an import — the golden byte-identical gate and the invariant suite verify kernel changes against the engine's output |
-| `data` → `engine`/`components`/`viewer` | `/data` subpath imports | the source of truth is `extract_all.py` over the upstream checkout |
+| `data` → `engine`, host apps | `/data` subpath imports | the source of truth is `extract_all.py` over the upstream checkout |
 | `types` → `engine` | the generator **executes** `deriveKernelParams` (probing) and writes `engine/PARAMS.md` + `../viewer-package/src/settings/kernel_setting_keys.js` back into the engine | `test_kernel_params.mjs` is the staleness gate |
 | `types` → `data` | `gen_settings_types.mjs` generates `settings-keys.d.ts` (976 keys) from the schema | run automatically by the build |
-| `viewer` ↔ `components` | **no direct link** | the host shares one settings map with both as props, and mounts `<SettingsPanel embedded/>` into the viewer's panel slots |
-| inside `viewer` | `core` (pure, node-runnable) ← `scene` (three/DOM) ← `actions` ← `ui` | `test_layers.mjs` enforces the boundary |
+| `engine` → `three-slicer-viewer` | the host passes `makeSlicerWorker` (as `useSlicer`'s `makeWorker`) and `bundledCatalog` to `<Viewport/>`, and `schema`/`uiTree`/the bound toggle to `<SettingsPanel/>` | props, not imports — the React half ships without the kernel or upstream's data |
+| `<Viewport/>` ↔ `<SettingsPanel/>` | **no direct link** | the host shares one settings map with both as props, and mounts `<SettingsPanel embedded/>` into the viewer's panel slots |
 
 ## TypeScript
 
@@ -331,7 +354,7 @@ const result = slicer.slice(stlArrayBuffer, params)
 
 A slicer-written `.3mf` is a project, not a mesh file: `Metadata/project_settings.config` holds the flattened
 preset its author sliced with. `<Viewport/>` reads all of it on import. The project parser/writer currently remain
-viewer internals; there is no `three-slicer/viewer/project` public export yet. Hosts can normalize or serialize a
+viewer internals; there is no `three-slicer-viewer/project` public export yet. Hosts can normalize or serialize a
 raw project settings object with the public settings helpers below, but should not import viewer source files.
 
 **Every value in that file is a string**, and reading it raw is not a cosmetic problem — a disabled option is the
@@ -758,7 +781,9 @@ the layout by hand.
 | `disabledKeys(cfg)` | Setting key → the `enable_if` expression that evaluated false |
 | `evalEnableIf(expr, locals, cfg)` | Evaluates a single rule; `null` when it cannot be resolved |
 
-### `three-slicer/viewer` and `three-slicer/components`
+### `three-slicer-viewer` (the React half)
+
+Published separately (MIT); listed here because a slicer UI uses both packages.
 
 | API | Description |
 | --- | --- |
@@ -789,7 +814,7 @@ the layout by hand.
 | Browser main thread | Headless slicing |
 | Browser worker | Off-main-thread slicing and streaming |
 | React | Viewer and settings panel |
-| three.js | Required by `three-slicer/viewer` |
+| three.js | Required by `three-slicer-viewer`'s `<Viewport/>` |
 
 ## Before You Ship
 
@@ -830,7 +855,7 @@ production while `npm run dev` passed. The no-argument form now emits a real wor
 
 - `slice()` currently takes binary STL input at the engine API boundary.
 - The viewer can import STL, OBJ, 3MF, AMF, and PLY, then converts them for slicing.
-- `registerLoader(exts, fn)` from `three-slicer/viewer/loaders` adds any other format. Formats needing a heavy dependency are kept out of the package so it stays runtime-dependency-free — see `web/viewer/src/step_loader.js` for a STEP loader built on `occt-import-js` (OCCT WASM).
+- `registerLoader(exts, fn)` from `three-slicer-viewer/loaders` adds any other format. Formats needing a heavy dependency are kept out of the package so it stays runtime-dependency-free — see `web/viewer/src/step_loader.js` for a STEP loader built on `occt-import-js` (OCCT WASM).
 - Not every OrcaSlicer schema key is wired into the WASM kernel yet.
 - Some vector settings are simplified to their first element.
 - One triangle selector serves both the support brush and the material brush (upstream's shared enum), so a support **blocker** paint and an Extruder 2 paint are the same mark — the two brushes cannot mark the same model independently.
@@ -839,7 +864,7 @@ production while `npm run dev` passed. The no-argument form now emits a real wor
 - The `.sl1` export lives in the viewer (its masks need a canvas); there is no headless `.sl1` writer export yet.
 - SLA mask edges are canvas anti-aliasing, not upstream's AGG rasterizer — same geometry, slightly different edge pixels.
 - Multithreaded WASM requires cross-origin isolation.
-- `three` is pinned as a peer dependency because viewer internals depend on the `TransformControls` API shape.
+- `three` is pinned as a peer dependency of `three-slicer-viewer` because viewer internals depend on the `TransformControls` API shape.
 
 ## License
 

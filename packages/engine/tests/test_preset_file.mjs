@@ -3,7 +3,7 @@
 // The fixture is a REAL upstream vendor file, copied into the package rather than read out of `slicers/`. That
 // checkout is untracked and optional — test_loaders.mjs reads its fixtures from there and is a permanent failure
 // on any tree that does not have it, which is the mistake this file is written not to repeat.
-//   run: node packages/viewer/test_preset_file.mjs
+//   run: node packages/engine/tests/test_preset_file.mjs
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -71,7 +71,7 @@ check('every value survives the round trip', drift.length === 0,
   drift.map(k => `${k}: ${JSON.stringify(machine[k])} -> ${JSON.stringify(back.settings[k])}`).join(' | '))
 
 console.log('\n[preset file: a real upstream file is a DIFF against its parent]')
-const upstream = JSON.parse(readFileSync(join(here, 'testing_files', 'upstream_machine_preset.json'), 'utf8'))
+const upstream = JSON.parse(readFileSync(join(here, 'tests', 'testing_files', 'upstream_machine_preset.json'), 'utf8'))
 check('the fixture is a vendor machine preset', upstream.type === 'machine' && !!upstream.inherits)
 
 const orphan = readPresetFile(upstream)

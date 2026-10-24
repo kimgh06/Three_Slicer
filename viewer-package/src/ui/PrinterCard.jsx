@@ -18,8 +18,8 @@ import ScopeToggle from './ScopeToggle.jsx'
 export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, plateFrame, onBedSize,
   settings: globalSettings, setSettings: setGlobalSettings, motionPanel, onExportPreset, onImportPreset,
   plateSettings, setPlateSettings, plateCount = 1, selectedPlate = 0, settingsScope = 'global', setSettingsScope, onResetPlate = null }) {
-  // The vendor catalog is injected (core/catalog.js): this package ships none, three-slicer/viewer hands its
-  //  bundled one in, and a host with its own fleet passes its own. Every lookup below reads from it.
+  // The vendor catalog is injected (core/catalog.js): this package ships none, a host hands in three-slicer's
+  //  bundled one or, with its own fleet, its own. Every lookup below reads from it.
   const { printerKeys, printersByVendor, printerSettings, printerDefaultPreset, printerDefaultBedType, printerTechByVendor, processPresets } = resolveCatalog(catalog)
   const scoped = cardScope({ settings: globalSettings, setSettings: setGlobalSettings, plateSettings, setPlateSettings, plateCount, selectedPlate, settingsScope })
   const plateScope = scoped.plateScope

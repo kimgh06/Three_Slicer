@@ -2,7 +2,7 @@
 
 Browser/WASM 3D-slicing kernel reverse-engineered from [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). Slices binary STL to G-code entirely client-side (or in Node) — no server, no native binaries.
 
-**No three.js dependency.** This is a headless SDK with zero runtime dependencies; the config metadata it reads ships inside the same package (`three-slicer/data`). For a ready-made React viewer see `three-slicer/viewer`.
+**No three.js dependency.** This is a headless SDK with zero runtime dependencies; the config metadata it reads ships inside the same package (`three-slicer/data`). For a ready-made React viewer see [`three-slicer-viewer`](../../viewer-package/VIEWER.md), which takes this package's kernel worker as a prop.
 
 Ported from the original C++ sources: Clipper polygon ops, Arachne variable-width walls, real fill patterns (gyroid TPMS / honeycomb / 3D-honeycomb / crosshatch / concentric), tree supports, pressure equalizer, arc fitting (G2/G3), scarf seams, ironing, multi-material with prime tower. Kernel changes are gated by a 120+ invariant test suite and golden byte-identical G-code checks.
 

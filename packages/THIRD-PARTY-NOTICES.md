@@ -25,8 +25,8 @@ live under `packages/wasm-core/third_party/deps_src/`.
 
 ## The viewer and the settings panel
 
-Since the split, `three-slicer/viewer` and `three-slicer/components` are re-exports of `three-slicer-viewer` (MIT), a
-separate package with its own `THIRD-PARTY-NOTICES.md`. This package bundles no viewer code of its own.
+The viewer and the settings panel are `three-slicer-viewer` (MIT), a separate package with its own
+`THIRD-PARTY-NOTICES.md`. This package bundles no viewer code of its own; since 0.4.0 it does not re-export it either.
 
 ## Bundled into the viewer/components builds (historical — see above)
 
