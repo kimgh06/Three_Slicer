@@ -3,6 +3,15 @@
 /** The 5 built-ins plus any extension registered via `registerLoader()`, which pushes onto this array. */
 export const SUPPORTED_EXT: string[]
 
+/** G-code extensions: print jobs, opened as a preview instead of a mesh. */
+export const GCODE_EXTS: string[]
+
+/** The resin archive extension (`sl1`). */
+export const SL1_EXT: string
+
+/** Every extension the viewport opens: `SUPPORTED_EXT`, `SL1_EXT` and `GCODE_EXTS`, read at call time. */
+export function openableExtensions(): string[]
+
 /** Lowercased extension. Empty string when there is no dot. */
 export function fileExt(name: string): string
 

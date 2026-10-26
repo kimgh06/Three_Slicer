@@ -67,6 +67,12 @@ async function parse3mf(buffer, name) {
 export const SUPPORTED_EXT = ['stl', 'obj', '3mf', 'amf', 'ply']
 // Print jobs, not meshes: model_load routes them to the G-code preview (openGcodePlates).
 export const GCODE_EXTS = ['gcode', 'gco', 'g']
+// The resin archive, not a mesh either: model_load routes it to the raster-preview import (importSl1).
+export const SL1_EXT = 'sl1'
+// Everything the viewport opens: the mesh loaders, the resin archive and print jobs. A function because
+//  registerLoader() grows SUPPORTED_EXT after import. The file picker and the browser extension's link and download
+//  filters read it.
+export function openableExtensions() { return [...SUPPORTED_EXT, SL1_EXT, ...GCODE_EXTS] }
 
 // Extra loader registry. Formats needing heavy dependencies (STEP -> OCCT WASM, 7.6MB) are not bundled and are
 //  registered by the consumer — three-slicer keeps zero runtime dependencies. (Demo app example: web/viewer/src/step_loader.js)

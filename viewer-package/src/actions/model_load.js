@@ -2,7 +2,7 @@ import { log } from '../core/log.js'
 import { parseGcode } from '../core/gcode_parse.js'
 import { objectRows } from '../core/object_rows.js'
 import { normalizeProjectSettings, deriveKernelParams, bedOrigin, bedCenter } from 'three-slicer-viewer/settings'
-import { loadModel, SUPPORTED_EXT, GCODE_EXTS, fileExt } from '../scene/model_loaders.js'
+import { loadModel, SUPPORTED_EXT, GCODE_EXTS, SL1_EXT, fileExt } from '../scene/model_loaders.js'
 import { plateCols, UPSTREAM_PLATE_GAP_RATIO, MAX_PLATES } from '../core/plate_layout.js'
 import { PRESET_ACCEPT } from './preset_actions.js'
 import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
@@ -232,7 +232,8 @@ export function makeModelLoad(deps) {
     const gcodeFiles = all.filter(file => openGcodePlates && GCODE_EXTS.includes(fileExt(file.name)))
     // .sl1 is not a mesh: it routes to the raster-preview import, and deliberately AFTER the mesh block below —
     //  loading meshes clears plateResultsRef, which is exactly where the import lands its result.
-    const sl1Files = importSl1 ? all.filter(f => fileExt(f.name) === 'sl1') : []
+    let sl1Files = []
+    if (importSl1) sl1Files = all.filter(f => fileExt(f.name) === SL1_EXT)
     const presetFiles = loadPresetFile ? all.filter(f => PRESET_EXTS.includes(fileExt(f.name))) : []
     const files = all.filter(f => SUPPORTED_EXT.includes(fileExt(f.name)))
     const rejected = all.length - files.length - sl1Files.length - presetFiles.length - gcodeFiles.length
