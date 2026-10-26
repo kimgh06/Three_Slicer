@@ -19,7 +19,8 @@ const webglAvailable = (() => {
   } catch { return false }
 })()
 
-export default function Prepare() {
+// `files` is the extension's hand-off (web/extension): the model a link or a download pointed at, fetched before mount.
+export default function Prepare({ files } = {}) {
   const [settings, setSettings] = useState({})   // sparse map (edited keys only). Reset on reload.
   const [plateSettings, setPlateSettings] = useState({})   // per-plate sparse overrides ({plateIndex: map})
   // G-code needs nothing here: the viewport's own Open button and drop target take .gcode beside the models
@@ -44,7 +45,7 @@ export default function Prepare() {
   )
   return (
     <div className="prepare">
-      <Viewport settings={settings} setSettings={setSettings}
+      <Viewport files={files} settings={settings} setSettings={setSettings}
         plateSettings={plateSettings} setPlateSettings={setPlateSettings}
         processPanel={(panelSettings, setPanelSettings, meta) =>
           /* A function, not a node: with >1 plate the card's Global|Plate toggle hands down the selected
