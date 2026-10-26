@@ -1,0 +1,17 @@
+{
+  "name": "three-slicer-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The browser extension: the demo app's slicer screen as an extension page, plus link and download hand-off.",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node tests/test_extension.mjs && node build.mjs && node tests/test_extension_e2e.mjs",
+    "pack": "node build.mjs && node pack.mjs",
+    "screenshots": "node build.mjs && node store/screenshots.mjs"
+  },
+  "license": "AGPL-3.0-or-later",
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}
