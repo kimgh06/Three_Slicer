@@ -19,6 +19,12 @@ export function makeCfg(settings: SlicerSettings | null | undefined): ToggleCfg
  */
 export function evalEnableIf(expr: string, locals: Record<string, unknown>, cfg: ToggleCfg): boolean | null
 
+/** enable_if with config reads and locals replaced by values, or null when it is not a boolean expression of values. */
+export function substituteEnableIf(expr: string, locals: Record<string, unknown>, cfg: ToggleCfg): string | null
+
+/** Evaluates a substituted enable_if (true/false, numbers, ! && || == != < > <= >=, parentheses) without eval. null when malformed. */
+export function evaluateBooleanExpression(source: string): boolean | null
+
 /** Keys that must be disabled under the current settings -> the enable_if expression that disabled them. Only rules that are unambiguously false. */
 export function disabledKeys(cfg: ToggleCfg): Record<string, string>
 
