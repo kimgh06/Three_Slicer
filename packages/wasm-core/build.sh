@@ -224,6 +224,9 @@ MAIN_SRC="contour_phase.cpp slicer_core.cpp custom_gcode.cpp slice_sla.cpp param
 # -DCGAL_ALWAYS_ROUND_TO_NEAREST: wasm cannot switch the FPU rounding mode, so CGAL's interval filter (VoronoiUtilsCgal.cpp, the Arachne
 #  Voronoi planarity check) widens each bound with nextafter instead. Only the main group compiles CGAL interval code (llvm-nm: no IA_up /
 #  Interval_nt symbol in ts_group.o or sla_group.o), so the define is scoped here. Measured st, 774k facets, arachne: 48.8s -> 34.7s, G-code byte-identical.
+# DYNAMIC_EXECUTION=0 on both links: embind otherwise builds its invokers with new Function(), which a page whose CSP has
+#  no 'unsafe-eval' refuses — the browser extension's pages (script-src 'self' 'wasm-unsafe-eval') failed to load either
+#  kernel, and the slice hung with no error. The kernel's output is unchanged (golden cmp).
 MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 -DCGAL_ALWAYS_ROUND_TO_NEAREST $ARACHNE_INC"
 echo "compiling main sources (st, parallel x$NCPU)"
 pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
@@ -236,6 +239,7 @@ em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
   -s STACK_SIZE=2MB \
   -s EXPORT_NAME=createSlicer \
   -s ENVIRONMENT=web,worker,node \
+  -s DYNAMIC_EXECUTION=0 \
   -o ../engine/src/slicer_core.js \
   $(objs /tmp/ws_obj/st $MAIN_SRC) $TS_GROUP_OBJ $SLA_GROUP_OBJ
 
@@ -282,6 +286,7 @@ em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -s PTHREAD_POOL_SIZE_STRICT=2 \
   -s EXPORT_NAME=createSlicer \
   -s ENVIRONMENT=web,worker,node \
+  -s DYNAMIC_EXECUTION=0 \
   -o ../engine/src/slicer_core.mt.js \
   $(objs /tmp/ws_obj/mt $MAIN_SRC) /tmp/ts_group_mt.o /tmp/sla_group_mt.o
 
