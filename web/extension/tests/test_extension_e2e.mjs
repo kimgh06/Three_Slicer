@@ -3,10 +3,10 @@
 // Skips (not fails) without Playwright's Chromium, as the GPU checks skip without a device.
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { zipSync, strToU8 } from 'three/examples/jsm/libs/fflate.module.js'
 import { chromium } from 'playwright'
 import { openableExtensions } from 'three-slicer-viewer/loaders'
@@ -234,6 +234,35 @@ console.log('\n[downloads]')
   check('with the option off, a model download opens nothing', !(await tab))
   await source.close()
   await worker.evaluate(() => chrome.storage.sync.set({ openDownloads: true }))
+}
+
+console.log('\n[a model file from this computer]')
+{
+  // Finder drop on a tab, a drop on the tab strip and "Open With > Google Chrome" all reach Chrome as a new tab heading
+  // for the file: URL. That tab is sent to the slicer with the original file, and no copy is left in Downloads.
+  const local = resolve(here, '..', '..', '..', 'viewer-package', 'testing_files', 'cube.3mf')
+  const copies = () => (existsSync(downloadDir) && readdirSync(downloadDir).filter((name) => name.startsWith('cube'))) || []
+  const tab = await context.newPage()
+  await tab.goto(`${origin}/page.html`)
+  let opened = nextViewerTab(15000)
+  const session = await context.newCDPSession(tab)
+  const data = { items: [], files: [local], dragOperationsMask: 1 }
+  for (const type of ['dragEnter', 'dragOver', 'drop']) await session.send('Input.dispatchDragEvent', { type, x: 100, y: 100, data })
+  let viewer = await opened
+  check('a dropped local model opens in a slicer tab', !!viewer)
+  if (viewer) {
+    check('reading the original file', new URL(viewer.url()).searchParams.get('file') === pathToFileURL(local).href, viewer.url())
+    check('and loads it', (await loadedObjects(viewer)) === 1)
+    await viewer.close()
+  }
+  await tab.close()
+  opened = nextViewerTab(15000)
+  await worker.evaluate((url) => chrome.tabs.create({ url }), pathToFileURL(local).href)
+  viewer = await opened
+  check('a local model opened in a new tab opens in the slicer', !!viewer && (await loadedObjects(viewer)) === 1)
+  await viewer?.close()
+  await new Promise((done) => setTimeout(done, 1500))
+  check('no copy of it is left in Downloads', copies().length === 0, copies().join(', '))
 }
 
 console.log('\n[Thingiverse badge]')

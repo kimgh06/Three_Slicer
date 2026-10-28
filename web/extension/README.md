@@ -43,6 +43,29 @@ page: the class names are build hashes. There is no Printables badge: its pages 
 headless browser this was developed with does not pass, so its markup was never seen; its downloads still open through
 the download path.
 
+## How a 51MB project opens in about 0.5s
+
+Measured on `haaland100_f3.3mf` (303MB of XML, 17 objects, 3.79M facets; page clock, median of 10): 1.24s when the
+extension landed, 0.50–0.53s now. What each piece did, in the order it came:
+
+- The viewport's 3mf parse reads the one big part's objects in several workers instead of one (`indexModelXml`
+  finds the objects, their spans go out as the part inflates, each helper keeps and pre-builds what it read).
+- `build.mjs` writes `dist/boot.js` ahead of the bundle: it starts the parse worker while the 3MB bundle compiles,
+  and `viewer.jsx` adopts it (`adoptParseWorker`). Without it the worker took the fetched file up to 114ms late.
+- The fetched File is handed to the parse worker unread (`preloadModel`, the moment the fetch ends), so the parse
+  runs while the viewport mounts; the viewport's own load takes the result.
+- The mesh carries no normal attribute (flat shading derives the face normal in the shader): 136MB less to upload.
+- The root part is inflated on one helper and assembled on the parse worker. `DecompressionStream` inflates on the
+  thread that reads it (measured: 219ms of zlib for 303MB, all of it the reader's own time, whatever queue sat
+  between), so on one thread the indexing and dispatching (~130ms) could only follow it; on two they overlap.
+- The archive is read as slices of the File (`zipEntriesFromBlob`): the big part streams from disk into its inflater,
+  and nothing reads the 51MB whole first.
+- An object's bytes go to its helper in pieces as they inflate (`scanModelXml` resumes on an open object), so the
+  last object is read while its own bytes are still arriving instead of after; that was the parse's tail.
+
+What remains is the floor of this file: ~220ms to inflate 303MB (one deflate stream, zlib at ~1.4GB/s), the last
+object's own parse after that, and the scene. A typical model (11MB STL) shows in ~0.3s.
+
 ## Two things that look optional and are not
 
 - `cross_origin_embedder_policy` / `cross_origin_opener_policy` in the manifest make the extension page cross-origin

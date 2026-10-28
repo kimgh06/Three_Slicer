@@ -81,6 +81,9 @@ async function readSource(source, filename, extensions, fetchImpl) {
   }
   if (!response.ok) throw new IncomingFileError(INCOMING_ERRORS.FETCH_FAILED, `HTTP ${response.status} for ${source}`)
   const name = fileNameOf({ url: source, filename, contentDisposition: response.headers.get('content-disposition') })
+  // A single file stays the Blob the response holds: the viewport reads it once. Reading it into an array here first
+  //  made one more copy of the whole file (51MB for haaland100_f3.3mf). Only an archive is unpacked here.
+  if (fileExt(name) !== ARCHIVE_EXT) return [new File([await response.blob()], name)]
   const bytes = new Uint8Array(await response.arrayBuffer())
   const files = filesFromBytes(bytes, name, extensions)
   if (!files.length) throw new IncomingFileError(INCOMING_ERRORS.NOTHING_TO_OPEN, `${name} holds no file Three Slicer opens (${extensions.join(', ')})`)

@@ -9,6 +9,7 @@
   <body>
     <!-- No inline script: the extension CSP is script-src 'self'. -->
     <div id="root"></div>
+    <!-- build.mjs puts boot.js ahead of this: it starts the 3mf parse worker while the bundle is still compiling. -->
     <script type="module" src="./src/viewer.jsx"></script>
   </body>
 </html>

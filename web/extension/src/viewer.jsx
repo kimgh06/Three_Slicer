@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { openableExtensions } from 'three-slicer-viewer/loaders'
+import { openableExtensions, warmLoaderFor, preloadModel, adoptParseWorker } from 'three-slicer-viewer/loaders'
 import Prepare from '../../viewer/src/Prepare.jsx'
 import '../../viewer/src/styles.css'
 import { fetchIncomingFiles, INCOMING_ERRORS } from './incoming_file.js'
@@ -13,6 +13,38 @@ import { targetNamed } from './targets.js'
 
 const request = requestedFile(window.location.search)
 const TARGET = targetNamed(__TARGET__)
+// The workers that will read the file start now, and the fetch starts now, at module evaluation rather than on the
+//  first render; the parse starts the moment the file is in (preloadModel), so it runs while the screen mounts.
+// Timing a user can read off this tab's console (F12) when an open feels slow, beside the viewport's own
+//  [vp-prof] lines: how long the browser took from the worker's hand-off to this page starting, and this build.
+if (request?.sent) console.info(`[three-slicer] extension ${chrome.runtime.getManifest().version}, build ${__BUILD_TIME__}: worker hand-off -> page start ${Math.round(performance.timeOrigin - Number(request.sent))}ms, bundle evaluated at ${Math.round(performance.now())}ms since page start`)
+
+// The path of an address, '' for one that is not an address: the name only picks a loader to warm, and a bad address
+//  is fetchIncomingFiles' to refuse, on screen, not this module's to throw on.
+function pathOf(address) {
+  try {
+    return new URL(address).pathname
+  } catch {
+    return ''
+  }
+}
+
+let mountLogged = false
+let incoming = null
+if (request) {
+  // The parse worker boot.js (written by build.mjs) started before this bundle loaded.
+  // Not one that already failed to start: its error fired before this bundle could listen, and a parse posted to it
+  //  would wait forever (the loader's own worker reports its failure and falls back in-thread).
+  if (window.threeSlicerBoot?.parseWorker && !window.threeSlicerBoot.failed) adoptParseWorker(window.threeSlicerBoot.parseWorker)
+  warmLoaderFor(request.filename ?? pathOf(request.file ?? request.url))
+  incoming = fileAccessAllowed()
+    .then((fileAccess) => fetchIncomingFiles(request, openableExtensions(), { fileAccess }))
+    .then((files) => {
+      console.info(`[three-slicer] file fetched at ${Math.round(performance.now())}ms since page start, parse started`)
+      for (const file of files) preloadModel(file.name, file)
+      return files
+    })
+}
 
 const noticeStyle = {
   position: 'fixed', left: '50%', top: '56px', transform: 'translateX(-50%)', zIndex: 10,
@@ -52,14 +84,17 @@ function ExtensionViewer() {
     return { status: 'ready', files: null }
   })
   useEffect(() => {
-    if (!request) return
-    fileAccessAllowed()
-      .then((fileAccess) => fetchIncomingFiles(request, openableExtensions(), { fileAccess }))
+    if (!incoming) return
+    incoming
       .then((files) => setState({ status: 'ready', files }))
       .catch((error) => setState({ status: 'failed', failure: { code: error.code, message: String(error?.message || error) } }))
   }, [])
   if (state.status === 'loading') {
     return <div style={{ ...noticeStyle, top: '50%' }} data-testid="incoming-loading">Loading {request.filename || request.url}…</div>
+  }
+  if (state.status === 'ready' && state.files && !mountLogged) {
+    mountLogged = true
+    console.info(`[three-slicer] viewport mounting at ${Math.round(performance.now())}ms since page start`)
   }
   return <>
     <Prepare files={state.files} />

@@ -1,8 +1,9 @@
-// The viewer tab's address: viewer.html?url=<web address>&file=<saved file>&filename=<name>. The service worker writes
-// it and the viewer reads it, so both go through this module. A link carries `url` only; a finished download carries
-// `file` and, when it came from a web address, `url` too.
+// The viewer tab's address: viewer.html?url=<web address>&file=<saved file>&filename=<name>&sent=<ms>. The service
+// worker writes it and the viewer reads it, so both go through this module. A link carries `url` only; a finished
+// download carries `file` and, when it came from a web address, `url` too. `sent` is the epoch millisecond the worker
+// sent the tab here, so the tab can say how long Chrome took to start it (a cold service worker, a new renderer).
 export const VIEWER_PAGE = 'viewer.html'
-const FIELDS = ['url', 'file', 'filename']
+const FIELDS = ['url', 'file', 'filename', 'sent']
 
 export function viewerQuery(request) {
   const params = new URLSearchParams()
