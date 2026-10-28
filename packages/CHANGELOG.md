@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.1 — 2026-10-28
+
+### Added
+
+- Up to 30 plates (was 9; upstream allows 36). A 3mf with more plates than 9 was cut to 9 on import, leaving the other
+  plates' objects where the file put them. The plate bar wraps into rows.
+- `loadModel` accepts a `File` or `Blob`, and a 3mf goes to its parse worker unread. `preloadModel` starts a parse the
+  viewport's next load takes over, `warmLoaderFor` starts the parse workers for a file still on its way, and
+  `adoptParseWorker` takes a parse worker the host started before the bundle loaded. `three-slicer-viewer/workers`
+  exports the worker factories, and `openableExtensions()` (`three-slicer-viewer/loaders`) lists every extension the
+  viewport opens.
+
+### Changed
+
+- A 3mf whose meshes sit in one large part (every MakerWorld project) is read by several workers while it inflates.
+  Measured on a 51MB, 303MB-of-XML project in the browser extension: 1,241ms to the scene before, 458-502ms after.
+- Loaded meshes are flat-shaded without a normal attribute (136MB less GPU upload on a 3.79M-facet model; a rendered
+  Benchy differs in 110 of 1,024,000 pixels, by at most 1 level).
+
+### Fixed
+
+- A 3mf object's `support_enforcer` / `support_blocker` parts were merged into the printed mesh when the object had no
+  per-volume face ranges (a 30mm enforcer cube stuck out of two objects of the Hylian Shield project and lifted them 6mm).
+- A large plate layout drew its far plates as background: the camera's far plane was fixed at 3000mm. The depth range
+  now reaches the whole layout at the same far/near ratio.
+- Under a Content Security Policy without `'unsafe-eval'` (a browser extension page) neither kernel loaded and every
+  setting stayed enabled. Both kernels are linked with `-s DYNAMIC_EXECUTION=0` (mt wasm byte-identical, golden
+  unchanged), and the toggle evaluator parses `enable_if` itself; `test_toggle_parity.mjs` pins it to what `Function`
+  gave over every upstream rule.
+
 ## 0.4.0 — 2026-10-24
 
 ### Removed (breaking)
