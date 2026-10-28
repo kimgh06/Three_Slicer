@@ -1,6 +1,6 @@
 // The extension's service worker: opens a slicer tab from the toolbar button, a link's context menu, a finished model
 // download and a site badge. MV3 stops it when idle, so what it must remember lives in chrome.storage.session.
-import { contextMenuPatterns, downloadToOpen, sameDownloadName } from './link_filter.js'
+import { contextMenuPatterns, downloadToOpen, fileUrlOf, localModelToOpen, sameDownloadName } from './link_filter.js'
 import { loadSettings } from './settings.js'
 import { targetNamed } from './targets.js'
 import { viewerQuery, VIEWER_PAGE } from './viewer_query.js'
@@ -16,7 +16,7 @@ const EXPECTED_FOR_MS = 60_000
 
 function openViewer(request) {
   let page = VIEWER_PAGE
-  if (request) page = viewerQuery(request)
+  if (request) page = viewerQuery({ ...request, sent: Date.now() })
   return chrome.tabs.create({ url: chrome.runtime.getURL(page) })
 }
 
@@ -68,20 +68,63 @@ function openableDownload(item) {
   return byAddress
 }
 
+// Every download decision is logged to the service worker console (chrome://extensions -> Three Slicer -> service
+// worker), so "it did not open" can be told apart from "the browser never reported the download".
+function logDownload(item, decision) {
+  console.info('[three-slicer] download', item.id, decision, { state: item.state, filename: item.filename, url: item.finalUrl || item.url, mime: item.mime })
+}
+
+// A local model's tab goes to the slicer before Chrome makes a download of it, so the original file is read and no copy
+// is left in Downloads. Where the redirect lost the race, the download that follows is the copy: cancelled and removed.
+const redirectedLocalFiles = new Set()
+
+function redirectLocalModel(tabId, url) {
+  if (!TARGET.readsSavedFiles) return
+  const request = localModelToOpen(url, EXTENSIONS)
+  if (!request) return
+  redirectedLocalFiles.add(url)
+  console.info('[three-slicer] local file opened in the slicer tab', url)
+  chrome.tabs.update(tabId, { url: chrome.runtime.getURL(viewerQuery({ ...request, sent: Date.now() })) })
+}
+
+chrome.tabs.onCreated.addListener((tab) => redirectLocalModel(tab.id, tab.pendingUrl))
+chrome.tabs.onUpdated.addListener((tabId, change) => redirectLocalModel(tabId, change.url))
+
+async function removeLocalCopy(item) {
+  console.info('[three-slicer] download', item.id, 'is the copy of a local file already open: removed')
+  await chrome.downloads.cancel(item.id).catch(() => {})
+  if (item.state === 'complete' && item.filename && fileUrlOf(item.filename) !== item.url) await chrome.downloads.removeFile(item.id).catch(() => {})
+  await chrome.downloads.erase({ id: item.id }).catch(() => {})
+}
+
 async function maybeOpenDownload(item) {
+  if (redirectedLocalFiles.has(item.url)) {
+    await removeLocalCopy(item)
+    return
+  }
   const request = openableDownload(item)
-  if (!request || claimedDownloads.has(item.id)) return
+  if (!request) {
+    logDownload(item, 'not opened: not a finished download of a file the slicer opens')
+    return
+  }
+  if (claimedDownloads.has(item.id)) return
   claimedDownloads.add(item.id)
   const key = OPENED_PREFIX + item.id
   if ((await chrome.storage.session.get(key))[key]) return
   await chrome.storage.session.set({ [key]: true })
   const settings = await loadSettings(chrome.storage)
   const expected = await takeExpected(request.filename)
-  if (settings.openDownloads || expected) await openViewer(request)
+  if (!settings.openDownloads && !expected) {
+    logDownload(item, 'not opened: "Open downloaded models" is off')
+    return
+  }
+  logDownload(item, 'opened in a slicer tab')
+  await openViewer(request)
 }
 
 chrome.downloads.onCreated.addListener((item) => maybeOpenDownload(item))
 chrome.downloads.onChanged.addListener(async (delta) => {
+  if (delta.state?.current) console.info('[three-slicer] download', delta.id, 'state ->', delta.state.current, delta.error?.current ?? '')
   if (delta.state?.current !== 'complete') return
   const [item] = await chrome.downloads.search({ id: delta.id })
   if (item) await maybeOpenDownload(item)

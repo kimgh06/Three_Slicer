@@ -61,6 +61,16 @@ export function downloadToOpen(item, extensions) {
   return request
 }
 
+// A model file opened from this computer: Chrome opens it as a new tab heading for its file: URL (a drop on a tab or
+// on the tab strip, "Open With > Google Chrome"; measured, both create a tab with that pendingUrl), then turns it into a
+// download that copies the file into Downloads. The request for that tab, or null for any other address.
+export function localModelToOpen(url, extensions) {
+  if (protocolOf(url) !== 'file:') return null
+  const filename = decodeURIComponent(new URL(url).pathname.split('/').pop())
+  if (!extensions.includes(fileExt(filename))) return null
+  return { file: url, filename }
+}
+
 // The browser saves "benchy.stl" as "benchy (1).stl" when the folder has one already; a badge expecting the first
 // name must still recognise the second.
 export function sameDownloadName(saved, expected) {

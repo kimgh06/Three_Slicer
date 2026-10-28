@@ -10,7 +10,7 @@ import '../../viewer/src/step_loader.js'
 import { viewerQuery, requestedFile, VIEWER_PAGE } from '../src/viewer_query.js'
 import { fileNameOf, filenameFromContentDisposition, filesFromBytes, fetchIncomingFiles, INCOMING_ERRORS } from '../src/incoming_file.js'
 import { ARCHIVE_EXT } from '../src/archive.js'
-import { urlExtension, contextMenuPatterns, linkExtensions, downloadToOpen, fileUrlOf, sameDownloadName } from '../src/link_filter.js'
+import { urlExtension, contextMenuPatterns, linkExtensions, downloadToOpen, fileUrlOf, sameDownloadName, localModelToOpen } from '../src/link_filter.js'
 import { DEFAULT_SETTINGS, loadSettings } from '../src/settings.js'
 import { DEFAULT_TARGET, TARGETS, targetNamed } from '../src/targets.js'
 
@@ -139,6 +139,8 @@ console.log('\n[links and downloads]')
   check('a G-code download opens', downloadToOpen(item({ filename: '/d/boat.gcode' }), EXTENSIONS) !== null)
   check('a text download does not', downloadToOpen(item({ filename: '/d/notes.txt' }), EXTENSIONS) === null)
   check('a zip download does not', downloadToOpen(item({ filename: `/d/boat.${ARCHIVE_EXT}` }), EXTENSIONS) === null)
+  check('a local model file opens as itself', JSON.stringify(localModelToOpen('file:///Users/me/Down%20loads/haaland.3mf', EXTENSIONS)) === JSON.stringify({ file: 'file:///Users/me/Down%20loads/haaland.3mf', filename: 'haaland.3mf' }))
+  check('a local file of another type, a web model and a blank tab do not', localModelToOpen('file:///Users/me/notes.txt', EXTENSIONS) === null && localModelToOpen('https://a.test/m.stl', EXTENSIONS) === null && localModelToOpen(undefined, EXTENSIONS) === null)
   check('a renamed copy is still the announced download', sameDownloadName('benchy (2).stl', 'benchy.stl') && sameDownloadName('benchy.stl', 'benchy.stl'))
   check('another file is not', !sameDownloadName('benchy2.stl', 'benchy.stl') && !sameDownloadName('benchy (2).stl.txt', 'benchy.stl'))
 }
