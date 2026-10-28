@@ -39,7 +39,10 @@ Open 3D printing model files from the web in a slicer that runs in the browser.
 
 ## Assets
 
-- Icon: `icons/icon-128.png`
+- Store icon: `store/store-icon-128.png` — `web/viewer/public/favicon.svg` drawn at 96x96 inside a transparent 128x128
+  canvas, the 16px padding the Chrome Web Store's image guidelines ask for. The manifest's `icons/icon-128.png` is the
+  same drawing filling the whole canvas (pixel-identical to the SVG drawn at 128 in Chromium), which suits the toolbar
+  and the extensions page.
 - Screenshots (1280x800): `store/screenshot-prepare.png`, `store/screenshot-preview.png`, regenerated with
   `node store/screenshots.mjs` after a build.
 - Privacy policy: `store/PRIVACY.md`
