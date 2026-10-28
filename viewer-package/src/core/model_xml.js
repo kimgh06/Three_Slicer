@@ -136,10 +136,15 @@ class Values {
   view() { return this.data.subarray(0, this.length) }
 }
 
-/** One .model part's bytes -> { objects, items } (see the file header). */
-export function scanModelXml(bytes) {
+/**
+ * One .model part's bytes -> { objects, items, openObject } (see the file header). A part can be read in pieces cut
+ *  between tags: an <object> the piece ends inside comes back as `openObject`, and handed to the next call it is
+ *  continued there, so the pieces give what the whole part gives. The vertex and triangle numbering runs on across
+ *  pieces, and so does the paint keyed by it.
+ */
+export function scanModelXml(bytes, openObject = null) {
   const objects = new Map(), items = []
-  let object = null              // the <object> being read: { id, components, verts, tris, paint }
+  let object = openObject        // the <object> being read: { id, components, verts, tris, paint }
   let buildState = 0             // 0 before the first <build>, 1 inside it, 2 after it
   let x = 0, y = 0, z = 0, v1 = 0, v2 = 0, v3 = 0, attrObjectId = null, attrPath = null, attrLocalPath = null, attrTransform = null
   let paintValues = null
@@ -278,5 +283,124 @@ export function scanModelXml(bytes) {
     }
     index = bytes.indexOf(62, nameEnd) + 1 || length
   }
-  return { objects, items }
+  return { objects, items, openObject: object }
+}
+
+/**
+ * Where each object of one .model part sits, without reading a mesh: { objects: Map(id -> { start, end, components,
+ *  hasMesh }), items }. `start`..`end` spans the object's tags from its '<' to just past its '>' or '</object>', so a
+ *  part made of some of these spans read with scanModelXml gives those objects exactly as the whole part does.
+ *  components and items are what scanModelXml returns for them. It is what lets the parse send the objects of one big
+ *  part (a MakerWorld project keeps all 17 of its meshes, 316MB of XML, in 3D/3dmodel.model) to several workers.
+ */
+export function indexModelXml(bytes) {
+  const indexer = createModelIndexer(bytes)
+  indexer.advance(bytes.length)
+  return indexer.finish()
+}
+
+/**
+ * indexModelXml over a part that is still arriving: `bytes` is the whole part's buffer, filled from the front, and
+ *  advance(received) reads what is there up to `received`, returning the objects that became complete. A tag cut by
+ *  the end of the received bytes is read again on the next call, so the result does not depend on how the part was
+ *  chunked. finish() returns { objects, items } once every byte is in. This is what lets an object go to a worker
+ *  while the archive is still being inflated.
+ */
+export function createModelIndexer(bytes) {
+  const objects = new Map(), items = []
+  let current = null             // { id, start, components, hasMesh } while inside an <object>
+  let buildState = 0
+  let attrObjectId = null, attrPath = null, attrLocalPath = null, attrTransform = null, objectId = null
+  let index = 0                  // the next byte to read
+  let meshFrom = -1              // inside a mesh: where the search for its object's end goes on from
+  const reference = () => ({ objectid: attrObjectId, path: attrPath || attrLocalPath, transform: parseTransform(attrTransform) })
+  const readReference = (nameStart, nameEnd, valueStart, valueEnd) => {
+    if (nameIs(bytes, nameStart, nameEnd, 'objectid')) attrObjectId = text(bytes, valueStart, valueEnd)
+    else if (nameIs(bytes, nameStart, nameEnd, 'p:path')) attrPath = text(bytes, valueStart, valueEnd)
+    else if (nameIs(bytes, nameStart, nameEnd, 'path')) attrLocalPath = text(bytes, valueStart, valueEnd)
+    else if (nameIs(bytes, nameStart, nameEnd, 'transform')) attrTransform = text(bytes, valueStart, valueEnd)
+  }
+  const readObject = (nameStart, nameEnd, valueStart, valueEnd) => {
+    if (nameIs(bytes, nameStart, nameEnd, 'id')) objectId = text(bytes, valueStart, valueEnd)
+  }
+
+  function advance(received) {
+    const completed = []
+    // Searches stop at the received bytes: past them the buffer is still zeros, and an indexOf that ran on to the end
+    //  of it on every call made a 64KB-chunked pass over 303MB take 19s instead of tens of milliseconds.
+    const arrived = bytes.subarray(0, received)
+    const finish = (end) => {
+      if (current.id) {
+        const object = { id: current.id, start: current.start, end, components: current.components, hasMesh: current.hasMesh && !current.components.length }
+        objects.set(current.id, object)
+        completed.push(object)
+      }
+      current = null
+    }
+    for (;;) {
+      if (meshFrom >= 0) {
+        // A mesh holds vertex and triangle tags only: digits, quotes, spaces, x y z v1 v2 v3 and paint_* hex values,
+        //  none of which is a 'j'. "</object>" has one, so the end of the object is found by jumping from 'j' to 'j'
+        //  (one native indexOf over the whole mesh) instead of visiting each of its tags (measured on the 303MB
+        //  part above: 150ms -> 72ms).
+        let at = arrived.indexOf(106, meshFrom)                          // 'j'
+        while (at >= 0 && !(bytes[at - 4] === 60 && bytes[at - 3] === 47 && bytes[at - 2] === 111 && bytes[at - 1] === 98)) at = arrived.indexOf(106, at + 1)
+        if (at < 0) { meshFrom = Math.max(meshFrom, received - 4); return completed }
+        index = at - 4                                                   // the '<' of "</object>"
+        meshFrom = -1
+      }
+      const tagStart = arrived.indexOf(60, index)                        // '<'
+      if (tagStart < 0) { index = received; return completed }
+      // A tag is read only once its '>' has arrived; until then the next call starts from its '<' again.
+      const tagEnd = arrived.indexOf(62, tagStart)
+      if (tagEnd < 0) { index = tagStart; return completed }
+      let nameStart = tagStart + 1
+      const closing = bytes[nameStart] === 47
+      if (closing) nameStart++
+      const first = bytes[nameStart]
+      if (first === 33 || first === 63) {                                // <!-- … -->, <?…?>, <![CDATA[…]]>
+        if (bytes[nameStart + 1] === 45 && bytes[nameStart + 2] === 45) {
+          let end = nameStart + 3
+          while ((end = arrived.indexOf(45, end)) >= 0 && !(bytes[end + 1] === 45 && bytes[end + 2] === 62)) end++
+          if (end < 0 || end + 3 > received) { index = tagStart; return completed }
+          index = end + 3
+        } else index = tagEnd + 1
+        continue
+      }
+      let nameEnd = nameStart
+      while (nameEnd < tagEnd && !isSpace(bytes[nameEnd]) && bytes[nameEnd] !== 62 && bytes[nameEnd] !== 47) nameEnd++
+      index = tagEnd + 1
+      if (closing) {
+        if (current && nameIs(bytes, nameStart, nameEnd, 'object')) finish(index)
+        else if (buildState === 1 && nameIs(bytes, nameStart, nameEnd, 'build')) buildState = 2
+        continue
+      }
+      if (current) {
+        if (nameIs(bytes, nameStart, nameEnd, 'mesh')) {
+          current.hasMesh = true
+          meshFrom = index
+        } else if (nameIs(bytes, nameStart, nameEnd, 'component')) {
+          attrObjectId = null; attrPath = null; attrLocalPath = null; attrTransform = null
+          readAttributes(bytes, nameEnd, readReference)
+          if (attrObjectId) current.components.push(reference())
+        }
+      } else if (nameIs(bytes, nameStart, nameEnd, 'object')) {
+        objectId = null
+        readAttributes(bytes, nameEnd, readObject)
+        current = { id: objectId, start: tagStart, components: [], hasMesh: false }
+        if (bytes[tagEnd - 1] === 47) finish(index)                     // <object … /> carries nothing
+      } else if (buildState === 0 && nameIs(bytes, nameStart, nameEnd, 'build')) {
+        buildState = 1
+        if (bytes[tagEnd - 1] === 47) buildState = 2
+      } else if (buildState === 1 && nameIs(bytes, nameStart, nameEnd, 'item')) {
+        attrObjectId = null; attrPath = null; attrLocalPath = null; attrTransform = null
+        readAttributes(bytes, nameEnd, readReference)
+        if (attrObjectId) items.push(reference())
+      }
+    }
+  }
+  // The object the received bytes end inside, or null: { id, start, hasMesh }. What a reader that follows the part as
+  //  it arrives starts on before the object is complete.
+  const open = () => current
+  return { advance, open, finish: () => ({ objects, items }) }
 }
