@@ -116,9 +116,14 @@ await context.addInitScript(() => {
 })
 
 // The viewport lives in a shadow root; Playwright's text locators pierce it, innerText does not.
+// The version badge shares the status line and its text runs straight into the count: "v0.4.1" + "1 object(s)" read
+//  as 11 objects (under 0.4.0 "v0.4.01" read as 1, by chance). The badge's own text comes off before the count is read.
 async function loadedObjects(page) {
-  const status = await page.getByText(/\d+ object\(s\)/).first().textContent({ timeout: 15000 }).catch(() => null)
-  return Number(/(\d+) object\(s\)/.exec(status ?? '')?.[1] ?? 0)
+  const status = page.locator('[data-testid="vp-status"]').filter({ hasText: /\d+ object\(s\)/ }).first()
+  const text = await status.textContent({ timeout: 15000 }).catch(() => null)
+  if (text === null) return 0
+  const badge = await status.locator('[data-testid="version-badge"]').textContent({ timeout: 1000 }).catch(() => '')
+  return Number(/(\d+) object\(s\)/.exec(text.replace(badge, ''))?.[1] ?? 0)
 }
 async function incomingError(page) {
   return page.locator('[data-testid="incoming-error"]').textContent({ timeout: 15000 }).catch(() => null)
