@@ -397,5 +397,41 @@ check('unparsable project_settings yields null settings', broken.project.setting
   eq('a plain project replaces the overrides with none', plain.plateSettingsAfter, {})
 }
 
+// A support enforcer or blocker added to an object in OrcaSlicer/BambuStudio is a <part subtype> of the object in
+//  model_settings.config, its mesh a component in 3D/Objects/*.model, with no triangle range. It must leave the
+//  printable mesh and come back as a modifier volume (MakerWorld's Hylian Shield: a 30mm enforcer cube printed as a
+//  solid block and lifted the model 6mm off the bed).
+{
+  const cube = (id, at, size) => {
+    const v = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+      .map(([x, y, z]) => `<vertex x="${at[0] + x * size}" y="${at[1] + y * size}" z="${at[2] + z * size}"/>`).join('')
+    const f = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]]
+      .map(([a, b, c]) => `<triangle v1="${a}" v2="${b}" v3="${c}"/>`).join('')
+    return `<object id="${id}" type="model"><mesh><vertices>${v}</vertices><triangles>${f}</triangles></mesh></object>`
+  }
+  const rels = '<Relationships><Relationship Target="/3D/3dmodel.model" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'
+  const project = (parts, components) => zipSync({
+    '_rels/.rels': strToU8(rels),
+    '3D/3dmodel.model': strToU8(`<model><resources><object id="2">${components}</object></resources><build><item objectid="2"/></build></model>`),
+    '3D/Objects/body.model': strToU8(`<model><resources>${cube(11, [0, 0, 0], 10)}${cube(12, [2, -20, -6], 30)}</resources></model>`),
+    'Metadata/model_settings.config': strToU8(`<config><object id="2"><metadata key="name" value="bird"/>${parts}</object></config>`),
+  })
+  const part = (id, subtype) => `<part id="${id}" subtype="${subtype}"><metadata key="name" value="p${id}"/><mesh_stat face_count="12"/></part>`
+  const inOrder = '<components><component p:path="/3D/Objects/body.model" objectid="11"/><component p:path="/3D/Objects/body.model" objectid="12"/></components>'
+  const zOf = (object) => { let min = Infinity; for (let i = 2; i < object.tris.length; i += 3) min = Math.min(min, object.tris[i]); return min }
+
+  const enforced = (await parse3MFProject(project(part(11, 'normal_part') + part(12, 'support_enforcer'), inOrder), 'bird')).objects[0]
+  check('a support_enforcer part leaves the printable mesh', enforced.tris.length / 9 === 12, String(enforced.tris.length / 9))
+  check('and comes back as an enforcer modifier volume', enforced.sla.modifierVolumes.length === 1 && enforced.sla.modifierVolumes[0].kind === 'enforcer' && enforced.sla.modifierVolumes[0].tris.length / 9 === 12)
+  check('the printable mesh keeps its own bounds (the box reached 6mm below it)', zOf(enforced) === 0 && enforced.bbox.maxY === 10, JSON.stringify(enforced.bbox))
+  const blocked = (await parse3MFProject(project(part(11, 'normal_part') + part(12, 'support_blocker'), inOrder), 'bird')).objects[0]
+  check('a support_blocker part is a blocker volume', blocked.tris.length / 9 === 12 && blocked.sla.modifierVolumes[0]?.kind === 'blocker')
+  const swapped = '<components><component p:path="/3D/Objects/body.model" objectid="12"/><component p:path="/3D/Objects/body.model" objectid="11"/></components>'
+  const unmatched = (await parse3MFProject(project(part(11, 'normal_part') + part(12, 'support_enforcer'), swapped), 'bird')).objects[0]
+  check('parts that are not the components in order are not guessed at (the whole mesh stays)', unmatched.tris.length / 9 === 24 && unmatched.sla.modifierVolumes.length === 0)
+  const plain = (await parse3MFProject(project(part(11, 'normal_part') + part(12, 'normal_part'), inOrder), 'bird')).objects[0]
+  check('two normal parts both print', plain.tris.length / 9 === 24 && plain.sla.modifierVolumes.length === 0)
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\n3MF project import passed')
 process.exit(failures ? 1 : 0)

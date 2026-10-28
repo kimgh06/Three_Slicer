@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Three Slicer options</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; min-width: 320px; }
+      label { display: flex; gap: 8px; align-items: flex-start; }
+      p { color: #5b6672; margin: 4px 0 0 24px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <label><input type="checkbox" id="openDownloads" /> Open downloaded models in Three Slicer</label>
+    <p><span id="formats"></span> downloads open in a slicer tab. The file is still saved as usual.</p>
+    <script type="module" src="./src/options.js"></script>
+  </body>
+</html>

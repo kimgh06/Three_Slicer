@@ -67,6 +67,13 @@ handle.setColors(computeColors(data, 'speed', ctx).color) // recolour without a 
   `/gcode` import neither React nor three (`makeToolpath` takes the THREE namespace as an argument), so a
   headless consumer pulls in no renderer at all.
 
+## Starting the 3mf parse worker early
+
+`three-slicer-viewer/workers` exports the factories of this package's workers. A host that can run a script before
+its bundle (the browser extension in the monorepo does) starts `makeParse3mfWorker()` there and hands it to
+`adoptParseWorker` from `three-slicer-viewer/loaders`; `preloadModel(name, file)` then starts a parse before the
+viewport mounts, and `<Viewport files>` takes its result.
+
 ## Licensing
 
 MIT. It depends on nothing AGPL, which a check in this repository enforces rather than documents

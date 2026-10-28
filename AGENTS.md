@@ -5,9 +5,9 @@ Three_Slicer — a browser/WASM slicer reverse-engineered from OrcaSlicer. The r
 - **`slicers/`** — the upstream reference checkouts, untracked: OrcaSlicer at `slicers/slicer` (the extraction/porting source — its own guide is `slicers/slicer/AGENTS.md`) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 - **`packages/`** — the published npm package `three-slicer` (AGPL) plus the kernel sources. Zero build or runtime dependency on `slicers/`.
 - **`viewer-package/`** — the published npm package `three-slicer-viewer` (MIT): the viewer without the slicer — model loading, G-code parsing, GPU toolpath rendering, the catalog-free settings transforms, the toggle evaluator (unbound), `<SettingsPanel/>` and `<Viewport/>` themselves. A host plugs the kernel worker and the vendor catalog into it through props (`web/viewer/src/kernel_viewport.jsx` and `settings_panel.jsx` are the demo's binding); `three-slicer` itself has no React code. The two publish as a locked pair (same version, exact pin — `packages/RELICENSE.md`).
-- **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md` (the stage log is split out as `web/HISTORY.md`), `web/GUIDE.md`, `web/SPECS.md`.
+- **`web/`** — the demo app shell. It consumes the package as a workspace (no relative-path imports). Details: `web/README.md` (the stage log is split out as `web/HISTORY.md`), `web/GUIDE.md`, `web/SPECS.md`. `web/extension/` is the browser extension: the app's `/slice` screen built a second time as an extension page, plus the link, download and Thingiverse hand-off (`web/extension/README.md`).
 
-The root `package.json` is the npm workspaces root (`viewer-package`, `packages`, `web/viewer`) — a single `npm i` at the root installs everything. `viewer-package` comes first because `packages` depends on it.
+The root `package.json` is the npm workspaces root (`viewer-package`, `packages`, `web/viewer`, `web/extension`) — a single `npm i` at the root installs everything. `viewer-package` comes first because `packages` depends on it.
 
 ## Core rules
 
@@ -578,6 +578,13 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   toolpaths every FFF plate keeps after slice-all. Before this, two resin plates showed only the focused one and
   the other read as a missing result. `core/sla_preview.js` is the one place the payload (lift, offsets, meshes)
   is derived, so the two previews cannot disagree on where a support tree stands.
+- **Shipped code never evaluates a string.** The browser extension's pages run under `script-src 'self'
+  'wasm-unsafe-eval'`, and anything that builds code from text fails there, silently, and nowhere else: embind's
+  invokers (`new Function`) kept either kernel from loading until both links got `-s DYNAMIC_EXECUTION=0`
+  (`build.sh`; mt wasm and golden byte-identical), and the settings toggle evaluator's `Function` call left every option
+  enabled (3 fields disabled on the site, 0 in the extension, 564 CSP violations) until `evaluateBooleanExpression`
+  (`toggle_eval.js`) parsed the restricted grammar itself — `test_toggle_parity.mjs` pins it to what `Function` gave
+  over every upstream rule. The extension e2e test records CSP violations on the viewer tab and fails on any.
 - UI components (viewer, components) are Shadow DOM isolated — each package's `styles.css` is inlined into the bundle via `?inline` and injected into the shadow root, so class names cannot collide with the host app's CSS. Their colours are `var(--_…)` references to `UI_TOKENS` (`viewer-package/src/core/theme.js`), prepended to each root as `THEME_CSS`; each also reads a public `--vp-…` override, the one styling hook that crosses the boundary. `test_viewer_docs.mjs` fails on a literal colour in either stylesheet.
 - **SLA is a second technology, not an FFF variant.** `printer_technology` routes it: `deriveSlaParams` ->
   `slice_sla`, with a JS contour fallback when the wasm is absent. The support chain under

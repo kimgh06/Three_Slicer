@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Three Slicer</title>
+    <link rel="icon" href="icons/icon-32.png" type="image/png" />
+  </head>
+  <body>
+    <!-- No inline script: the extension CSP is script-src 'self'. -->
+    <div id="root"></div>
+    <!-- build.mjs puts boot.js ahead of this: it starts the 3mf parse worker while the bundle is still compiling. -->
+    <script type="module" src="./src/viewer.jsx"></script>
+  </body>
+</html>

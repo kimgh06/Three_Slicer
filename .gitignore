@@ -28,6 +28,8 @@ node_modules/
 
 # ── web/ (the demo app) + packages/ (the npm workspaces) ──
 web/**/dist/
+web/extension/three-slicer-extension-*.zip
+web/extension/dist-firefox/
 examples/**/dist/
 web/viewer/public/demos/
 web/**/*.gcode

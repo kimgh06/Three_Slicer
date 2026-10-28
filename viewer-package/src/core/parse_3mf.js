@@ -7,8 +7,8 @@
 // With no DOMParser dependency it is testable under node as-is.
 import { unzipSync, unzip } from 'three/examples/jsm/libs/fflate.module.js'
 import { SLA_POINT_RADIUS } from './viewer_defaults.js'
-import { scanModelXml, parseTransform, PAINT_ATTRS, emptyPaint, paintIsEmpty } from './model_xml.js'
-import { zipEntries, entryData, inflateEntry } from './zip_entries.js'
+import { scanModelXml, indexModelXml, createModelIndexer, parseTransform, PAINT_ATTRS, emptyPaint, paintIsEmpty } from './model_xml.js'
+import { zipEntries, zipEntriesFromBlob, entryData, inflateEntry, inflateEntryProgressively } from './zip_entries.js'
 import { bakeModel } from './bake_local.js'
 
 export { emptyPaint, paintIsEmpty }
@@ -71,9 +71,16 @@ function metadataPairs(fragment) {
   return out
 }
 
+// A <part>'s subtype -> the modifier kind it is, for the two the viewer keeps (support painting's states); the
+//  printable kind is normal_part. OrcaSlicer/BambuStudio write a support enforcer or blocker added to an object this
+//  way: a part of the object, its mesh a component of it in 3D/Objects/*.model, with no triangle range (the older
+//  <volume firstid lastid> form has one).
+const PART_MODIFIER_KINDS = { support_enforcer: 'enforcer', support_blocker: 'blocker' }
+
 function parseModelSettings(xml) {
   const objects = new Map()   // 3mf object id -> {name, extruder, …} (the <metadata> of that object)
   const volumes = new Map()
+  const partVolumes = new Map()   // object id -> { partIds, records }: modifier parts, ranged by the parts' face counts
   const OBJ_RE = /<object\b([^>]*)>([\s\S]*?)<\/object>/g
   let m
   while ((m = OBJ_RE.exec(xml))) {
@@ -92,6 +99,22 @@ function parseModelSettings(xml) {
           records.push({ firstTriangle, lastTriangle, kind })
       }
       if (records.length) volumes.set(id, records)
+      // <part> form: each part's triangles follow the ones before it, in the order the parts are listed, which is the
+      //  order of the object's components. The ranges come from the parts' face counts; parse3MFProject uses them
+      //  only when the components are exactly these parts in this order.
+      const parts = (body.match(/<part\b[\s\S]*?<\/part>/g) || []).map((part) => ({
+        id: attr(part, 'id'), subtype: attr(part, 'subtype'), faces: Number(attr(part.replace(/^<part\b[^>]*>/, ''), 'face_count')),
+      }))
+      if (parts.some((part) => PART_MODIFIER_KINDS[part.subtype]) && parts.every((part) => part.id && Number.isInteger(part.faces) && part.faces >= 0)) {
+        const partRecords = []
+        let first = 0
+        for (const part of parts) {
+          const kind = PART_MODIFIER_KINDS[part.subtype]
+          if (kind && part.faces) partRecords.push({ firstTriangle: first, lastTriangle: first + part.faces - 1, kind })
+          first += part.faces
+        }
+        partVolumes.set(id, { partIds: parts.map((part) => part.id), records: partRecords })
+      }
     }
   }
   const plates = []
@@ -107,7 +130,7 @@ function parseModelSettings(xml) {
     // plater_id is 1-based upstream; the viewer's plates are 0-based.
     plates.push({ index: Math.max(0, (Number(meta.plater_id) || plates.length + 1) - 1), objectIds, gcodeFile: meta.gcode_file || null })
   }
-  return { objects, plates, volumes }
+  return { objects, plates, volumes, partVolumes }
 }
 
 const SLA_CAPABILITIES = Object.freeze({
@@ -162,6 +185,7 @@ function readProject(files, dec) {
     hasLayerHeightProfile: false,
     hasCustomGcodePerLayer: false,
     volumeMeta: new Map(),
+    partVolumeMeta: new Map(),
     sla: { capabilities: { ...SLA_CAPABILITIES }, issues: [], supportPoints: new Map(), drainHoles: new Map() },
     viewerSettings: null,  // Metadata/three_slicer_settings.json — this package's own member (write_3mf.js)
     plateSettings: null,   //  ...its two halves: global viewer knobs, and per-plate overrides keyed by plate index
@@ -196,6 +220,7 @@ function readProject(files, dec) {
     project.objectMeta = parsed.objects
     project.plates = parsed.plates
     project.volumeMeta = parsed.volumes
+    project.partVolumeMeta = parsed.partVolumes
   }
   // A .gcode.3mf is told apart by its CONTENT, not its name: a <plate> record naming a G-code member that exists.
   //  Upstream decides the same way (a plate with a valid slice result, Plater.cpp) — the file name is only a
@@ -230,6 +255,18 @@ function readProject(files, dec) {
 // Thrown by a job's getModel for a part that exists in the archive but was not sent to the job; the item is then
 //  built where the whole archive is.
 const NOT_IN_JOB = Symbol('part not in job')
+
+// A job's copy of the root part may hold only the objects its items were found to need (parse3MFProject). An object
+//  missing from it is then not "absent from the file" but "not sent": the item is built where the whole part is.
+function onlySentObjects(objects) {
+  return {
+    get(objectid) {
+      const object = objects.get(objectid)
+      if (!object) throw NOT_IN_JOB
+      return object
+    },
+  }
+}
 
 function walk(objectid, path, xf, depth, getModel, visit) {
   if (depth > 16) return   // guards against circular references
@@ -317,10 +354,21 @@ function finishItem({ sink, paintSink }, volumeRecords, bake) {
  *   ->   { items: [{ index, built } | { index, local: true }] }
  */
 export async function runItemJob(job) {
+  const models = await modelsOf(job.members)
+  return { items: buildJobItems(job, models) }
+}
+
+async function modelsOf(members) {
   const models = new Map()
-  await Promise.all(job.members.map(async (member) => {
-    models.set(member.path, scanModelXml(await inflateEntry(member.data, member.entry)))
+  await Promise.all(members.map(async (member) => {
+    const model = scanModelXml(await inflateEntry(member.data, member.entry))
+    if (member.partial) model.objects = onlySentObjects(model.objects)
+    models.set(member.path, model)
   }))
+  return models
+}
+
+function buildJobItems(job, models) {
   const names = new Set(job.names)
   const getModel = (path) => {
     const normalized = normPath(path)
@@ -328,40 +376,205 @@ export async function runItemJob(job) {
     if (names.has(normalized)) throw NOT_IN_JOB
     return null
   }
-  return {
-    items: job.items.map((item) => {
-      try {
-        return { index: item.index, built: finishItem(emitItem(item.refs, getModel), item.volumeRecords, job.bake) }
-      } catch (error) {
-        if (error === NOT_IN_JOB) return { index: item.index, local: true }
-        throw error
-      }
-    }),
+  return job.items.map((item) => {
+    try {
+      return { index: item.index, built: finishItem(emitItem(item.refs, getModel), item.volumeRecords, job.bake) }
+    } catch (error) {
+      if (error === NOT_IN_JOB) return { index: item.index, local: true }
+      throw error
+    }
+  })
+}
+
+// ---- A pool of helpers that keep what they read ---------------------------------------------------------------------
+// The root part arrives as one inflating stream, and its <build> comes last (haaland100_f3.3mf: 100.00% into 303MB),
+//  so no item can be built before the whole part is in. Its mesh objects can be read before that: a pool helper is
+//  sent each object's span as soon as it is complete (scanKeptObjects) and keeps the result, and once the build is
+//  known it is sent the items of those objects (runKeptItemJob) — transforming and baking them is all that is left.
+
+/**
+ * What a pool helper keeps across one parse: the objects it read, the ones it already built as they stand, and the
+ *  objects it is still reading piece by piece (scanModelXml's openObject, by object id).
+ */
+export function createKept() {
+  return { objects: new Map(), ready: new Map(), open: new Map() }
+}
+
+const isIdentity = (xf) => xf.length === 12 && xf.every((value, k) => value === IDENT[k])
+
+/**
+ * A pool helper's scan: reads the object spans in `data` into `kept.objects`. Each mesh object is also built as it
+ *  stands — transformed by the identity and baked — into `kept.ready`, while the archive is still inflating: a build
+ *  item that places the object as it stands (every item of a MakerWorld project does, measured: 17 of 17) then has
+ *  nothing left to do once the build is known. Under the identity the arithmetic is the normal path's exactly
+ *  (x*1 + y*0 + z*0 + 0 is x), so the result is byte-identical; any other transform builds the normal way.
+ */
+export function scanKeptObjects(data, kept, { bake = false, objectId = null, complete = true } = {}) {
+  const asKept = () => ({ objects: kept.objects })
+  // A piece of one object: continue it where the last piece left off, and keep it open until the last piece. The open
+  //  state comes out of the map before the scan, so a scan that throws leaves nothing a later piece could resume from.
+  let openObject = null
+  if (objectId !== null) {
+    openObject = kept.open.get(objectId) ?? null
+    kept.open.delete(objectId)
   }
+  const scanned = scanModelXml(data, openObject)
+  if (objectId !== null && !complete && scanned.openObject) kept.open.set(objectId, scanned.openObject)
+  for (const [id, object] of scanned.objects) {
+    kept.objects.set(id, object)
+    if (!object.mesh) continue
+    kept.ready.set(id, finishItem(emitItem([{ objectid: id, path: '', xf: IDENT, depth: 0 }], asKept), [], bake))
+  }
+}
+
+// How much of an object has to be in before its first piece goes out, and how much new before the next: fewer,
+//  larger messages. The last piece is whatever is left when the object ends. parse3MFProject takes it as an option so
+//  a test can make a small part go out in pieces.
+export const PIECE_BYTES = 1 << 20
+
+/**
+ * A pool helper's item job: the root part (job.keptPath) is the objects this helper kept, plus any sent along with
+ *  the job as a partial member; an object in neither sends its item to the in-thread fallback.
+ */
+export async function runKeptItemJob(job, kept) {
+  const models = await modelsOf(job.members)
+  const sent = models.get(job.keptPath)?.objects
+  models.set(job.keptPath, {
+    items: [],
+    objects: {
+      get(objectid) {
+        const object = kept?.objects.get(objectid)
+        if (object) return object
+        if (sent) return sent.get(objectid)
+        throw NOT_IN_JOB
+      },
+    },
+  })
+  // An item that places one kept object as it stands, with no modifier volumes, is the build this helper already made.
+  //  Taken once: a second instance of the same object builds its own copy.
+  const ready = []
+  const rest = []
+  for (const item of job.items) {
+    const [ref] = item.refs
+    if (item.refs.length === 1 && normPath(ref.path) === job.keptPath && isIdentity(ref.xf) && !item.volumeRecords.length && kept?.ready.has(ref.objectid)) {
+      ready.push({ index: item.index, built: kept.ready.get(ref.objectid), prebuilt: true })   // prebuilt: for the tests
+      kept.ready.delete(ref.objectid)
+    } else rest.push(item)
+  }
+  const items = [...ready, ...buildJobItems({ ...job, items: rest }, models)]
+  // The ready builds the items did not place (a translated instance, an object no item places) were made on an idle
+  //  helper during the inflate and are not wanted now; a build job is this helper's last word on the parse.
+  kept.ready.clear()
+  return { items }
+}
+
+// The root inflated and indexed together, each mesh object going to a pool slot as its bytes arrive: the first piece
+//  once PIECE_BYTES of it are in, more as they come, the last one when the object ends, so a helper reads an object
+//  while the inflater is still on it (the two biggest objects of a MakerWorld project sit at the end of the part, and
+//  their reading after the inflate was the parse's tail). An object small enough to complete between two pieces goes
+//  whole. -> { rootBytes, root (the index), keptOn: Map(objectid -> slot), scans: Promise of every scan }
+async function streamRoot(compressed, entry, pool, bake, pieceBytes) {
+  const keptOn = new Map()
+  const load = new Array(pool.size).fill(0)
+  const scans = []
+  const inProgress = new Map()   // objectid -> { slot, sent }: an object some of whose pieces went out
+  const failed = new Set()       // objects a piece of which the helper could not read: nothing more goes, nothing is kept
+  let indexed = null, indexer = null
+  const leastLoaded = () => {
+    let slot = 0
+    for (let k = 1; k < pool.size; k++) if (load[k] < load[slot]) slot = k
+    return slot
+  }
+  // A piece's scan that fails ends the object's streaming: it is marked failed, no later piece goes, and it is not
+  //  kept — its items are sent its span, or built in-thread. The mark, not keptOn, is what the completion checks: the
+  //  failure can land before the object completes, when keptOn does not hold it yet.
+  const send = (object, slot, start, end, complete) => {
+    load[slot] += end - start
+    scans.push(pool.scan(slot, indexed.slice(start, end), { bake, objectId: object.id, complete }).catch(() => { failed.add(object.id); keptOn.delete(object.id) }))
+  }
+  // Not into shared memory, although a cross-origin isolated page would allow it: writing the inflated chunks into a
+  //  SharedArrayBuffer measured 300ms against 240ms into a plain one (303MB, Chromium), more than the 30ms of copying
+  //  each object's span out of the plain buffer to transfer it.
+  // A pool that can inflate does it on one of its workers (pool.inflate, the same contract as
+  //  inflateEntryProgressively): DecompressionStream inflates on the reading thread, so inflated here the 219ms of
+  //  zlib and the ~130ms of indexing, copying and dispatching below ran one after the other.
+  const inflate = pool.inflate ?? inflateEntryProgressively
+  const rootBytes = await inflate(compressed, entry, (buffer, received) => {
+    // A member that inflates past its recorded size is moved to a larger buffer; the index then starts over on it.
+    if (buffer !== indexed) { indexed = buffer; indexer = createModelIndexer(buffer) }
+    for (const object of indexer.advance(received)) {
+      if (keptOn.has(object.id) || failed.has(object.id)) continue
+      const started = inProgress.get(object.id)
+      if (started) {
+        inProgress.delete(object.id)
+        keptOn.set(object.id, started.slot)
+        send(object, started.slot, started.sent, object.end, true)
+        continue
+      }
+      if (!object.hasMesh) continue
+      const slot = leastLoaded()
+      keptOn.set(object.id, slot)
+      send(object, slot, object.start, object.end, true)
+    }
+    // The object the received bytes end inside: its complete tags so far go out once enough are pending.
+    const open = indexer.open()
+    if (!open?.id || !open.hasMesh || failed.has(open.id)) return
+    let started = inProgress.get(open.id)
+    if (!started) {
+      if (received - open.start < pieceBytes) return
+      started = { slot: leastLoaded(), sent: open.start }
+      inProgress.set(open.id, started)
+    }
+    const cut = buffer.subarray(0, received).lastIndexOf(62) + 1   // just past the last complete tag
+    if (cut - started.sent < pieceBytes) return
+    send(open, started.slot, started.sent, cut, false)
+    started.sent = cut
+  })
+  if (indexed !== rootBytes) { indexer = createModelIndexer(rootBytes); indexer.advance(rootBytes.length) }
+  return { rootBytes, root: indexer.finish(), keptOn, scans: Promise.all(scans) }
 }
 
 const runJobsInThread = (jobs) => Promise.all(jobs.map(runItemJob))
 
-// The archive's members, inflated on demand. zipEntries() lists them without inflating anything; an archive it cannot
-//  read goes through fflate whole, and its items are then all built in-thread.
-async function openArchive(bytes) {
-  const entries = zipEntries(bytes)
+const isBlob = (source) => typeof Blob !== 'undefined' && source instanceof Blob
+
+// The archive's members, inflated on demand, over its bytes or over a Blob (then read as slices, so the archive is
+//  never loaded whole: a 51MB project's one big part streams from disk into its inflater). zipEntries() lists the
+//  members without inflating anything; an archive it cannot read goes through fflate whole, and its items are then
+//  all built in-thread.
+//   names, entry(path); read(path) -> inflated bytes; compressed(path) -> the member's compressed bytes as a
+//   Uint8Array (bytes) or a Blob slice (Blob), what inflateEntry and the pool's inflater take.
+async function openArchive(source) {
+  let entries = null
+  if (isBlob(source)) entries = await zipEntriesFromBlob(source)
+  else entries = zipEntries(source)
   if (!entries) {
     const files = new Map()
+    let bytes = source
+    if (isBlob(source)) bytes = new Uint8Array(await source.arrayBuffer())
     const zip = await unzipAll(bytes)
     for (const k of Object.keys(zip)) files.set(normPath(k), zip[k])
-    return { names: [...files.keys()], entry: () => null, read: async (path) => files.get(path) ?? null }
+    return { names: [...files.keys()], entry: () => null, read: async (path) => files.get(path) ?? null, compressed: async () => null }
   }
   const byPath = new Map()
   for (const [name, entry] of entries) byPath.set(normPath(name), entry)
+  const compressed = (entry) => {
+    if (isBlob(source)) return source.slice(entry.dataStart, entry.dataStart + entry.compressedSize)
+    return entryData(source, entry)
+  }
   const inflated = new Map()
   return {
     names: [...byPath.keys()],
     entry: (path) => byPath.get(path) ?? null,
+    compressed: (path) => {
+      const entry = byPath.get(path)
+      if (!entry) return null
+      return compressed(entry)
+    },
     read: (path) => {
       const entry = byPath.get(path)
       if (!entry) return Promise.resolve(null)
-      if (!inflated.has(path)) inflated.set(path, inflateEntry(entryData(bytes, entry), entry))
+      if (!inflated.has(path)) inflated.set(path, inflateEntry(compressed(entry), entry))
       return inflated.get(path)
     },
   }
@@ -370,18 +583,30 @@ async function openArchive(bytes) {
 const isModelPart = (path) => path.toLowerCase().endsWith('.model')
 
 /**
- * 3MF (ArrayBuffer|Uint8Array) -> {objects, project}
+ * 3MF (ArrayBuffer|Uint8Array|Blob) -> {objects, project}
  *   objects: [{name, tris: Float32Array(N*9), objectid, paint, sla, bbox, baked?}]  (z-up mm, build transform baked in)
  *            One build item = one object. When there are no items, every top-level object with a mesh is used.
  *   project: the Metadata/*.config side — preset, per-object state, plate layout (all nullable).
  *   options.runJobs: runs a list of runItemJob jobs (a worker pool); in-thread when absent.
  *   options.bake:    also return each object's scene geometry (bakeModel) as `baked`.
  */
-export async function parse3MFProject(buffer, baseName = 'model', { runJobs = runJobsInThread, bake = false } = {}) {
-  // TypedArray/Buffer may sit on a pooled ArrayBuffer, so offset/length must be preserved.
-  let bytes = new Uint8Array(buffer)
-  if (ArrayBuffer.isView(buffer)) bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-  const archive = await openArchive(bytes)
+export async function parse3MFProject(buffer, baseName = 'model', { runJobs = runJobsInThread, bake = false, pool = null, pieceBytes = PIECE_BYTES } = {}) {
+  try {
+    return await parseProject(buffer, baseName, { runJobs, bake, pool, pieceBytes })
+  } finally {
+    // The helpers drop what they kept for this parse whether it finished or threw: a parse that fails after the
+    //  root streamed would otherwise leave every helper holding its objects and ready builds until the worker dies.
+    pool?.release()
+  }
+}
+
+async function parseProject(buffer, baseName, { runJobs, bake, pool, pieceBytes }) {
+  // A Blob is read as slices (openArchive); bytes are used in place. TypedArray/Buffer may sit on a pooled
+  //  ArrayBuffer, so offset/length must be preserved.
+  let source = buffer
+  if (ArrayBuffer.isView(buffer)) source = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+  else if (!isBlob(buffer)) source = new Uint8Array(buffer)
+  const archive = await openArchive(source)
   const dec = new TextDecoder()
 
   // Every member but the .model parts is metadata: small, and read synchronously by readProject.
@@ -397,33 +622,102 @@ export async function parse3MFProject(buffer, baseName = 'model', { runJobs = ru
     }
   }
   const project = readProject(files, dec)
-  const rootBytes = await archive.read(rootPath)
-  const root = rootBytes && scanModelXml(rootBytes)
+  // The root part is indexed, not read: where its own objects hold the meshes (a MakerWorld project keeps all 17, 316MB
+  //  of XML, there), their spans go to other workers, so several of them read them instead of this one reading all.
+  //  With a pool the spans go out while the part is still inflating (streamRoot); without one they go with the jobs.
+  //  The whole part is read only for the in-thread fallback, and for a root with no build items.
+  let rootBytes = null, root = null, keptOn = new Map(), scans = Promise.resolve(), wholeRoot = null
+  const rootEntry = archive.entry(rootPath)
+  const inThread = runJobs === runJobsInThread && !pool
+  if (pool?.size > 1 && rootEntry) ({ rootBytes, root, keptOn, scans } = await streamRoot(archive.compressed(rootPath), rootEntry, pool, bake, pieceBytes))
+  else {
+    rootBytes = await archive.read(rootPath)
+    // In-thread nothing is sent anywhere, so the root's items are built from the whole part (below): reading it is the
+    //  work, and an index first only added to it (measured on the 303MB part: +65ms).
+    if (rootBytes && inThread) root = wholeRoot = scanModelXml(rootBytes)
+    else root = rootBytes && indexModelXml(rootBytes)
+  }
   // A .gcode.3mf holds no meshes (upstream writes it with SkipModel), so a missing root is its normal shape.
   if (!root && project.gcodePlates) return { objects: [], project }
   if (!root) throw new Error(`3MF root model not found: ${rootPath}`)
+  const readWholeRoot = () => (wholeRoot ??= scanModelXml(rootBytes))
 
   let items = root.items
-  if (!items.length) items = [...root.objects.keys()].filter(id => root.objects.get(id).mesh).map(id => ({ objectid: id, path: rootPath, transform: IDENT }))
+  if (!items.length) {
+    // "Every object with a mesh" means a mesh of at least one triangle, which only reading the part can say.
+    const whole = readWholeRoot()
+    items = [...whole.objects.keys()].filter(id => whole.objects.get(id).mesh).map(id => ({ objectid: id, path: rootPath, transform: IDENT }))
+  }
 
-  // Which items can be built from their own parts: the item's object (or its first level of components) must sit in
-  //  a part other than the root. Items that share a part go to the same job, so no part is inflated twice.
+  // The root objects an item reads: its own and, through components that stay in the root, theirs. Components into
+  //  other parts are those parts' business; a part that points back into the root is caught by onlySentObjects.
+  const rootObjectsOf = (refs) => {
+    const needed = new Set()
+    const visit = (objectid, depth) => {
+      if (depth > 16 || needed.has(objectid)) return
+      const object = root.objects.get(objectid)
+      if (!object) return
+      needed.add(objectid)
+      for (const c of object.components) if (!c.path || normPath(c.path) === rootPath) visit(c.objectid, depth + 1)
+    }
+    for (const r of refs) if (normPath(r.path) === rootPath) visit(r.objectid, r.depth)
+    return needed
+  }
+  // A root object takes part in job grouping as if it were a part of its own, under a key no archive path can have
+  //  (normPath strips no NUL, and zip names hold none): items that read the same object share a job and it is read once.
+  const ROOT_OBJECT = '\u0000root-object:'
+
+  // Which items can be built in a job: from their own parts and the root objects they read. Items that share a part
+  //  or a root object go to the same job, so nothing is inflated or read twice.
   const jobs = [], jobOfPart = new Map(), local = []
+  const pooledJobs = []   // per pool slot: { items, spans }
   // The item as emit() starts it from the build: its own object, at depth 0. Any item can be built from this.
+  // An object's modifier volumes as triangle ranges of the item: the <volume firstid lastid> form as written, or the
+  //  <part> form when the object's components are exactly its parts in order (a support enforcer box added to a
+  //  MakerWorld model is one; read as a printable component, it printed as a solid cube and lifted the model off the
+  //  bed by its own depth).
+  const volumeRecordsOf = (objectid) => {
+    const ranged = project.volumeMeta.get(objectid)
+    if (ranged) return ranged
+    const parts = project.partVolumeMeta.get(objectid)
+    const components = root.objects.get(objectid)?.components ?? []
+    if (!parts || components.length !== parts.partIds.length) return []
+    if (!components.every((component, k) => component.objectid === parts.partIds[k])) return []
+    return parts.records
+  }
   const wholeItem = (index) => {
     const it = items[index]
-    return { index, refs: [{ objectid: it.objectid, path: it.path || rootPath, xf: it.transform, depth: 0 }], volumeRecords: project.volumeMeta.get(it.objectid) || [] }
+    return { index, refs: [{ objectid: it.objectid, path: it.path || rootPath, xf: it.transform, depth: 0 }], volumeRecords: volumeRecordsOf(it.objectid) }
   }
   items.forEach((it, index) => {
     const itemPath = it.path || rootPath
-    const volumeRecords = project.volumeMeta.get(it.objectid) || []
+    const volumeRecords = volumeRecordsOf(it.objectid)
     let refs = [{ objectid: it.objectid, path: itemPath, xf: it.transform, depth: 0 }]
     if (normPath(itemPath) === rootPath) {
       const obj = root.objects.get(it.objectid)
-      if (obj?.components) refs = obj.components.map(c => ({ objectid: c.objectid, path: c.path || itemPath, xf: mul(c.transform, it.transform), depth: 1 }))
+      if (obj?.components?.length) refs = obj.components.map(c => ({ objectid: c.objectid, path: c.path || itemPath, xf: mul(c.transform, it.transform), depth: 1 }))
     }
-    const parts = [...new Set(refs.map(r => normPath(r.path)))]
-    if (parts.some(part => part === rootPath || !archive.entry(part))) { local.push(wholeItem(index)); return }
+    const otherParts = [...new Set(refs.map(r => normPath(r.path)))].filter(part => part !== rootPath)
+    if (otherParts.some(part => !archive.entry(part))) { local.push(wholeItem(index)); return }
+    // An item read entirely from root objects a pool helper kept goes to that helper, with the spans of any of its
+    //  objects the helper does not keep (component objects, objects kept elsewhere) sent along.
+    if (keptOn.size && !otherParts.length) {
+      const objectIds = [...rootObjectsOf(refs)]
+      const keptSlots = objectIds.filter(id => keptOn.has(id)).map(id => keptOn.get(id))
+      if (keptSlots.length) {
+        const slot = keptSlots[0]
+        const pooledJob = (pooledJobs[slot] ??= { items: [], spans: new Set() })
+        pooledJob.items.push({ index, refs, volumeRecords })
+        for (const id of objectIds) if (keptOn.get(id) !== slot) pooledJob.spans.add(id)
+        return
+      }
+    }
+    // In-thread the jobs run one after another, so splitting the root only adds the index and the copies (measured on
+    //  haaland100_f3.3mf, node: 960 -> 1212ms): there the root's items are built from the whole part, as before.
+    let rootKeys = []
+    if (!inThread) rootKeys = [...rootObjectsOf(refs)].map(id => ROOT_OBJECT + id)
+    if (refs.some(r => normPath(r.path) === rootPath) && !rootKeys.length) { local.push(wholeItem(index)); return }
+    const parts = [...otherParts, ...rootKeys]
     let job = parts.map(part => jobOfPart.get(part)).find(Boolean)
     if (!job) { job = { parts: new Set(), items: [] }; jobs.push(job) }
     for (const part of parts) {
@@ -438,12 +732,44 @@ export async function parse3MFProject(buffer, baseName = 'model', { runJobs = ru
   })
 
   const built = new Array(items.length).fill(null)
+  // Root objects as one stored (uncompressed) partial member for a job: their own bytes, in file order. What
+  //  scanModelXml reads of them is what it reads of the whole part.
+  const spansOf = (ids) => {
+    const spans = [...ids].map(id => root.objects.get(id)).filter(Boolean).sort((a, b) => a.start - b.start)
+    const data = new Uint8Array(spans.reduce((sum, span) => sum + span.end - span.start, 0))
+    let at = 0
+    for (const span of spans) { data.set(rootBytes.subarray(span.start, span.end), at); at += span.end - span.start }
+    return { path: rootPath, data, entry: { method: 0, size: data.length }, partial: true }
+  }
   // Largest first: the slowest job bounds the parse, so it should start first.
-  const payloads = jobs.map(job => ({
-    members: [...job.parts].map(path => { const entry = archive.entry(path); return { path, data: entryData(bytes, entry).slice(), entry: { method: entry.method, size: entry.size } } }),
-    names: archive.names, items: job.items, bake,
-  })).sort((a, b) => b.members.reduce((s, m) => s + m.data.length, 0) - a.members.reduce((s, m) => s + m.data.length, 0))
-  for (const result of await runJobs(payloads)) {
+  const payloads = await Promise.all(jobs.map(async job => {
+    const members = []
+    const rootObjects = []
+    for (const key of job.parts) {
+      if (key.startsWith(ROOT_OBJECT)) { rootObjects.push(key.slice(ROOT_OBJECT.length)); continue }
+      const entry = archive.entry(key)
+      // A copy of its own, so the job can be transferred (bytes) or read without the archive (Blob).
+      const data = new Uint8Array(await new Blob([archive.compressed(key)]).arrayBuffer())
+      members.push({ path: key, data, entry: { method: entry.method, size: entry.size } })
+    }
+    if (rootObjects.length) members.push(spansOf(rootObjects))
+    return { members, names: archive.names, items: job.items, bake }
+  }))
+  payloads.sort((a, b) => b.members.reduce((s, m) => s + m.data.length, 0) - a.members.reduce((s, m) => s + m.data.length, 0))
+  // The pool's jobs wait for its scans (a helper answers its messages in order, but a failed scan must be known before
+  //  its object is counted as kept); they and the other jobs then run together.
+  await scans
+  const pooledRuns = pooledJobs.map((job, slot) => {
+    if (!job) return null
+    // A kept object whose scan failed is no longer kept: it travels as a span like the others.
+    for (const item of job.items) for (const id of rootObjectsOf(item.refs)) if (keptOn.get(id) !== slot) job.spans.add(id)
+    const members = []
+    if (job.spans.size) members.push(spansOf(job.spans))
+    return pool.build(slot, { members, names: archive.names, items: job.items, bake, keptPath: rootPath })
+      .catch(() => ({ items: job.items.map(item => ({ index: item.index, local: true })) }))
+  }).filter(Boolean)
+  const [jobResults, pooledResults] = await Promise.all([runJobs(payloads), Promise.all(pooledRuns)])
+  for (const result of [...jobResults, ...pooledResults]) {
     for (const item of result.items) {
       if (item.local) local.push(wholeItem(item.index))
       else built[item.index] = item.built
@@ -451,7 +777,7 @@ export async function parse3MFProject(buffer, baseName = 'model', { runJobs = ru
   }
 
   if (local.length) {
-    const models = new Map([[rootPath, root]])
+    const models = new Map([[rootPath, readWholeRoot()]])
     for (const path of archive.names) if (isModelPart(path) && path !== rootPath) models.set(path, scanModelXml(await archive.read(path)))
     const getModel = (path) => models.get(normPath(path)) ?? null
     for (const item of local) built[item.index] = finishItem(emitItem(item.refs, getModel), item.volumeRecords, bake)

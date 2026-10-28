@@ -75,7 +75,9 @@
   border-radius: 5px; cursor: pointer; font-size: 11px; }
 .move-reset:disabled { opacity: .45; cursor: default; }
 
-.plate-bar { position: absolute; right: 14px; bottom: 30px; display: flex; align-items: center; gap: 4px; z-index: 3;
+/* Wraps into rows, growing upward from its bottom anchor: 30 plates do not fit one row on a laptop screen. */
+.plate-bar { position: absolute; right: 14px; bottom: 30px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; z-index: 3;
+  max-width: min(420px, calc(100% - 28px));
   background: rgba(var(--_dark-base-rgb), .85); border: 1px solid var(--_dark-border); border-radius: 9px; padding: 4px; }
 .plate-bar button { min-width: 26px; height: 26px; border: 1px solid var(--_dark-border); background: var(--_dark-control); color: var(--_dark-text-muted);
   border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
