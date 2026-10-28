@@ -71,9 +71,16 @@ function metadataPairs(fragment) {
   return out
 }
 
+// A <part>'s subtype -> the modifier kind it is, for the two the viewer keeps (support painting's states); the
+//  printable kind is normal_part. OrcaSlicer/BambuStudio write a support enforcer or blocker added to an object this
+//  way: a part of the object, its mesh a component of it in 3D/Objects/*.model, with no triangle range (the older
+//  <volume firstid lastid> form has one).
+const PART_MODIFIER_KINDS = { support_enforcer: 'enforcer', support_blocker: 'blocker' }
+
 function parseModelSettings(xml) {
   const objects = new Map()   // 3mf object id -> {name, extruder, …} (the <metadata> of that object)
   const volumes = new Map()
+  const partVolumes = new Map()   // object id -> { partIds, records }: modifier parts, ranged by the parts' face counts
   const OBJ_RE = /<object\b([^>]*)>([\s\S]*?)<\/object>/g
   let m
   while ((m = OBJ_RE.exec(xml))) {
@@ -92,6 +99,22 @@ function parseModelSettings(xml) {
           records.push({ firstTriangle, lastTriangle, kind })
       }
       if (records.length) volumes.set(id, records)
+      // <part> form: each part's triangles follow the ones before it, in the order the parts are listed, which is the
+      //  order of the object's components. The ranges come from the parts' face counts; parse3MFProject uses them
+      //  only when the components are exactly these parts in this order.
+      const parts = (body.match(/<part\b[\s\S]*?<\/part>/g) || []).map((part) => ({
+        id: attr(part, 'id'), subtype: attr(part, 'subtype'), faces: Number(attr(part.replace(/^<part\b[^>]*>/, ''), 'face_count')),
+      }))
+      if (parts.some((part) => PART_MODIFIER_KINDS[part.subtype]) && parts.every((part) => part.id && Number.isInteger(part.faces) && part.faces >= 0)) {
+        const partRecords = []
+        let first = 0
+        for (const part of parts) {
+          const kind = PART_MODIFIER_KINDS[part.subtype]
+          if (kind && part.faces) partRecords.push({ firstTriangle: first, lastTriangle: first + part.faces - 1, kind })
+          first += part.faces
+        }
+        partVolumes.set(id, { partIds: parts.map((part) => part.id), records: partRecords })
+      }
     }
   }
   const plates = []
@@ -107,7 +130,7 @@ function parseModelSettings(xml) {
     // plater_id is 1-based upstream; the viewer's plates are 0-based.
     plates.push({ index: Math.max(0, (Number(meta.plater_id) || plates.length + 1) - 1), objectIds, gcodeFile: meta.gcode_file || null })
   }
-  return { objects, plates, volumes }
+  return { objects, plates, volumes, partVolumes }
 }
 
 const SLA_CAPABILITIES = Object.freeze({
@@ -162,6 +185,7 @@ function readProject(files, dec) {
     hasLayerHeightProfile: false,
     hasCustomGcodePerLayer: false,
     volumeMeta: new Map(),
+    partVolumeMeta: new Map(),
     sla: { capabilities: { ...SLA_CAPABILITIES }, issues: [], supportPoints: new Map(), drainHoles: new Map() },
     viewerSettings: null,  // Metadata/three_slicer_settings.json — this package's own member (write_3mf.js)
     plateSettings: null,   //  ...its two halves: global viewer knobs, and per-plate overrides keyed by plate index
@@ -196,6 +220,7 @@ function readProject(files, dec) {
     project.objectMeta = parsed.objects
     project.plates = parsed.plates
     project.volumeMeta = parsed.volumes
+    project.partVolumeMeta = parsed.partVolumes
   }
   // A .gcode.3mf is told apart by its CONTENT, not its name: a <plate> record naming a G-code member that exists.
   //  Upstream decides the same way (a plate with a valid slice result, Plater.cpp) — the file name is only a
@@ -647,13 +672,26 @@ async function parseProject(buffer, baseName, { runJobs, bake, pool, pieceBytes 
   const jobs = [], jobOfPart = new Map(), local = []
   const pooledJobs = []   // per pool slot: { items, spans }
   // The item as emit() starts it from the build: its own object, at depth 0. Any item can be built from this.
+  // An object's modifier volumes as triangle ranges of the item: the <volume firstid lastid> form as written, or the
+  //  <part> form when the object's components are exactly its parts in order (a support enforcer box added to a
+  //  MakerWorld model is one; read as a printable component, it printed as a solid cube and lifted the model off the
+  //  bed by its own depth).
+  const volumeRecordsOf = (objectid) => {
+    const ranged = project.volumeMeta.get(objectid)
+    if (ranged) return ranged
+    const parts = project.partVolumeMeta.get(objectid)
+    const components = root.objects.get(objectid)?.components ?? []
+    if (!parts || components.length !== parts.partIds.length) return []
+    if (!components.every((component, k) => component.objectid === parts.partIds[k])) return []
+    return parts.records
+  }
   const wholeItem = (index) => {
     const it = items[index]
-    return { index, refs: [{ objectid: it.objectid, path: it.path || rootPath, xf: it.transform, depth: 0 }], volumeRecords: project.volumeMeta.get(it.objectid) || [] }
+    return { index, refs: [{ objectid: it.objectid, path: it.path || rootPath, xf: it.transform, depth: 0 }], volumeRecords: volumeRecordsOf(it.objectid) }
   }
   items.forEach((it, index) => {
     const itemPath = it.path || rootPath
-    const volumeRecords = project.volumeMeta.get(it.objectid) || []
+    const volumeRecords = volumeRecordsOf(it.objectid)
     let refs = [{ objectid: it.objectid, path: itemPath, xf: it.transform, depth: 0 }]
     if (normPath(itemPath) === rootPath) {
       const obj = root.objects.get(it.objectid)
