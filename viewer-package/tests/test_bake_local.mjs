@@ -4,7 +4,7 @@
 //   Run: node viewer-package/tests/test_bake_local.mjs
 import assert from 'node:assert'
 import * as THREE from 'three'
-import { bakeLocal, bakeModel, flatNormals, positionBounds, positionSphere } from '../src/core/bake_local.js'
+import { bakeLocal, bakeModel, positionBounds, positionSphere } from '../src/core/bake_local.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
@@ -25,18 +25,11 @@ for (let i = 0; i < triangles * 9; i++) modelPos[i] = (random() - 0.3) * 250
 modelPos.set([5, 5, 5, 5, 5, 5, 5, 5, 5], triangles * 9)
 modelPos.set([0, 0, 0, 1, 1, 1, 2, 2, 2], triangles * 9 + 9)
 
-console.log('[bake: normals and bounds equal three.js on the same positions]')
+console.log('[bake: bounds equal three.js on the same positions]')
 const { localPos } = bakeLocal(modelPos)
 const geometry = new THREE.BufferGeometry()
 geometry.setAttribute('position', new THREE.Float32BufferAttribute(localPos, 3))
-geometry.computeVertexNormals()
 geometry.computeBoundingBox()
-const expected = new Uint8Array(geometry.attributes.normal.array.buffer)
-const actual = new Uint8Array(flatNormals(localPos).buffer)
-let firstDifference = -1
-for (let i = 0; i < expected.length && firstDifference < 0; i++) if (expected[i] !== actual[i]) firstDifference = i
-check('flatNormals is byte-identical to computeVertexNormals', expected.length === actual.length && firstDifference < 0,
-  `first differing byte ${firstDifference}`)
 const bounds = positionBounds(localPos), box = geometry.boundingBox
 check('positionBounds equals computeBoundingBox', bounds.min.join() === box.min.toArray().join() && bounds.max.join() === box.max.toArray().join(),
   `${JSON.stringify(bounds)} vs ${JSON.stringify([box.min, box.max])}`)
@@ -58,8 +51,8 @@ check('model z becomes local y', Math.abs(localPos[1] - (modelPos[2] - Math.min(
 
 console.log('\n[bake: bakeModel is the three pieces together]')
 const baked = bakeModel(modelPos)
-check('same localPos, normals and bounds', baked.localPos.every((v, i) => v === localPos[i])
-  && baked.normals.every((v, i) => v === geometry.attributes.normal.array[i]) && baked.bounds.max.join() === bounds.max.join()
+check('same localPos and bounds, no normals (the material is flat shaded)', baked.localPos.every((v, i) => v === localPos[i])
+  && !('normals' in baked) && baked.bounds.max.join() === bounds.max.join()
   && baked.sphere.radius === threeSphere.radius)
 
 if (failures) console.log(`\n${failures} CHECK(S) FAILED`)
