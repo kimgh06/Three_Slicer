@@ -16,6 +16,24 @@ npm run pack                            # three-slicer-extension-<version>.zip f
 npm run screenshots                     # store/screenshot-*.png
 ```
 
+### After changing the viewer or the kernel
+
+The bundle takes `three-slicer-viewer` and `three-slicer` from their built `dist/` (the packages' `exports`), not from
+`viewer-package/src`. A build after a viewer change alone packs the previous viewer: the 30-plate limit was missing
+from an extension built that way while the site already had it. Rebuild the packages first:
+
+```bash
+cd web && make pkg                      # the packages' dist/ (a kernel change also needs packages/wasm-core/build.sh first)
+cd extension && npm run build
+```
+
+### Loading it in Chrome
+
+1. `chrome://extensions`, turn on Developer mode.
+2. First time: Load unpacked, pick `web/extension/dist`.
+3. After a rebuild: the reload button on the Three Slicer card, then close and reopen any open slicer tab. An open tab
+   keeps the bundle it started with.
+
 ## How a file gets to the slicer
 
 1. The service worker (`src/background.js`) decides a link or a download is a model. The list it decides by is the
