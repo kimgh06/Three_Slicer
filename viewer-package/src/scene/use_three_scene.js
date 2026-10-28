@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster } from './sla_raster.js'
 import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'; import { towerSelectionRule } from '../core/tower_layout.js'
-import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates } from './plate_scene.js'
+import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates, fitCameraDepth } from './plate_scene.js'; import { DEPTH_NEAR, DEPTH_FAR } from '../core/camera_depth.js'
 import { createScaleBox, clampMeshScale } from './scale_box.js'
 import { createBoxSelect } from './box_select.js'
 import { createPaintInput } from './paint_input.js'
@@ -69,7 +69,7 @@ export function useThreeScene(deps) {
     // 22-fix(H3): depth range shrunk drastically (was 0.1/6000 -> now 1/3000). far/near ratio 60000 -> 3000 gives ~20x better 24-bit depth precision
     //  -> removes the z-fighting where sub-surface infill pokes through the surface ("giant diagonal polygons"). Measured depth resolution: 0.08mm@d974, 0.13mm@d1500
     //  (within the 0.2mm layer height). logarithmicDepthBuffer was rejected: gl_FragDepth disables early-Z -> 3x fps drop at 489k overdraw.
-    const camera = new THREE.PerspectiveCamera(50, w / h, 1, 3000)
+    const camera = new THREE.PerspectiveCamera(50, w / h, DEPTH_NEAR, DEPTH_FAR)
     camera.position.set(210, 180, 260)
     scene.add(new THREE.HemisphereLight(THEME.lightSky, THEME.lightGround, 1.0))
     const dir = new THREE.DirectionalLight(THEME.lightSky, 1.1); dir.position.set(120, 220, 160); scene.add(dir)
@@ -873,7 +873,7 @@ export function useThreeScene(deps) {
         scaleBox.update(canvasModeRef.current === 'preview' ? null : scaleBoxTarget(), gizmoMode === 'scale')
         // Each plate's toolpath picks its level of detail for this camera (toolpath_mesh.js updateLod).
         toolpathGroup.traverseVisible(object => object.userData.updateLod?.(camera, renderer.domElement.height))
-        renderer.render(scene, camera)
+        fitCameraDepth(three.current); renderer.render(scene, camera)   // the depth range reaches the whole plate layout
       }
     }
     loop()

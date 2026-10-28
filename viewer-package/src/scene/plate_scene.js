@@ -1,5 +1,6 @@
 import { bedGridLines } from '../core/bed_grid.js'
 import { platePosition, plateIndexAtXZ } from '../core/plate_layout.js'
+import { cameraDepthRange } from '../core/camera_depth.js'
 import { plateNumberLabel } from './plate_labels.js'
 import { THEME } from '../core/theme.js'
 
@@ -47,6 +48,8 @@ export function refitCameraToPlates(THREE, t, { n, bw, bd, platePos, dims }) {
     minX = Math.min(minX, x - w / 2); maxX = Math.max(maxX, x + w / 2)
     minZ = Math.min(minZ, z - d / 2); maxZ = Math.max(maxZ, z + d / 2)
   }
+  // The frame loop sizes the camera's depth range to reach the whole layout (core/camera_depth.js).
+  t.plateExtent = { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, radius: Math.hypot(maxX - minX, maxZ - minZ) / 2 }
   const key = `${Math.round(minX)},${Math.round(maxX)},${Math.round(minZ)},${Math.round(maxZ)}`
   const prev = t.plateBoundsKey; t.plateBoundsKey = key
   if (!prev || prev === key || !t.camera || !t.orbit) return
@@ -59,6 +62,17 @@ export function refitCameraToPlates(THREE, t, { n, bw, bd, platePos, dims }) {
   t.orbit.target.set(cx, 0, cz)
   t.camera.position.set(cx, 0, cz).addScaledVector(dir, dist)
   t.orbit.update(); t.invalidate?.()
+}
+
+// Per rendered frame: the depth range reaches the far side of the plate layout from where the camera stands now.
+export function fitCameraDepth(t) {
+  const extent = t?.plateExtent
+  if (!extent) return
+  const { camera } = t
+  const distance = Math.hypot(camera.position.x - extent.x, camera.position.y, camera.position.z - extent.z)
+  const { near, far } = cameraDepthRange(distance, extent.radius)
+  if (near === camera.near && far === camera.far) return
+  camera.near = near; camera.far = far; camera.updateProjectionMatrix()
 }
 
 // Stage 29-2's plate rendering, extracted whole from use_three_scene setPlates: each plate = grid + border +

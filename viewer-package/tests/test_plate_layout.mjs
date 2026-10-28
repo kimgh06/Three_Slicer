@@ -10,6 +10,7 @@ import {
 import { DEFAULT_BED, DEFAULT_LINE_WIDTH, DEFAULT_LAYER_HEIGHT, DEFAULT_FILAMENT_DIAMETER } from '../src/core/viewer_defaults.js'
 import { BED_FALLBACK, AUTO_LINE_WIDTH, FFF_FALLBACKS } from '../src/settings/kernel_defaults.js'
 import { leanSchema } from '../src/settings/data.js'
+import { cameraDepthRange, DEPTH_NEAR, DEPTH_FAR } from '../src/core/camera_depth.js'
 
 // ---- the constants other modules encode into files ----
 assert.equal(PLATE_GAP, 40)
@@ -132,5 +133,20 @@ assert.deepStrictEqual({ ...DEFAULT_BED }, { ...BED_FALLBACK })
 assert.equal(DEFAULT_LINE_WIDTH, AUTO_LINE_WIDTH)
 assert.equal(DEFAULT_LAYER_HEIGHT, FFF_FALLBACKS.layer_height)
 assert.equal(DEFAULT_FILAMENT_DIAMETER, FFF_FALLBACKS.filament_diameter)
+
+// ---- the camera's depth range reaches every plate ----
+// A small layout keeps the measured default range; a full one on a Bambu bed (6 x 5, ~1.8 x 1.5 m) reaches past its
+//  far corner, at the same far/near ratio. Before, the far plane stayed at 3000 mm and the far plates drew as background.
+{
+  assert.deepEqual(cameraDepthRange(400, 150), { near: DEPTH_NEAR, far: DEPTH_FAR })
+  const BAMBU_BED = 256
+  const corners = [0, MAX_PLATES - 1].map(index => platePosition(index, MAX_PLATES, BAMBU_BED, BAMBU_BED))
+  const radius = Math.hypot(corners[1].x - corners[0].x + BAMBU_BED, corners[1].z - corners[0].z + BAMBU_BED) / 2
+  const distance = 2.5 * radius   // zoomed out to see the whole layout
+  const range = cameraDepthRange(distance, radius)
+  assert.ok(range.far >= distance + radius, `far ${range.far} reaches the far side ${distance + radius}`)
+  assert.ok(range.far > DEPTH_FAR)
+  assert.equal(range.far / range.near, DEPTH_FAR / DEPTH_NEAR)
+}
 
 console.log('plate_layout: ok')
