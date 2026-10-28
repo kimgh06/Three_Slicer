@@ -3,8 +3,9 @@ export const PLATE_GAP = 40
 export const plateStep = (edge) => edge + PLATE_GAP
 // Square plate layout — upstream PartPlate.hpp compute_colum_count: cols ≈ ceil(sqrt(n)).
 //  Plate i = (col=i%cols)*stepX, (row=i/cols)*stepZ (upstream grows along -Y -> +z in three).
-export const MAX_PLATES = 9
-export const plateCols = (count) => { const v = Math.sqrt(count), r = Math.round(v); return v > r ? r + 1 : r }
+// Upstream allows 36 (PartPlate.hpp MAX_PLATE_COUNT); 30 covers the projects measured (Hylian Shield: 28 plates).
+export const MAX_PLATES = 30
+export const plateCols = (count) => Math.ceil(Math.sqrt(count))
 // Where plate `index` sits in three world coordinates, as an {x, z} offset from plate 0. The scene, the toolpath
 //  display offset and the G-code injection all have to agree on this, so it lives here rather than in the closure
 //  that happens to need it first — three call sites used to spell the same two multiplications out by hand.
@@ -24,7 +25,7 @@ export function plateIndexAtXZ(worldX, worldZ, plateCount, bedWidth, bedDepth) {
 // widest plate and each ROW as deep as its deepest, with centre-to-centre steps built from adjacent halves +
 // the same PLATE_GAP. With every plate equal this reduces EXACTLY to platePosition/plateIndexAtXZ above —
 // test_plate_layout.mjs pins that equivalence, which is what lets the uniform paths keep their closed form.
-// `dims` is [{w, d}] per plate; membership walks the ≤9 centres instead of a closed form.
+// `dims` is [{w, d}] per plate; membership walks the ≤MAX_PLATES centres instead of a closed form.
 export function plateLayoutHetero(dims, gap = PLATE_GAP) {
   const count = dims.length, cols = plateCols(count)
   const colW = [], rowD = []

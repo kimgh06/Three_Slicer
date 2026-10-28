@@ -13,7 +13,7 @@ import { leanSchema } from '../src/settings/data.js'
 
 // ---- the constants other modules encode into files ----
 assert.equal(PLATE_GAP, 40)
-assert.equal(MAX_PLATES, 9)
+assert.equal(MAX_PLATES, 30)
 assert.equal(UPSTREAM_PLATE_GAP_RATIO, 1 / 5)   // write_3mf/model_load re-encode upstream's grid with this
 assert.equal(plateStep(200), 240)
 assert.equal(plateStep(256), 296)               // the Bambu bed — 296 here vs upstream's 307.2 (see AGENTS.md)
