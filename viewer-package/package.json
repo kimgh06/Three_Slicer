@@ -22,6 +22,10 @@
       "types": "./types/loaders.d.ts",
       "default": "./dist/model_loaders.js"
     },
+    "./workers": {
+      "types": "./types/workers.d.ts",
+      "default": "./dist/make_worker.js"
+    },
     "./settings": {
       "types": "./types/settings.d.ts",
       "default": "./src/settings/index.js"

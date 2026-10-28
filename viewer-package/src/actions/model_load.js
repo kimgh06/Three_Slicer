@@ -269,10 +269,9 @@ export function makeModelLoad(deps) {
     let anyPaint = false
     for (const f of files) {
       try {
-        const __tl0 = performance.now()   // [vp-prof] load timing (temporary)
-        const buf = await f.arrayBuffer()
-        const __tl1 = performance.now()
-        const objs = await loadModel(f.name, buf)          // [{name, modelPos}] (3MF/AMF may return several)
+        const __tl1 = performance.now()   // [vp-prof] load timing (temporary)
+        // The File itself: loadModel reads it, except a 3mf, which its worker reads.
+        const objs = await loadModel(f.name, f)          // [{name, modelPos}] (3MF/AMF may return several)
         const __tl2 = performance.now()
         // A .gcode.3mf is a print job, not a model: its plates go to the injection path and nothing enters the scene.
         if (objs[0]?.gcodePlates) { openGcodePlates?.(objs[0].gcodePlates, f.name); continue }
@@ -288,7 +287,7 @@ export function makeModelLoad(deps) {
         // Each file carries its own project; applying per file means dropping two 3mfs in at once behaves the way
         //  loading them one after the other does, rather than silently keeping only the last one's presets.
         if (objs[0]?.project) applyProject(objs[0].project, loaded)
-        log.info(`[vp-prof] load ${f.name}: read ${(__tl1-__tl0).toFixed(0)}ms, parse ${(__tl2-__tl1).toFixed(0)}ms, scene ${(performance.now()-__tl2).toFixed(0)}ms`)
+        log.info(`[vp-prof] load ${f.name}: read and parse ${(__tl2-__tl1).toFixed(0)}ms, scene ${(performance.now()-__tl2).toFixed(0)}ms, in scene at ${performance.now().toFixed(0)}ms since page start`)
       } catch (err) { setError(`Failed to load ${f.name}: ${(err && err.message) || err}`) }
     }
     setObjects(objectRows(objectsRef.current, apiRef.current))

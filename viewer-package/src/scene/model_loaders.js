@@ -27,22 +27,7 @@ function parse3mfWorker() {
   if (parseWorkerBroken || typeof Worker === 'undefined') return null
   if (parseWorker) return parseWorker
   try {
-    parseWorker = makeParse3mfWorker()
-    parseWorker.onmessage = (event) => {
-      const { id, objects, project, error } = event.data || {}
-      const pending = pendingParses.get(id)
-      if (!pending) return
-      pendingParses.delete(id)
-      error ? pending.reject(new Error(error)) : pending.resolve({ objects, project })
-    }
-    // A worker that dies takes every request in flight with it; they are rejected so the caller can retry rather
-    //  than hang, and the worker is not resurrected — whatever killed it will kill the next one too.
-    parseWorker.onerror = () => {
-      parseWorkerBroken = true
-      for (const [, pending] of pendingParses) pending.reject(new Error('3MF parse worker failed'))
-      pendingParses.clear()
-      parseWorker = null
-    }
+    attachParseWorker(makeParse3mfWorker())
   } catch {
     parseWorkerBroken = true
     parseWorker = null
@@ -50,17 +35,65 @@ function parse3mfWorker() {
   return parseWorker
 }
 
-async function parse3mf(buffer, name) {
+// A host that starts the parse worker before this module has loaded (the browser extension's viewer tab does, from a
+//  script ahead of its bundle: the worker's own start-up measured up to 114ms after the file was in) hands it over
+//  here. A second worker is not wanted: it is terminated.
+export function adoptParseWorker(worker) {
+  if (parseWorker || parseWorkerBroken) {
+    worker.terminate()
+    return
+  }
+  attachParseWorker(worker)
+}
+
+function attachParseWorker(worker) {
+  parseWorker = worker
+  parseWorker.onmessage = (event) => {
+    const { id, objects, project, error } = event.data || {}
+    const pending = pendingParses.get(id)
+    if (!pending) return
+    pendingParses.delete(id)
+    if (error) pending.reject(new Error(error))
+    else pending.resolve({ objects, project })
+  }
+  // A worker that dies takes every request in flight with it; they are rejected so the caller can retry rather
+  //  than hang, and the worker is not resurrected — whatever killed it will kill the next one too.
+  parseWorker.onerror = () => {
+    parseWorkerBroken = true
+    for (const [, pending] of pendingParses) pending.reject(new Error('3MF parse worker failed'))
+    pendingParses.clear()
+    parseWorker = null
+  }
+}
+
+// A File or Blob as an ArrayBuffer; an ArrayBuffer as itself.
+function bufferOf(source) {
+  if (typeof Blob !== 'undefined' && source instanceof Blob) return source.arrayBuffer()
+  return source
+}
+
+// A 3mf goes to the worker as the File itself when the caller has one: structured clone shares a Blob instead of
+//  copying it, so the main thread neither reads nor copies the archive (measured on a 51MB project: 126-140ms of
+//  the load was the main thread's read).
+async function parse3mf(source, name) {
   const worker = parse3mfWorker()
-  if (!worker) return parse3MFProject(buffer, name)
+  if (!worker) return parse3MFProject(await bufferOf(source), name)
   try {
     const id = ++nextRequestId
     const result = new Promise((resolve, reject) => pendingParses.set(id, { resolve, reject }))
-    worker.postMessage({ id, buffer, baseName: name })
+    worker.postMessage({ id, source, baseName: name })
     return await result
   } catch {
-    return parse3MFProject(buffer, name)   // the buffer is never transferred, so it is still intact here
+    return parse3MFProject(await bufferOf(source), name)   // the source is never transferred, so it is still intact here
   }
+}
+
+// Starts the workers that will read a file of this name, before the file is in hand (measured on a 51MB 3mf: the parse
+//  helpers started only once the archive was inflated, ~60ms into the critical path). Only a 3mf has any. For a caller
+//  that knows what is on its way — the browser extension's viewer tab does; a page that never opens a 3mf should not
+//  pay for idle workers.
+export function warmLoaderFor(name) {
+  if (fileExt(name) === '3mf') parse3mfWorker()?.postMessage({ type: 'warm' })
 }
 
 // Built-in formats. registerLoader() appends extensions here (the file dialog / drag-and-drop filters read this).
@@ -150,8 +183,36 @@ function meshesToObjects(baseName, meshes, multi) {
 }
 
 // Public API: (filename, ArrayBuffer) -> Promise<[{name, modelPos(N*9, model z-up)}]>. Pure, kernel-independent.
-export async function loadModel(name, buffer) {
+// Own parser — three's ThreeMFLoader cannot read the production extension (p:path), so every slicer-saved 3mf came out empty.
+// A slicer-written 3mf is a project: `paint` and `project` carry the preset/painting/plate state next to the mesh.
+async function load3mf(name, source) {
+  const { objects, project } = await parse3mf(source, name)
+  const objs = objects.map(o => ({ name: o.name, modelPos: o.tris, baked: o.baked, objectid: o.objectid, paint: o.paint, bbox: o.bbox, project }))
+  // A .gcode.3mf is a print job with no mesh: one entry carrying its plates' G-code instead of a model.
+  if (!objs.length && project.gcodePlates) return [{ name, gcodePlates: project.gcodePlates, project }]
+  if (!objs.length) throw new Error('No mesh in 3MF')
+  return objs
+}
+
+// A parse started before the viewport asked for it (preloadModel), keyed by the File it was started on; loadModel on
+//  that same File returns it instead of parsing again. The extension's viewer tab starts the parse the moment the file
+//  is fetched, ~100ms before the viewport mounts and calls loadFiles (measured), so that much of the parse overlaps
+//  the mount. Consumed on use, so dropping the same File again parses it again.
+const preloaded = new WeakMap()
+export function preloadModel(name, source) {
+  if (source === null || typeof source !== 'object') return
+  if (!preloaded.has(source)) preloaded.set(source, loadModel(name, source))
+}
+
+export async function loadModel(name, source) {
+  const pending = preloaded.get(source)
+  if (pending) {
+    preloaded.delete(source)
+    return pending
+  }
   const ext = fileExt(name)
+  if (ext === '3mf') return load3mf(name, source)
+  const buffer = await bufferOf(source)
   switch (ext) {
     case 'stl': {
       const pos = parseSTL(buffer)
@@ -167,16 +228,6 @@ export async function loadModel(name, buffer) {
       const tris = geoToModelTris(geo, null)
       if (!tris) throw new Error('No PLY geometry')
       return [{ name, modelPos: tris }]
-    }
-    case '3mf': {
-      // Own parser — three's ThreeMFLoader cannot read the production extension (p:path), so every slicer-saved 3mf came out empty.
-      // A slicer-written 3mf is a project: `paint` and `project` carry the preset/painting/plate state next to the mesh.
-      const { objects, project } = await parse3mf(buffer, name)
-      const objs = objects.map(o => ({ name: o.name, modelPos: o.tris, baked: o.baked, objectid: o.objectid, paint: o.paint, bbox: o.bbox, project }))
-      // A .gcode.3mf is a print job with no mesh: one entry carrying its plates' G-code instead of a model.
-      if (!objs.length && project.gcodePlates) return [{ name, gcodePlates: project.gcodePlates, project }]
-      if (!objs.length) throw new Error('No mesh in 3MF')
-      return objs
     }
     case 'amf': {
       const g = new AMFLoader().parse(buffer)                              // Group (uses DOMParser — browser only)
