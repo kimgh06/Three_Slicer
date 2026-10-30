@@ -23,7 +23,7 @@ export default function SiteNav({ current }) {
             <a key={label} href={href} aria-current={current === href && 'page'}>
               {label}
               {href === REPO_URL && (
-                <img className="site-nav-badge" src={`https://img.shields.io/github/stars/${REPO}?style=social`} alt="GitHub stars" width="80" height="20" />
+                <img className="site-nav-badge" src={`https://img.shields.io/github/stars/${REPO}?style=social&label=`} alt="GitHub stars" width="53" height="20" />
               )}
             </a>
           ))}
