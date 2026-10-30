@@ -5,6 +5,9 @@ it: a link's context menu, a finished model download from any site, the toolbar 
 file on Thingiverse. Modelled on rhwp's extension (`edwardkim/rhwp`, `rhwp-chrome/`), which builds its web app a second
 time as the extension's viewer page.
 
+Published on the [Chrome Web Store](https://chromewebstore.google.com/detail/three-slicer-%E2%80%94-3d-printin/maniffhfpihfcoadbicplldbhohjmfko). The store takes the version in this folder's `package.json`,
+which is separate from the npm packages' and has to go up with every upload.
+
 ```bash
 npm i                                   # at the repository root, once
 npx playwright install chromium         # once, for the tests and the screenshots

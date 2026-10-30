@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Viewport from './kernel_viewport.jsx'
 import SettingsPanel from './settings_panel.jsx'
+import { takeHandedOffFiles } from './handoff.js'
 import './step_loader.js'   // registers the .step/.stp loader (the OCCT WASM only loads when such a file is actually opened)
 
 // The slicer screen. Viewport owns the desktop-style shell (top bar + left gizmo rail + center viewport
@@ -23,6 +24,7 @@ const webglAvailable = (() => {
 export default function Prepare({ files } = {}) {
   const [settings, setSettings] = useState({})   // sparse map (edited keys only). Reset on reload.
   const [plateSettings, setPlateSettings] = useState({})   // per-plate sparse overrides ({plateIndex: map})
+  const [handedOff] = useState(takeHandedOffFiles)         // a model chosen on the landing page
   // G-code needs nothing here: the viewport's own Open button and drop target take .gcode beside the models
   //  (model_load -> openGcodePlates) and show it on the plate instead of a slice, with its own close button.
   if (!webglAvailable) return (
@@ -45,7 +47,7 @@ export default function Prepare({ files } = {}) {
   )
   return (
     <div className="prepare">
-      <Viewport files={files} settings={settings} setSettings={setSettings}
+      <Viewport files={files ?? handedOff} settings={settings} setSettings={setSettings}
         plateSettings={plateSettings} setPlateSettings={setPlateSettings}
         processPanel={(panelSettings, setPanelSettings, meta) =>
           /* A function, not a node: with >1 plate the card's Global|Plate toggle hands down the selected

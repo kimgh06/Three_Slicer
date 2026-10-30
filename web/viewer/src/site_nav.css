@@ -28,22 +28,28 @@
 .site-nav nav { display: flex; gap: 22px; }
 .site-nav nav a { color: #8d9daa; transition: color 140ms ease-out; }
 .site-nav nav a:has(.site-nav-badge) { display: inline-flex; align-items: center; gap: 6px; }
-.site-nav-badge { display: block; }
+/* Sized by the image, because the count grows. */
+.site-nav-badge { display: block; width: auto; height: 20px; }
 .site-nav nav a:hover,
 .site-nav nav a[aria-current="page"] { color: #e9f1f7; }
 
 @media (max-width: 640px) {
   .site-nav-inner { padding: 0 16px; }
   .site-nav nav { gap: 14px; font-size: 13.5px; }
+  .site-nav nav a { padding: 12px 0; }
 }
 @media (max-width: 480px) {
-  /* The star badge is the first thing to go: below this it pushes the links off the right edge (measured at 420). */
-  .site-nav-badge { display: none; }
+  /* The word and the badge together push the links off the right edge (measured at 420). The badge carries GitHub's
+     logo and the star count, so it stands in for the word. Where the image fails to load the link stays pressable and
+     shows the browser's broken-image mark. */
+  .site-nav nav a:has(.site-nav-badge) { gap: 0; font-size: 0; }
 }
 @media (max-width: 400px) {
-  /* Five links and the name do not fit on one line below this; the name is also the Home link, so it goes. */
-  .site-nav-brand { display: none; }
-  .site-nav-inner { justify-content: center; }
+  /* Five links and the name do not fit on one line below this, so the logo takes the name's place. The name stays in the
+     markup as the Home link's accessible name; this file is shared with the static pages, which write that link out. */
+  .site-nav-brand { flex: none; width: 28px; height: 28px; overflow: hidden; color: transparent; font-size: 0;
+    background: url('/favicon.svg') center / contain no-repeat; }
+  .site-nav nav { gap: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .site-nav nav a { transition: none; }

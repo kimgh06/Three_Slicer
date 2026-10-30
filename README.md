@@ -9,6 +9,7 @@ Resin printing is a second technology in the same kernel, routed by `printer_tec
 ## Links
 
 - Demo: [slicer.kimgh06.com](https://slicer.kimgh06.com/)
+- Chrome extension: [Three Slicer on the Chrome Web Store](https://chromewebstore.google.com/detail/three-slicer-%E2%80%94-3d-printin/maniffhfpihfcoadbicplldbhohjmfko) — opens model links and downloads in a slicer tab ([source](web/extension/README.md))
 - npm packages: [three-slicer](https://www.npmjs.com/package/three-slicer) (AGPL, slicing) · [three-slicer-viewer](https://www.npmjs.com/package/three-slicer-viewer) (MIT, viewer)
 - Source: [kimgh06/Three_Slicer](https://github.com/kimgh06/Three_Slicer) · viewer mirror [kimgh06/three-slicer-viewer](https://github.com/kimgh06/three-slicer-viewer)
 - Integration example specs: [examples/DEMOS.md](examples/DEMOS.md)
