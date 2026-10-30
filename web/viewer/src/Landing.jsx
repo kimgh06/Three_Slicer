@@ -1,7 +1,8 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
-import { REPO, REPO_URL } from './repo.js'
+import { Link, useNavigate } from 'react-router'
+import { CHROME_STORE_URL, REPO, REPO_URL } from './repo.js'
 import SiteNav from './SiteNav.jsx'
+import { handOffFiles } from './handoff.js'
 
 // The live embed below mounts the real <Viewport/>, so the same guard Prepare.jsx uses applies here:
 // Googlebot's renderer has no WebGL, and mounting there would blank the one page that carries the
@@ -17,34 +18,41 @@ const webglAvailable = (() => {
 // scrolls into view, and the kernel WASM only downloads if the visitor actually presses Slice.
 const Viewport = React.lazy(() => import('./kernel_viewport.jsx'))
 
-// Written out rather than imported: `Object.keys(config-schema.json).length` pulled all 382KB of the schema
-// into the landing chunk to produce one integer, on the one page that has no other use for it.
-// The generator of record is packages/types/gen_settings_types.mjs — it prints the same count.
-const OPTION_COUNT = 976
+// Measured from the shipped artifacts (catalog sizes from data/, the invariant count from wasm-core/tests/test.mjs):
+// update alongside them.
+const PRINTER_COUNT = '1,041'
+const FILAMENT_COUNT = '5,999'
+const INVARIANT_COUNT = '120+'
 
-// The quiet row under the buttons: destinations neither the buttons nor the top bar (SiteNav) already hold.
-const LINKS = [
-  ['npm', 'https://www.npmjs.com/package/three-slicer'],
-  ['Community', `${REPO_URL}/discussions`],
-  ['Issues', `${REPO_URL}/issues`],
+const FEATURE_GROUPS = [
+  ['01 / Slicing', 'A real slicer, not a preview',
+    'Ported from OrcaSlicer\u2019s own source to WebAssembly.', [
+      ['Variable-width walls', 'Arachne walls follow thin features without gaps.'],
+      ['Tree and grid supports', 'Organic trees or grids, with paint-on blockers.'],
+      ['Multi-material', 'Paint colours. Tool changes are generated for you.'],
+      ['Resin', 'Slices to .sl1 with PrusaSlicer\u2019s supports and pad.'],
+    ]],
+  ['02 / Projects', 'Opens what you already have',
+    'Bring a MakerWorld project or a bare STL.', [
+      ['3mf projects', 'Plates, settings and painting come back as saved.'],
+      ['Up to 30 plates', 'Each plate can keep its own settings.'],
+      [`${PRINTER_COUNT} printer profiles`, `Bambu Lab, Prusa, Creality, Voron and ${FILAMENT_COUNT} filament presets.`],
+      ['STL, OBJ, STEP, AMF, PLY', 'G-code and .sl1 files open in the preview.'],
+    ]],
+  ['03 / Your computer', 'Nothing leaves this tab',
+    'No server, so no upload and no queue.', [
+      ['No upload', 'Slicing runs on your own processor.'],
+      ['No install', 'Open the page and start.'],
+      ['Multithreaded', 'Slices several plates side by side.'],
+      ['Layer-by-layer preview', 'Scrub layers and moves, coloured by feature.'],
+    ]],
 ]
 
-// Every figure is measured from the shipped artifacts (schema key count from gen_settings_types,
-// catalog sizes from data/, invariant count from wasm-core/tests/test.mjs) — update alongside them.
-const STATS = [
-  [OPTION_COUNT, 'OrcaSlicer options'],
-  ['1,041', 'printer profiles'],
-  ['5,999', 'filament presets'],
-  ['120+', 'kernel invariants'],
-  ['byte-identical', 'golden G-code gate'],
-]
-
-// The same copy the /demos page uses; each card opens the standalone build of that demo.
-const DEMOS = [
-  ['instant-quote', 'Instant Quote', 'Headless slicing', 'Slice in the browser, price the result. No viewer, no React — the SDK on its own.'],
-  ['printer-showcase', 'Printer Showcase', 'Drop-in embed', 'A product page with a slicer in it. Three machines, host-owned settings, Shadow DOM isolation.'],
-  ['cad-embed', 'CAD Embed', 'Programmable engine', 'Move a slider, get print time back. Debounced re-slicing with a generation guard.'],
-  ['farm-dashboard', 'Print Farm', 'Client-side compute', 'Queue jobs for several printers. Slicing happens here; a backend would only hold G-code.'],
+const SPECS = [
+  ['License', 'AGPL-3.0 kernel, MIT viewer'],
+  ['Based on', 'OrcaSlicer, PrusaSlicer 2.9.6'],
+  ['Kernel checks', `${INVARIANT_COUNT} invariants`],
+  ['G-code', 'byte-identical gate'],
 ]
 
 // Kept word-for-word in sync with the FAQPage JSON-LD in index.html — Google only honours FAQ
@@ -58,31 +66,6 @@ const FAQ = [
    'Yes. The kernel is a port of OrcaSlicer, which is itself a PrusaSlicer/Slic3r descendant. Arachne wall generation, tree supports, multi-material segmentation and the prime tower are ported from that source rather than reimplemented, and the resin support-point generator, support tree and pad are ported from PrusaSlicer 2.9.6.'],
   ['Can I use the slicer in my own site or app?',
    'Yes, as two npm packages. three-slicer (AGPL-3.0-or-later) is the slicing kernel for Node or the browser. three-slicer-viewer (MIT) is the React viewer and settings panel on their own — model and G-code preview with no slicing and no AGPL code, usable in closed-source products. Installing three-slicer gives you both.'],
-]
-
-const ROUTES = [
-  ['Engine', 'three-slicer', 'Slice a binary STL into G-code, or into SLA layer masks, in Node or the browser'],
-  ['Settings', 'three-slicer/settings', 'Convert an OrcaSlicer settings map into kernel parameters'],
-  ['Viewer (MIT)', 'three-slicer-viewer', 'The same viewer and settings panel without the slicer — model and G-code preview, no AGPL'],
-  ['Data', 'three-slicer/data', 'config schema, UI tree, toggle rules, printer / process / filament catalogs'],
-  ['Worker', 'three-slicer/worker', 'Layer streaming off the browser main thread'],
-]
-
-const GROUPS = [
-  ['Input', ['STL', 'OBJ', '3MF project (layout · settings · painting)', 'AMF', 'PLY', 'STEP', '.sl1 archive', 'drag and drop', 'multiple models']],
-  ['Arrange', ['move', 'rotate', 'scale', 'duplicate', 'split to objects', 'place on bed', 'multi-plate']],
-  ['Slicing', [
-    'Arachne variable-width walls', 'gyroid / honeycomb / crosshatch infill',
-    'tree · grid support', 'support painting', 'material painting',
-    'skirt', 'brim', 'raft', 'ironing', 'arc fitting', 'multi-material', 'prime tower',
-  ]],
-  ['Resin', [
-    'PrusaSlicer support points', 'support tree', 'pad', 'pad around object',
-    'resin catalog', 'layer mask preview', '.sl1 import',
-  ]],
-  ['Preview', ['layer slider', 'single layer', 'travel', 'move scrub', 'feature / speed / height / width / fan / temperature views']],
-  ['Output', ['G-code download', '.3mf project save', '.sl1 archive', 'print time', 'filament usage']],
-  ['Settings', [`${OPTION_COUNT} options`, 'search', 'mode filter']],
 ]
 
 function Screenshot() {
@@ -127,6 +110,9 @@ function LiveSlicer() {
   const [generation, setGeneration] = useState(0)
   const [sliceRequest, setSliceRequest] = useState(0)
   const [phase, setPhase] = useState('idle')     // idle | preparing | slicing | done
+  // Wall clock from the click to the viewer's slicing event, on the visitor's own machine.
+  const [sliceSeconds, setSliceSeconds] = useState(null)
+  const sliceStartedAt = useRef(0)
   const boxRef = useRef(null)
 
   useEffect(() => {
@@ -148,10 +134,29 @@ function LiveSlicer() {
     return () => { gone = true }
   }, [armed])
 
+  const startSlice = () => {
+    sliceStartedAt.current = performance.now()
+    setSliceSeconds(null)
+    setPhase('preparing')
+    setSliceRequest(n => n + 1)
+  }
+  const finishSlice = () => {
+    setPhase(previous => {
+      if (previous === 'slicing') return 'done'
+      return previous
+    })
+    setSliceSeconds(((performance.now() - sliceStartedAt.current) / 1000).toFixed(1))
+  }
+
   const live = webglAvailable && armed && files
+  const busy = phase === 'preparing' || phase === 'slicing'
+  const sliceLabel = { idle: 'Slice this Benchy', done: 'Sliced' }[phase] ?? 'Slicing…'
+  let figureClass = 'lp-shot'
+  if (live) figureClass += ' lp-live'
   return (
-    <figure className={`lp-shot${live ? ' lp-live' : ''}`} ref={boxRef}>
-      {live ? (
+    <figure className={figureClass} ref={boxRef}>
+      {!live && <Screenshot />}
+      {live && (
         <>
           <div className="lp-live-frame">
             <Suspense fallback={<Screenshot />}>
@@ -161,194 +166,197 @@ function LiveSlicer() {
                 setSettings={setSettings}
                 files={files}
                 sliceRequest={sliceRequest}
-                panels={{ sidebar: false, topBar: false, gizmoRail: false, objectToolbar: false, plateBar: false, sliceBar: false, paintPanel: false, emptyHint: false }}
+                panels={{ sidebar: false, topBar: false, gizmoRail: false, objectToolbar: false, plateBar: false, sliceBar: false, paintPanel: false, emptyHint: false, status: false }}
                 features={{ shortcuts: false }}
                 onEvent={event => {
                   if (event.type !== 'slicing') return
                   if (event.value) setPhase('slicing')
-                  else setPhase(previous => previous === 'slicing' ? 'done' : previous)
+                  else finishSlice()
                 }}
               />
             </Suspense>
             {phase === 'preparing' && <div className="lp-live-veil">Starting the slice…</div>}
           </div>
           <div className="lp-live-bar">
-            <button className="lp-btn primary" disabled={phase !== 'idle'}
-              onClick={() => { setPhase('preparing'); setSliceRequest(n => n + 1) }}>
-              {phase === 'idle' ? 'Slice this Benchy' : phase === 'done' ? 'Sliced' : 'Slicing…'}
-            </button>
+            <button className="lp-btn primary" disabled={phase !== 'idle'} onClick={startSlice}>{sliceLabel}</button>
             <label className="lp-live-check">
               <input
                 type="checkbox"
                 checked={!!settings.enable_support}
-                disabled={phase === 'preparing' || phase === 'slicing'}
+                disabled={busy}
                 onChange={event => {
                   const enabled = event.target.checked
                   setSettings(current => ({ ...current, enable_support: enabled }))
                   // Already sliced? Re-slice in place with the new setting — no remount.
-                  if (phase === 'done') { setPhase('preparing'); setSliceRequest(n => n + 1) }
+                  if (phase === 'done') startSlice()
                 }}
               />
               Supports
             </label>
-            <button className="lp-btn" disabled={phase === 'preparing' || phase === 'slicing'}
-              onClick={() => { setPhase('idle'); setSettings(INITIAL_SETTINGS); setGeneration(n => n + 1) }}>
+            <button className="lp-btn" disabled={busy}
+              onClick={() => { setPhase('idle'); setSliceSeconds(null); setSettings(INITIAL_SETTINGS); setGeneration(n => n + 1) }}>
               Reset
             </button>
           </div>
+          {phase === 'done' && sliceSeconds !== null && (
+            <div className="home-result" role="status">
+              <p><b>Sliced in {sliceSeconds} s on this computer.</b> Nothing was uploaded.</p>
+              <Link className="lp-btn primary" to="/slice">Try your own model</Link>
+            </div>
+          )}
         </>
-      ) : (
-        <Screenshot />
       )}
-      <figcaption>
-        {live && 'Live — a Benchy preloaded on the plate, sliced in this tab.'}
-        {!live &&'The Preview tab — a sliced Benchy with tree supports, per-feature toolpath colors and print estimates.'}
+      <figcaption className="home-fig">
+        <span>Fig. 01 {live && '— Live slicer'}{!live && '— Slicer preview'}</span>
+        <span>Benchy</span>
       </figcaption>
     </figure>
   )
 }
 
+// A model dropped anywhere on the page goes to the slicer. The listeners run in the capture phase so the embedded
+//  viewport below never takes the file: a drop always goes to the full slicer.
+function useModelDrop() {
+  const navigate = useNavigate()
+  const [dragging, setDragging] = useState(false)
+
+  useEffect(() => {
+    const carriesFiles = (event) => event.dataTransfer?.types?.includes('Files')
+    const onDrag = (event) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      setDragging(true)
+    }
+    const onLeave = (event) => {
+      if (carriesFiles(event) && !event.relatedTarget) setDragging(false)
+    }
+    const onDrop = (event) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      setDragging(false)
+      if (!event.dataTransfer.files.length) return
+      handOffFiles([...event.dataTransfer.files])
+      navigate('/slice')
+    }
+    window.addEventListener('dragenter', onDrag, true)
+    window.addEventListener('dragover', onDrag, true)
+    window.addEventListener('dragleave', onLeave, true)
+    window.addEventListener('drop', onDrop, true)
+    return () => {
+      window.removeEventListener('dragenter', onDrag, true)
+      window.removeEventListener('dragover', onDrag, true)
+      window.removeEventListener('dragleave', onLeave, true)
+      window.removeEventListener('drop', onDrop, true)
+    }
+  }, [navigate])
+
+  return dragging
+}
+
 export default function Landing() {
+  const dragging = useModelDrop()
   return (
-    <div className="landing">
+    <div className="landing home">
       <SiteNav current="/" />
-      <header className="lp-head">
-        <div className="lp-kicker">three-slicer · Browser/WASM 3D printing slicer</div>
-        {/* Googlebot indexes this rendered page, not index.html's pre-render fallback (createRoot clears it),
-            so the heading and the opening copy say what the <title> and the JSON-LD say: a web slicer. */}
-        <h1>Three Slicer — a web slicer for 3D printing that runs in your browser</h1>
-        <p className="lp-lede">Slice STL to G-code right in your browser — nothing installs, nothing uploads.</p>
-        <p>Three Slicer converts STL, OBJ, 3MF, AMF, PLY and STEP models into G-code directly in the browser, using
-          a WebAssembly build of the OrcaSlicer kernel. There is nothing to install and no account, and nothing is
-          uploaded to a server — the slicing runs on your own machine, in the tab. Filament printers slice to
-          G-code; resin printers route through PrusaSlicer&rsquo;s ported support and pad chain to
-          an <code>.sl1</code> archive.</p>
-        <div className="lp-cta">
-          <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
-          {/* /docs is a static HTML entry, not a router route — a plain <a>, so the browser fetches that document
-              rather than the router matching nothing and rendering blank. */}
-          <a className="lp-btn" href="/docs">Docs</a>
-          <Link className="lp-btn" to="/demos">Demos</Link>
+      {dragging && <div className="home-drop-veil" data-testid="home-drop-veil">Drop it to open the slicer</div>}
+
+      <header className="home-hero">
+        <div className="home-hero-copy">
+          <p className="home-label">Browser slicer · Filament and resin</p>
+          {/* Googlebot indexes this rendered page, not index.html's pre-render fallback (createRoot clears it),
+              so the heading says what the <title> and the JSON-LD say: a web slicer. */}
+          <h1>The web slicer for 3D printing.</h1>
+          <p className="home-lede">Drop a model here and get G-code.<br />OrcaSlicer&rsquo;s engine, running in your browser.</p>
+          <div className="home-actions">
+            <Link className="lp-btn primary" to="/slice">Open the slicer</Link>
+            <a className="lp-btn" href={CHROME_STORE_URL} target="_blank" rel="noreferrer">Add to Chrome</a>
+          </div>
+          <ul className="home-facts">
+            <li>Free, no account</li>
+            <li>Nothing uploaded</li>
+            <li>Open source</li>
+          </ul>
         </div>
-        <nav className="lp-links" aria-label="Project links">
-          {LINKS.map(([label, href]) => (
-            <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
-          ))}
-        </nav>
-        <ul className="lp-stats" aria-label="Measured scope">
-          {STATS.map(([value, label]) => (
-            <li key={label}><b>{value}</b><small>{label}</small></li>
-          ))}
-        </ul>
+        <div className="home-figure"><LiveSlicer /></div>
       </header>
 
       <main>
-        <LiveSlicer />
-
-        <section className="lp-section" aria-labelledby="features-title">
-          <div className="lp-section-head">
-            <h2 id="features-title">What it does</h2>
-            <p>Everything below runs in this browser tab — import, arrange, slice, preview and export, with the full OrcaSlicer option set.</p>
-          </div>
-          <dl className="lp-feat">
-            {GROUPS.map(([label, items]) => (
-              <div key={label} className="lp-row">
-                <dt>{label}</dt>
-                <dd>{items.map((t, i) => (
-                  <span key={t}>{i > 0 && <i className="lp-dot">·</i>}{t}</span>
-                ))}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
-        <section className="lp-section" aria-labelledby="faq-title">
-          <div className="lp-section-head">
-            <h2 id="faq-title">Questions</h2>
-          </div>
-          <dl className="lp-faq">
-            {FAQ.map(([q, a]) => (
-              <div key={q}>
-                <dt>{q}</dt>
-                <dd>{a}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
-        <section className="lp-section" aria-labelledby="built-title">
-          <div className="lp-section-head">
-            <h2 id="built-title">How it was built</h2>
-          </div>
-          <p>
-            <a href="/docs/orcaslicer-webassembly-port">Porting OrcaSlicer to WebAssembly — what actually broke</a>:
-            the missing <code>PrintObject</code>, a TBB header stub that runs serial by default, COOP/COEP
-            cross-origin isolation and the two kernel builds behind it, the partial-link build groups, and the
-            byte-identical G-code gate the whole port is checked against. <a href="/about">About the project</a> covers
-            what it deliberately does not do, how the output is verified, and what AGPL-3.0 means for using it.
-          </p>
-        </section>
-
-        <section className="lp-section" aria-labelledby="demos-title">
-          <div className="lp-section-head">
-            <h2 id="demos-title">Integration Demos</h2>
-            <p>Four real integrations, each an independent project installing <code>three-slicer</code> from npm.
-              Cards open the standalone builds; <Link to="/demos">the gallery</Link> shows them side by side with
-              their sources.</p>
-          </div>
-          <div className="lp-route-grid">
-            {DEMOS.map(([name, title, sells, blurb]) => (
-              <a key={name} className="lp-route-card lp-demo-card" href={`${import.meta.env.BASE_URL}demos/${name}/`}>
-                <span className="lp-demo-sells">{sells}</span>
+        <section className="home-section" aria-labelledby="features-title">
+          <p className="home-label">What it does</p>
+          <h2 id="features-title">Everything a slicer does, in a tab</h2>
+          {FEATURE_GROUPS.map(([label, title, intro, rows]) => (
+            <div key={label} className="home-group">
+              <div>
+                <p className="home-group-label">{label}</p>
                 <h3>{title}</h3>
-                <p>{blurb}</p>
-              </a>
+                <p>{intro}</p>
+              </div>
+              <dl>
+                {rows.map(([name, detail]) => (
+                  <div key={name}>
+                    <dt>{name}</dt>
+                    <dd>{detail}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+        </section>
+
+        <section className="home-section home-open" aria-labelledby="open-title">
+          <div>
+            <p className="home-label">Open source</p>
+            <h2 id="open-title">The whole port is on GitHub</h2>
+            <p>Read the code, check the output, or embed it.<br />
+              On npm as <code>three-slicer</code> and <code>three-slicer-viewer</code>.<br />
+              <a href="/docs/orcaslicer-webassembly-port">How it was ported</a></p>
+            <div className="home-actions">
+              <a className="lp-btn primary" href={REPO_URL} target="_blank" rel="noreferrer">View on GitHub</a>
+              <Link className="lp-btn" to="/demos">Integration demos</Link>
+            </div>
+          </div>
+          <dl className="home-spec">
+            {SPECS.map(([name, value]) => (
+              <div key={name}>
+                <dt>{name}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+            <div>
+              <dt>Source</dt>
+              <dd><a href={REPO_URL} target="_blank" rel="noreferrer">{REPO}</a></dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="home-section" aria-labelledby="start-title">
+          <p className="home-label">Get started</p>
+          <h2 id="start-title">Three ways to use it</h2>
+          <div className="home-ways">
+            <Link to="/slice"><b>In this browser</b><small>Nothing to set up</small></Link>
+            <a href={CHROME_STORE_URL} target="_blank" rel="noreferrer"><b>Chrome extension</b><small>Opens model links and downloads</small></a>
+            <a href="/docs"><b>npm packages</b><small>Put the slicer in your product</small></a>
+          </div>
+        </section>
+
+        <section className="home-section" aria-labelledby="faq-title">
+          <p className="home-label">FAQ</p>
+          <h2 id="faq-title">Questions</h2>
+          <div className="home-faq">
+            {FAQ.map(([question, answer]) => (
+              <details key={question}>
+                <summary>{question}</summary>
+                <p>{answer}</p>
+              </details>
             ))}
           </div>
-        </section>
-
-        <section className="lp-section" aria-labelledby="install-title">
-          <div className="lp-section-head">
-            <h2 id="install-title">Install</h2>
-            <p>Slicing included (AGPL), or the viewer alone (MIT). The React viewer needs <code>react</code>,
-              <code>react-dom</code> and <code>three</code> as peers; the headless engine needs nothing.</p>
-          </div>
-          <div className="lp-code-grid">
-            <pre><code>npm i three-slicer</code></pre>
-            <pre><code>npm i three-slicer-viewer</code></pre>
-          </div>
-        </section>
-
-        <section className="lp-section" aria-labelledby="routes-title">
-          <div className="lp-section-head">
-            <h2 id="routes-title">Use It As</h2>
-            <p>Subpath exports are split so you can follow the usage paths in the README exactly.</p>
-          </div>
-          <div className="lp-route-grid">
-            {ROUTES.map(([name, path, desc]) => (
-              <article key={path} className="lp-route-card">
-                <h3>{name}</h3>
-                <code>{path}</code>
-                <p>{desc}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="lp-section lp-license" aria-label="License">
-          <p>three-slicer AGPL-3.0-or-later · three-slicer-viewer MIT · based on OrcaSlicer · runs in the browser or Node with no server</p>
-          <nav className="lp-license-links" aria-label="More">
-            <Link to="/slice">Start slicing</Link>
-            <Link to="/demos">Demos</Link>
-            <a href="/docs">Docs</a>
-            <a href="/license">License</a>
-            <a href="/about">About</a>
-          </nav>
         </section>
       </main>
 
       <footer className="lp-foot">
-        <span>Source</span>
+        <span>Three Slicer, based on OrcaSlicer</span>
         <a href={REPO_URL} target="_blank" rel="noreferrer">{REPO}</a>
         <a href={`${REPO_URL}/discussions`} target="_blank" rel="noreferrer">Community</a>
         <a href="/docs">Docs</a>
