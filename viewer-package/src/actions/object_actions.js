@@ -113,7 +113,7 @@ export function makeObjectActions(deps) {
     removeObject(id)
     parts.forEach((p, i) => {
       const added = apiRef.current?.spawnSnapshot(
-        { name: `${base}_${i + 1}`, localPos: p, rot: snap.rot, scale: snap.scale, pos: snap.pos }, true)
+        { name: `${base}_${i + 1}`, extruder: snap.extruder, localPos: p, rot: snap.rot, scale: snap.scale, pos: snap.pos }, true)
       const object = added && objectsRef.current.find(o => o.id === added.id)
       if (object && partPaint[i]) object.paint = partPaint[i]
     })

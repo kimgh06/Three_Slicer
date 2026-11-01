@@ -660,11 +660,11 @@ export function useThreeScene(deps) {
       // ---- Shortcut support (duplicate/nudge/rotate/zoom-to) ----
       getSnapshot: (id) => {           // snapshot for copy/duplicate — localPos is immutable, so the reference is shared
         const o = objectsRef.current.find(x => x.id === id); if (!o) return null
-        return { name: o.name, localPos: o.localPos, rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(), pos: o.mesh.position.clone() }
+        return { name: o.name, extruder: o.extruder, localPos: o.localPos, rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(), pos: o.mesh.position.clone() }
       },
       // keepPos=true keeps the snapshot's original position (split). false (default) places it beside via the placement cursor (duplicate/paste).
       //  `quiet`: a duplicate/paste/split must not reframe the camera — a fresh LOAD is the only spawn where it is the point.
-      spawnSnapshot: (snap, keepPos = false) => snap ? spawnMesh(snap.name, snap.localPos, snap.rot, snap.scale, keepPos ? (snap.pos || null) : null, { quiet: true }) : null,
+      spawnSnapshot: (snap, keepPos = false) => snap && spawnMesh(snap.name, snap.localPos, snap.rot, snap.scale, (keepPos && snap.pos) || null, { quiet: true, extruder: snap.extruder }),
       nudgeSelected: (dx, dz) => { if (!selected) return; selected.position.x += dx; selected.position.z += dz },
       rotateSelectedY: (rad) => { if (!selected) return; selected.rotation.y += rad },
       frame: () => frameObjects(),                                   // Z: zoom to all objects
