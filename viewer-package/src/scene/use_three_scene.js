@@ -3,6 +3,7 @@ import { buildSlaGroup, disposeSceneGroup as disposeGroup } from './sla_preview_
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
+import { isRightClick } from '../core/right_click.js'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster } from './sla_raster.js'
 import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'; import { towerSelectionRule } from '../core/tower_layout.js'
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates, fitCameraDepth } from './plate_scene.js'; import { DEPTH_NEAR, DEPTH_FAR } from '../core/camera_depth.js'
@@ -290,13 +291,13 @@ export function useThreeScene(deps) {
     // With several objects selected the name of one of them says less than the count does.
     const selectionLabel = () => (selection.size > 1 ? `${selection.size} objects`
       : selected ? selected.userData.name : '—')
-    const statusText = () => objectsRef.current.length
-      // The keyboard half of the hint is dropped when features.shortcuts is off — a status bar advertising a key
-      //  that has been switched off is worse than a shorter status bar.
-      ? `${objectsRef.current.length} object(s) · selected: ${selectionLabel()}`
-        + (keyRef.current ? ' | M/R/S · Ctrl+click to add · Shift+drag to box-select · ? for shortcuts' : ' | Ctrl+click to add · Shift+drag to box-select')
-      : `hover: ${hovered ? hovered.userData.name : '—'} · selected: ${selectionLabel()} | left-drag to orbit`
-        + (keyRef.current ? ' · ? for shortcuts' : '')
+    const statusText = () => {
+      let text = 'Left-drag to orbit'
+      if (objectsRef.current.length) text = `${objectsRef.current.length} object(s) · Selected: ${selectionLabel()} · Ctrl+click to add · Shift+drag to box-select`
+      // Dropped with features.shortcuts off: a status bar must not advertise a key that is switched off.
+      if (keyRef.current) text += ' · ? for shortcuts'
+      return text
+    }
     const toPointer = ev => { const r = renderer.domElement.getBoundingClientRect(); pointer.x = ((ev.clientX - r.left) / r.width) * 2 - 1; pointer.y = -((ev.clientY - r.top) / r.height) * 2 + 1 }
     const pick = () => { raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(activeMeshes(), false); return hits.length ? hits[0].object : null }
     // Stage 20: painting — the raycast -> kernel-coordinate conversion, the brush cursor preview and the stroke's
@@ -441,27 +442,25 @@ export function useThreeScene(deps) {
       if (canvasModeRef.current === 'preview') return
       paintInput.onWheel(ev)
     }
-    // Right-click context menu — selects the object under the press, then hands the menu coordinates to the component.
-    //  (OrbitControls calls preventDefault on contextmenu, so there is no clash with the native menu.)
-    //  Note: distinguish from a right-drag pan — if the pointer moved 4px or more since pointerdown, the menu does not open.
+    // An object's right-click menu opens on the RELEASE: `contextmenu` arrives at the press on macOS and Linux, before a press is told from a pan. A touch long press has only that event.
     let rmbDown = null
     const onRmbDown = ev => { if (ev.button === 2) rmbDown = { x: ev.clientX, y: ev.clientY } }
-    const onCtxMenu = ev => {
-      ev.preventDefault()
+    const openObjectMenu = ev => {
       if (canvasModeRef.current === 'preview' || paintModeRef.current !== 'off') return
-      if (rmbDown && Math.hypot(ev.clientX - rmbDown.x, ev.clientY - rmbDown.y) > 4) return   // that was a pan drag
       toPointer(ev); const hit = pick()
-      // Right-clicking INSIDE an existing multi-selection keeps it — otherwise "export selected" from the menu
-      //  could only ever mean the one object under the cursor.
-      if (hit) { if (!selection.has(hit)) selectOnly(hit) } else clearSelection()
+      if (!hit) return
+      // Right-clicking INSIDE a multi-selection keeps it, so "export selected" can mean more than the object under the cursor.
+      if (!selection.has(hit)) selectOnly(hit)
       announceSelection()
       const r = renderer.domElement.getBoundingClientRect()
-      setCtxMenu({ x: ev.clientX - r.left, y: ev.clientY - r.top, onObject: !!hit })
+      setCtxMenu({ x: ev.clientX - r.left, y: ev.clientY - r.top })
     }
+    const onRmbUp = ev => { if (ev.button === 2 && isRightClick(rmbDown, { x: ev.clientX, y: ev.clientY })) openObjectMenu(ev) }
+    const onCtxMenu = ev => { if (ev.pointerType === 'touch') openObjectMenu(ev) }
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerdown', onDown)
     renderer.domElement.addEventListener('pointerdown', onRmbDown)
-    if (contextMenu !== false) renderer.domElement.addEventListener('contextmenu', onCtxMenu)
+    if (contextMenu !== false) { renderer.domElement.addEventListener('pointerup', onRmbUp); renderer.domElement.addEventListener('contextmenu', onCtxMenu) }
     renderer.domElement.addEventListener('dblclick', onDblClick)
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false, capture: true })
     window.addEventListener('pointerup', onUp)
@@ -882,7 +881,7 @@ export function useThreeScene(deps) {
       cancelAnimationFrame(raf)
       ro.disconnect(); window.removeEventListener('keydown', onKey)
       renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('pointerdown', onDown)
-      renderer.domElement.removeEventListener('pointerdown', onRmbDown); renderer.domElement.removeEventListener('contextmenu', onCtxMenu)
+      renderer.domElement.removeEventListener('pointerdown', onRmbDown); renderer.domElement.removeEventListener('pointerup', onRmbUp); renderer.domElement.removeEventListener('contextmenu', onCtxMenu)
       renderer.domElement.removeEventListener('dblclick', onDblClick); renderer.domElement.removeEventListener('wheel', onWheel, { capture: true })
       window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp)
       clearSlaPreview()

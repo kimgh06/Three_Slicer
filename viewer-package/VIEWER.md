@@ -70,7 +70,7 @@ Every panel can be switched off, and the values the component owns can be seeded
 
 - **`panels`** — `{name: false}` hides one. Everything is visible by default, so a host only ever opts out and a
   panel added in a later version does not vanish for hosts that listed the ones they wanted. `sidebar: false` drops
-  the whole right column; the rest are `topBar`, `gizmoRail`, `objectToolbar`, `paintPanel`, `statsCard`, `plateBar`,
+  the whole right column; the rest are `topBar`, `menuBar` (off with `topBar`), `gizmoRail`, `objectToolbar` (both sit in the ribbon under the title row, which stays for them when `topBar` is off), `paintPanel`, `statsCard`, `plateBar` (over the slice button, floating over the canvas when the sidebar is off or read-only),
   `emptyHint`, `status`, `printerCard`, `filamentCard`, `resinCard`, `towerCard`, `objectList`, `previewControls`,
   `processCard`, `sliceBar`, `moveBar`, `bedWarn` (the off-bed warning strip). Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
   `printer_technology` says SLA swaps the filament card (and the prime tower, and the painting brushes) for the
@@ -258,7 +258,7 @@ opt-out only, everything on unless you say `false`, an unknown key stays on.
 | `warmup` | The WASM kernel is not loaded on mount. Nothing is downloaded or compiled until something actually slices — which for a `gcode`-only viewer is never, so this is several megabytes and a thread pool you stop paying for. |
 | `drop` | No drag and drop onto the canvas. |
 | `filePicker` | The file dialog never opens, from any of the buttons that open it. |
-| `contextMenu` | No right-click menu. The browser's own menu stays suppressed over the canvas either way — OrbitControls preventDefaults `contextmenu` itself. |
+| `contextMenu` | No right-click menu on objects (empty space has none). The browser's own menu stays suppressed over the canvas either way — OrbitControls preventDefaults `contextmenu` itself. |
 | `logs` | No console output, from the component or from the slice worker. |
 | `versionBadge` | The build number at the right end of the status bar is not drawn. It is there so a bug report can name a build; turn it off when the viewer is embedded as part of your own product. `panels.status: false` hides it too, since it rides that bar. |
 
