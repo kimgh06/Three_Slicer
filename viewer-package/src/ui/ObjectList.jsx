@@ -72,7 +72,7 @@ export default function ObjectList({
   const plateGroups = [...byPlate.keys()].sort((a, b) => a - b)
   return (
     <section className="side-card" data-testid="object-section">
-      <div className="sc-head">📦 Objects <span className="sc-count">{objects.length}</span></div>
+      <div className="sc-head">Objects <span className="sc-count">{objects.length}</span></div>
       <ul className="obj-list2" data-testid="obj-list">
         {plateCount <= 1 ? objects.map(row) : plateGroups.map(p => (
           <React.Fragment key={`plate-${p}`}>
@@ -108,7 +108,7 @@ export default function ObjectList({
           : 'Generate support structures under overhangs (same as enable_support in the settings panel)'}
         data-testid="support-toggle" /> Generate support{plateCount > 1 ? ` — plate ${selectedPlate + 1}` : ''}</label>
       {/* The two things you actually do about support — see where it is needed, and brush it — used to live only
-          on the left gizmo rail, with nothing here to hint they existed. */}
+          in the ribbon, with nothing here to hint they existed. */}
       {supportOn && (
         <div className="sc-info sup-style"><span>Style</span>
           <select className="sc-model" value={supportStyle} onChange={e => onSupportStyle(e.target.value)}
@@ -153,7 +153,7 @@ export default function ObjectList({
           </label>
           <button className={paintMode !== 'off' ? 'sup-paint on' : 'sup-paint'} onClick={onTogglePaint}
             disabled={!objects.length} data-testid="support-paint-btn"
-            title="Brush facets to force or block support — the same tool as the paint icon on the left rail">
+            title="Brush facets to force or block support — the same tool as the Support painting button in the ribbon">
             {paintMode !== 'off' ? 'Painting…' : 'Paint support'}
           </button>
         </div>

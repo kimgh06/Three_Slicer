@@ -18,7 +18,7 @@ export default function ProcessCard({
   const panel = typeof processPanel === 'function' ? processPanel(scoped.settings, scoped.setSettings, scopeMeta) : processPanel
   return (
     <section className="side-card process-card" data-testid="process-section">
-      <div className="sc-head">⚙ Process
+      <div className="sc-head">Process
         {plateCount > 1 && typeof processPanel === 'function' && (
           <ScopeToggle plateScope={active} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate} />
         )}

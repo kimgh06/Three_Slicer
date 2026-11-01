@@ -134,7 +134,7 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
   return (
     <section className="side-card">
       <div className="sc-head">
-        🖨 Printer
+        Printer
         {plateCount > 1 && setSettings && setSettingsScope && (
           <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
             testid="printer-scope-toggle" plateTestid="printer-scope-plate" />
@@ -142,7 +142,7 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
         {/* Preset files read/write the GLOBAL map (preset_actions settingsRef) — offering them under a
             "Plate N" heading would save the wrong thing, so they step back until the scope does. */}
         {!plateScope && (onExportPreset || onImportPreset) && (
-          <span className="sc-head-actions">
+          <span className="sc-head-btns sc-preset-btns">
             {onImportPreset && (
               <button className="sc-mini" onClick={onImportPreset} data-testid="printer-import"
                 title="Load a printer profile from a .json preset or an .orca_printer bundle">Load</button>

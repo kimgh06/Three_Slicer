@@ -258,7 +258,7 @@ export default function FilamentCard({
 
   return (
     <section className="side-card" data-testid="filament-section">
-      <div className="sc-head">🧵 Filament <span className="sc-count">{count}</span>
+      <div className="sc-head">Filament <span className="sc-count">{count}</span>
         {plateCount > 1 && setSettingsScope && (
           <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
             testid="filament-scope-toggle" plateTestid="filament-scope-plate" />

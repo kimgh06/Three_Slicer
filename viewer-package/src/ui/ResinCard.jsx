@@ -45,7 +45,7 @@ export default function ResinCard({ catalog, settings: globalSettings, setSettin
   }
   return (
     <section className="side-card" data-testid="resin-card">
-      <div className="sc-head">🧪 Resin
+      <div className="sc-head">Resin
         {plateCount > 1 && setSettingsScope && (
           <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
             testid="resin-scope-toggle" plateTestid="resin-scope-plate" />

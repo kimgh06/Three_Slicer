@@ -119,7 +119,7 @@ export default function TowerCard({
 
   return (
     <section className="side-card" data-testid="tower-section">
-      <div className="sc-head">🗼 Prime tower
+      <div className="sc-head">Prime tower
         {plateCount > 1 && setPlateSettings && (
           <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
             testid="tower-scope" plateTestid="tower-scope-plate" />
