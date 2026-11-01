@@ -57,9 +57,23 @@ def extract_ui_tree(src=None, implicit_pages=False):
             return []
         pages = []
         cur_page = cur_group = None
+        option_vars = {}    # `Option option = optgroup->get_option("key")`: the variable -> its key
+        line_options = []   # the keys `line.append_option(...)` has collected for the next append_line
+        line_title = None   # that Line's title ("Nozzle"), which the option labels below it ("First layer") rely on
         for ln in range(start, end):
             l = lines[ln]
             if l.lstrip().startswith('//'): continue      # commented-out groups/options are not part of the UI
+            m = re.search(r'(\w+)\s*=\s*optgroup->get_option\("([^"]+)"', l)
+            if m: option_vars[m.group(1)] = m.group(2)
+            m = re.search(r'\b[Ll]ine\s*(?:=\s*(?:Line\s*)?)?\{\s*(?:L\()?"([^"]*)"', l)
+            if m: line_title = m.group(1)
+            # PrusaSlicer's correction rows: one option per axis, in a loop over { "X", "Y", "Z" }.
+            m = re.search(r'get_option\(std::string\("([^"]+)"\)\s*\+\s*char\(std::tolower\(axis\[0\]\)\)', l)
+            if m:
+                line_options.extend(m.group(1) + axis for axis in 'xyz'); continue
+            m = re.search(r'\.append_option\(\s*(?:optgroup->get_option\("([^"]+)"|(\w+)\s*[,)])', l)
+            if m and (m.group(1) or m.group(2) in option_vars):
+                line_options.append(m.group(1) or option_vars[m.group(2)]); continue
             m = re.search(r'add_options_page\(L\("([^"]+)"\)(?:,\s*"([^"]*)")?', l)
             if m:
                 cur_page = {'page': m.group(1), 'icon': m.group(2) or '', 'line': ln + 1, 'groups': []}
@@ -71,10 +85,16 @@ def extract_ui_tree(src=None, implicit_pages=False):
                     cur_page = {'page': '', 'icon': '', 'line': ln + 1, 'groups': []}
                     pages.append(cur_page)
                 cur_group = {'group': m.group(1), 'line': ln + 1, 'options': []}
+                line_options = []
+                line_title = None
                 cur_page['groups'].append(cur_group); continue
             m = re.search(r'append_single_option_line\("([^"]+)"(?:\s*,\s*"([^"]*)")?', l)
             if m and cur_group is not None:
                 cur_group['options'].append(m.group(1)); continue
+            # The same call through an Option variable: every multi-line field (G-code templates, notes) is added so.
+            m = re.search(r'append_single_option_line\(\s*(\w+)\s*[,)]', l)
+            if m and cur_group is not None and m.group(1) in option_vars:
+                cur_group['options'].append(option_vars[m.group(1)]); continue
             # PrusaSlicer's SLA support page appends one line holding an option per prefix column
             #  (add_options_into_line(optgroup, prefixes, "key")); the plain spelling names the line.
             m = re.search(r'add_options_into_line\(\s*optgroup\s*,\s*\w+\s*,\s*"([^"]+)"', l)
@@ -87,6 +107,19 @@ def extract_ui_tree(src=None, implicit_pages=False):
             # optgroup->append_line(...) custom widgets / via an Option object
             if cur_group is not None and re.search(r'optgroup->append_line\(', l) \
                and 'append_single_option_line' not in l:
+                if line_options:
+                    # A composite row holds several options under one title. The title rides beside the flat key
+                    #  list, which every consumer reads as plain strings.
+                    cur_group['options'].extend(line_options)
+                    if line_title:
+                        cur_group.setdefault('line_titles', {}).update({key: line_title for key in line_options})
+                    line_options = []
+                    line_title = None
+                    continue
+                # An empty title and no option is a computed description, not a setting.
+                if line_title == '':
+                    line_title = None
+                    continue
                 mm = re.search(r'get_option\("([^"]+)"\)', l)
                 cur_group['options'].append(mm.group(1) if mm else '<custom-widget line:%d>' % (ln + 1))
         # Rows appended by a local lambda driven by an inline brace list (the filament "Setting Overrides" page,
@@ -107,13 +140,21 @@ def extract_ui_tree(src=None, implicit_pages=False):
     return result
 
 # ---------------------------------------------------------------- config-schema
+def _cpp_unescape(text):
+    """The escapes upstream's string literals use. One pass, so the `\\\\n` of a literal backslash stays a backslash."""
+    def decode(m):
+        code = m.group(1)
+        if code[0] == 'u': return chr(int(code[1:], 16))
+        return {'n': '\n'}.get(code, code)
+    return re.sub(r'\\(u[0-9a-fA-F]{4}|.)', decode, text)
+
 def _unquote(expr):
     """L("a" "b") / "a" -> a Python string. Adjacent literals are concatenated."""
     parts = re.findall(r'"((?:[^"\\]|\\.)*)"', expr)
     if not parts:
         return None
     s = ''.join(parts)
-    return s.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
+    return _cpp_unescape(s)
 
 def _parse_macros():
     """The #define constant table from PrintConfigConstants.hpp."""
@@ -155,7 +196,7 @@ def _parse_list_items(raw, macros):
     for m in re.finditer(pat, raw):
         s, fov, fob, vx, vy, ident = m.groups()
         if s is not None:
-            items.append(s)
+            items.append(_cpp_unescape(s))
         elif fov is not None:
             items.append(fov + ('%' if fob == 'true' else ''))
         elif vx is not None:
@@ -1074,6 +1115,18 @@ def extract_preset_keys(schema):
 
 
 # ---------------------------------------------------------------- main
+def drop_unknown_options(tree, schema):
+    """A key the config schema does not define has no type, so a form cannot draw it. Printed rather than swallowed,
+    as preset_keys does: a growing list means the schema extractor is missing options."""
+    dropped = []
+    for pages in tree.values():
+        for page in pages:
+            for group in page['groups']:
+                dropped += [k for k in group['options'] if not k.startswith('<') and k not in schema]
+                group['options'] = [k for k in group['options'] if k.startswith('<') or k in schema]
+    if dropped:
+        print(f'  ui-tree: dropped {len(dropped)} key(s) absent from config-schema: ' + ', '.join(dropped))
+
 if __name__ == '__main__':
     ui = extract_ui_tree()
     sch = extract_schema()
@@ -1092,6 +1145,7 @@ if __name__ == '__main__':
     else:
         print("sla: PrusaSlicer checkout absent — SLA pass skipped, committed entries kept")
 
+    drop_unknown_options(ui, sch)
     json.dump(ui, open(os.path.join(OUT, 'ui-tree.json'), 'w'), ensure_ascii=False, indent=1)
 
     # A reduced ui-tree: per builder, just the option keys in order. The page and group NAMES are upstream's

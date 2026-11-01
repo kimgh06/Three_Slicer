@@ -137,7 +137,8 @@
       "min_width_top_surface",
       "reduce_crossing_wall",
       "max_travel_detour_distance",
-      "small_area_infill_flow_compensation"
+      "small_area_infill_flow_compensation",
+      "small_area_infill_flow_compensation_model"
      ]
     },
     {
@@ -301,9 +302,21 @@
      "options": [
       "enable_overhang_speed",
       "slowdown_for_curled_perimeters",
-      "<custom-widget line:2887>",
-      "<custom-widget line:2892>"
-     ]
+      "overhang_1_4_speed",
+      "overhang_2_4_speed",
+      "overhang_3_4_speed",
+      "overhang_4_4_speed",
+      "bridge_speed",
+      "internal_bridge_speed"
+     ],
+     "line_titles": {
+      "overhang_1_4_speed": "Overhang speed",
+      "overhang_2_4_speed": "Overhang speed",
+      "overhang_3_4_speed": "Overhang speed",
+      "overhang_4_4_speed": "Overhang speed",
+      "bridge_speed": "Bridge",
+      "internal_bridge_speed": "Bridge"
+     }
     },
     {
      "group": "Travel speed",
@@ -611,35 +624,42 @@
       "gcode_add_line_number",
       "gcode_comments",
       "gcode_label_objects",
-      "exclude_object"
+      "exclude_object",
+      "filename_format"
      ]
     },
     {
      "group": "Change extrusion role G-code",
      "line": 3113,
-     "options": []
+     "options": [
+      "process_change_extrusion_role_gcode"
+     ]
     },
     {
      "group": "Post-processing Scripts",
      "line": 3124,
-     "options": []
+     "options": [
+      "post_process"
+     ]
     },
     {
      "group": "Slicing Pipeline Plugin",
      "line": 3131,
-     "options": []
+     "options": [
+      "slicing_pipeline_plugin"
+     ]
     },
     {
      "group": "Plugin Configuration",
      "line": 3139,
-     "options": [
-      "print_plugin_config_overrides"
-     ]
+     "options": []
     },
     {
      "group": "Notes",
      "line": 3142,
-     "options": []
+     "options": [
+      "notes"
+     ]
     }
    ]
   }
@@ -727,8 +747,13 @@
       "filament_cost",
       "temperature_vitrification",
       "idle_temperature",
-      "<custom-widget line:4302>"
-     ]
+      "nozzle_temperature_range_low",
+      "nozzle_temperature_range_high"
+     ],
+     "line_titles": {
+      "nozzle_temperature_range_low": "Recommended nozzle temperature",
+      "nozzle_temperature_range_high": "Recommended nozzle temperature"
+     }
     },
     {
      "group": "Flow ratio and Pressure Advance",
@@ -740,7 +765,8 @@
       "pressure_advance",
       "adaptive_pressure_advance",
       "adaptive_pressure_advance_overhangs",
-      "adaptive_pressure_advance_bridges"
+      "adaptive_pressure_advance_bridges",
+      "adaptive_pressure_advance_model"
      ]
     },
     {
@@ -748,27 +774,57 @@
      "line": 4343,
      "options": [
       "activate_chamber_temp_control",
-      "<custom-widget line:4353>"
-     ]
+      "chamber_temperature",
+      "chamber_minimal_temperature"
+     ],
+     "line_titles": {
+      "chamber_temperature": "Chamber temperature",
+      "chamber_minimal_temperature": "Chamber temperature"
+     }
     },
     {
      "group": "Print temperature",
      "line": 4369,
      "options": [
-      "<custom-widget line:4374>"
-     ]
+      "nozzle_temperature_initial_layer",
+      "nozzle_temperature"
+     ],
+     "line_titles": {
+      "nozzle_temperature_initial_layer": "Nozzle",
+      "nozzle_temperature": "Nozzle"
+     }
     },
     {
      "group": "Bed temperature",
      "line": 4376,
      "options": [
-      "<custom-widget line:4382>",
-      "<custom-widget line:4389>",
-      "<custom-widget line:4396>",
-      "<custom-widget line:4403>",
-      "<custom-widget line:4410>",
-      "<custom-widget line:4417>"
-     ]
+      "supertack_plate_temp_initial_layer",
+      "supertack_plate_temp",
+      "cool_plate_temp_initial_layer",
+      "cool_plate_temp",
+      "textured_cool_plate_temp_initial_layer",
+      "textured_cool_plate_temp",
+      "eng_plate_temp_initial_layer",
+      "eng_plate_temp",
+      "hot_plate_temp_initial_layer",
+      "hot_plate_temp",
+      "textured_plate_temp_initial_layer",
+      "textured_plate_temp"
+     ],
+     "line_titles": {
+      "supertack_plate_temp_initial_layer": "Cool Plate (SuperTack)",
+      "supertack_plate_temp": "Cool Plate (SuperTack)",
+      "cool_plate_temp_initial_layer": "Cool Plate",
+      "cool_plate_temp": "Cool Plate",
+      "textured_cool_plate_temp_initial_layer": "Textured Cool Plate",
+      "textured_cool_plate_temp": "Textured Cool Plate",
+      "eng_plate_temp_initial_layer": "Engineering Plate",
+      "eng_plate_temp": "Engineering Plate",
+      "hot_plate_temp_initial_layer": "Smooth PEI Plate / High Temp Plate",
+      "hot_plate_temp": "Smooth PEI Plate / High Temp Plate",
+      "textured_plate_temp_initial_layer": "Textured PEI Plate",
+      "textured_plate_temp": "Textured PEI Plate"
+     }
     },
     {
      "group": "Volumetric speed limitation",
@@ -798,8 +854,10 @@
      "group": "Part cooling fan",
      "line": 4472,
      "options": [
-      "<custom-widget line:4477>",
-      "<custom-widget line:4482>",
+      "fan_min_speed",
+      "fan_cooling_layer_time",
+      "fan_max_speed",
+      "slow_down_layer_time",
       "reduce_fan_stop_start_freq",
       "slow_down_for_layer_cooling",
       "dont_slow_down_outer_wall",
@@ -810,7 +868,13 @@
       "internal_bridge_fan_speed",
       "support_material_interface_fan_speed",
       "ironing_fan_speed"
-     ]
+     ],
+     "line_titles": {
+      "fan_min_speed": "Min fan speed threshold",
+      "fan_cooling_layer_time": "Min fan speed threshold",
+      "fan_max_speed": "Max fan speed threshold",
+      "slow_down_layer_time": "Max fan speed threshold"
+     }
     },
     {
      "group": "Auxiliary part cooling fan",
@@ -824,9 +888,17 @@
      "line": 4498,
      "options": [
       "activate_air_filtration",
-      "<custom-widget line:4506>",
-      "<custom-widget line:4513>"
-     ]
+      "activate_air_filtration_during_print",
+      "during_print_exhaust_fan_speed",
+      "activate_air_filtration_on_completion",
+      "complete_print_exhaust_fan_speed"
+     ],
+     "line_titles": {
+      "activate_air_filtration_during_print": "During print",
+      "during_print_exhaust_fan_speed": "During print",
+      "activate_air_filtration_on_completion": "Complete print",
+      "complete_print_exhaust_fan_speed": "Complete print"
+     }
     }
    ]
   },
@@ -838,24 +910,28 @@
     {
      "group": "Filament start G-code",
      "line": 4522,
-     "options": []
+     "options": [
+      "filament_start_gcode"
+     ]
     },
     {
      "group": "Change extrusion role G-code",
      "line": 4533,
-     "options": []
+     "options": [
+      "filament_change_extrusion_role_gcode"
+     ]
     },
     {
      "group": "Filament end G-code",
      "line": 4544,
-     "options": []
+     "options": [
+      "filament_end_gcode"
+     ]
     },
     {
      "group": "Plugin Configuration",
      "line": 4555,
-     "options": [
-      "filament_plugin_config_overrides"
-     ]
+     "options": []
     }
    ]
   },
@@ -919,12 +995,16 @@
     {
      "group": "Compatible printers",
      "line": 4609,
-     "options": []
+     "options": [
+      "compatible_printers_condition"
+     ]
     },
     {
      "group": "Compatible process profiles",
      "line": 4618,
-     "options": []
+     "options": [
+      "compatible_prints_condition"
+     ]
     }
    ]
   },
@@ -936,7 +1016,9 @@
     {
      "group": "Notes",
      "line": 4628,
-     "options": []
+     "options": [
+      "filament_notes"
+     ]
     }
    ]
   }
@@ -952,6 +1034,7 @@
      "line": 4989,
      "options": [
       "parallel_printheads_count",
+      "bed_exclude_area",
       "printable_height",
       "support_multi_bed_types",
       "best_object_pos",
@@ -971,6 +1054,7 @@
       "scan_first_layer",
       "enable_power_loss_recovery",
       "disable_m73",
+      "thumbnails",
       "use_relative_e_distances",
       "use_firmware_retraction",
       "time_cost"
@@ -979,18 +1063,21 @@
     {
      "group": "Plugin Configuration",
      "line": 5064,
-     "options": [
-      "printer_plugin_config_overrides"
-     ]
+     "options": []
     },
     {
      "group": "Cooling Fan",
      "line": 5067,
      "options": [
-      "<custom-widget line:5072>",
+      "fan_speedup_time",
+      "fan_speedup_overhangs",
       "fan_kickstart",
       "part_cooling_fan_min_pwm"
-     ]
+     ],
+     "line_titles": {
+      "fan_speedup_time": "Fan speed-up time",
+      "fan_speedup_overhangs": "Fan speed-up time"
+     }
     },
     {
      "group": "Extruder Clearance",
@@ -1034,62 +1121,86 @@
     {
      "group": "File header G-code",
      "line": 5102,
-     "options": []
+     "options": [
+      "file_start_gcode"
+     ]
     },
     {
      "group": "Machine start G-code",
      "line": 5113,
-     "options": []
+     "options": [
+      "machine_start_gcode"
+     ]
     },
     {
      "group": "Machine end G-code",
      "line": 5124,
-     "options": []
+     "options": [
+      "machine_end_gcode"
+     ]
     },
     {
      "group": "Printing by object G-code",
      "line": 5135,
-     "options": []
+     "options": [
+      "printing_by_object_gcode"
+     ]
     },
     {
      "group": "Before layer change G-code",
      "line": 5147,
-     "options": []
+     "options": [
+      "before_layer_change_gcode"
+     ]
     },
     {
      "group": "Layer change G-code",
      "line": 5158,
-     "options": []
+     "options": [
+      "layer_change_gcode"
+     ]
     },
     {
      "group": "Timelapse G-code",
      "line": 5169,
-     "options": []
+     "options": [
+      "time_lapse_gcode"
+     ]
     },
     {
      "group": "Clumping Detection G-code",
      "line": 5180,
-     "options": []
+     "options": [
+      "wrapping_detection_gcode"
+     ]
     },
     {
      "group": "Change filament G-code",
      "line": 5191,
-     "options": []
+     "options": [
+      "change_filament_gcode"
+     ]
     },
     {
      "group": "Change extrusion role G-code",
      "line": 5202,
-     "options": []
+     "options": [
+      "change_extrusion_role_gcode"
+     ]
     },
     {
      "group": "Pause G-code",
      "line": 5213,
-     "options": []
+     "options": [
+      "machine_pause_gcode"
+     ]
     },
     {
      "group": "Template Custom G-code",
      "line": 5223,
-     "options": []
+     "options": [
+      "template_custom_gcode"
+     ]
     }
    ]
   },
@@ -1101,7 +1212,9 @@
     {
      "group": "Notes",
      "line": 5234,
-     "options": []
+     "options": [
+      "printer_notes"
+     ]
     }
    ]
   }
@@ -1124,11 +1237,14 @@
      "line": 5378,
      "options": [
       "resonance_avoidance",
-      "<custom-widget line:5386>",
+      "min_resonance_avoidance_speed",
+      "max_resonance_avoidance_speed",
       "input_shaping_emit",
       "input_shaping_type",
-      "<custom-widget line:5395>",
-      "<custom-widget line:5402>"
+      "input_shaping_freq_x",
+      "input_shaping_freq_y",
+      "input_shaping_damp_x",
+      "input_shaping_damp_y"
      ]
     },
     {
@@ -1219,7 +1335,8 @@
      "options": [
       "nozzle_diameter",
       "nozzle_volume",
-      "extruder_printable_height"
+      "extruder_printable_height",
+      "extruder_printable_area"
      ]
     },
     {
@@ -1287,9 +1404,7 @@
     {
      "group": "Size and coordinates",
      "line": 3017,
-     "options": [
-      "max_print_height"
-     ]
+     "options": []
     },
     {
      "group": "Display",
@@ -1297,7 +1412,8 @@
      "options": [
       "display_width",
       "display_height",
-      "<custom-widget line:3032>",
+      "display_pixels_x",
+      "display_pixels_y",
       "display_orientation",
       "display_mirror_x",
       "display_mirror_y"
@@ -1307,14 +1423,23 @@
      "group": "Tilt",
      "line": 3039,
      "options": [
-      "<custom-widget line:3044>"
-     ]
+      "fast_tilt_time",
+      "slow_tilt_time",
+      "high_viscosity_tilt_time"
+     ],
+     "line_titles": {
+      "fast_tilt_time": "Tilt time",
+      "slow_tilt_time": "Tilt time",
+      "high_viscosity_tilt_time": "Tilt time"
+     }
     },
     {
      "group": "Corrections",
      "line": 3046,
      "options": [
-      "<custom-widget line:3053>",
+      "relative_correction_x",
+      "relative_correction_y",
+      "relative_correction_z",
       "absolute_correction",
       "elefant_foot_compensation",
       "elefant_foot_min_width",
@@ -1349,7 +1474,9 @@
     {
      "group": "Notes",
      "line": 3075,
-     "options": []
+     "options": [
+      "printer_notes"
+     ]
     }
    ]
   },
@@ -1402,9 +1529,10 @@
      "group": "Corrections",
      "line": 5485,
      "options": [
-      "<custom-widget line:5492>",
-      "zcorrection_layers",
-      "<custom-widget line:5502>"
+      "material_correction_x",
+      "material_correction_y",
+      "material_correction_z",
+      "zcorrection_layers"
      ]
     }
    ]
@@ -1417,7 +1545,9 @@
     {
      "group": "Notes",
      "line": 5507,
-     "options": []
+     "options": [
+      "material_notes"
+     ]
     }
    ]
   },
@@ -1429,7 +1559,10 @@
     {
      "group": "Profile dependencies",
      "line": 5515,
-     "options": []
+     "options": [
+      "compatible_printers_condition",
+      "compatible_prints_condition"
+     ]
     }
    ]
   },
@@ -1456,8 +1589,8 @@
      "group": "Temperature",
      "line": 5543,
      "options": [
-      "<custom-widget line:5560>",
-      "<custom-widget line:5590>"
+      "compatible_prints_condition",
+      "compatible_prints_condition"
      ]
     }
    ]
@@ -1523,8 +1656,7 @@
       "support_base_diameter",
       "support_base_height",
       "support_base_safety_distance",
-      "support_object_elevation",
-      "<custom-widget line:5890>"
+      "support_object_elevation"
      ]
     },
     {
@@ -1615,7 +1747,9 @@
     {
      "group": "Profile dependencies",
      "line": 6121,
-     "options": []
+     "options": [
+      "compatible_printers_condition"
+     ]
     }
    ]
   }
