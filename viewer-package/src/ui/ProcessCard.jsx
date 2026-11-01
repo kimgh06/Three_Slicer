@@ -1,6 +1,7 @@
 import React from 'react'
 import { cardScope } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
+import { Section } from './Section.jsx'
 
 // The Process card: the host's settings-panel slot, plus the per-plate scope toggle.
 //
@@ -17,13 +18,11 @@ export default function ProcessCard({
   const scopeMeta = { scope: active ? 'plate' : 'global', selectedPlate, overriddenKeys: scoped.overriddenKeys, onRevertKey: scoped.onRevertKey }
   const panel = typeof processPanel === 'function' ? processPanel(scoped.settings, scoped.setSettings, scopeMeta) : processPanel
   return (
-    <section className="side-card process-card" data-testid="process-section">
-      <div className="sc-head">Process
-        {plateCount > 1 && typeof processPanel === 'function' && (
-          <ScopeToggle plateScope={active} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate} />
-        )}
-      </div>
+    <Section title="Process" className="process-card" testId="process-section"
+      scope={plateCount > 1 && typeof processPanel === 'function' && (
+        <ScopeToggle plateScope={active} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate} />
+      )}>
       {panel}
-    </section>
+    </Section>
   )
 }

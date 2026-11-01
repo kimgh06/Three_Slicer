@@ -20,7 +20,7 @@ export default function MoveBar({ value, max, point, onScrub }) {
             </span>
           )}
         </label>
-        <button className="move-reset" disabled={value == null} data-testid="move-reset"
+        <button className="ctl-btn" disabled={value == null} data-testid="move-reset"
           title="Show the whole layer again" onClick={() => onScrub(null)}>Full</button>
       </div>
       <div className="move-bar" data-testid="move-bar">

@@ -18,6 +18,8 @@ export default function PreviewControls({
   //  At least one entry, because a host that passes no filament list is still slicing with one extruder.
   const filamentView = viewType === 'filament'
   const extruderCount = Math.max(1, Array.isArray(extruderColors) ? extruderColors.length : 0)
+  let singleClass = 'ctl-btn'
+  if (singleLayer) singleClass = 'ctl-btn on'
   return (
     <div className="slice-layer" data-testid="preview-controls">
       <label className="view-type-row">View type
@@ -37,7 +39,7 @@ export default function PreviewControls({
         <MoveBar value={moveScrub.at} max={moveScrub.max} point={moveScrub.point} onScrub={moveScrub.onScrub} />
       )}
       <div className="layer-ctl">
-        <button className={singleLayer ? 'on' : ''} onClick={onToggleSingle} data-testid="single-layer-btn" title="Show only the selected layer (L)">Single layer</button>
+        <button className={singleClass} onClick={onToggleSingle} data-testid="single-layer-btn" title="Show only the selected layer (L)">Single layer</button>
         <label className="slice-travel"><input type="checkbox" checked={showTravel} onChange={onToggleTravel} data-testid="travel-toggle" title="Show non-extruding moves as gray lines (T)" /> Travel</label>
       </div>
       {filamentView ? (

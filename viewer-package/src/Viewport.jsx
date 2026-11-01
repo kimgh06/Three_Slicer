@@ -31,7 +31,7 @@ import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } fro
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
 import {
-  TopBar, MenuBar, StatusBar, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
+  TopBar, MenuBar, StatusBar, GizmoRail, Section, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, SliceError, TowerCard, writeTowerPosition,
 } from './ui/index.js'
 import { DEFAULT_BED, DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
@@ -846,10 +846,7 @@ export default function Viewport({
               {/* Preview controls (view type / slider / legend) */}
               {canvasMode === 'preview' && previewControls && showPanel('previewControls') && (
                 <Panel panels={panels} name="previewControls">
-                <section className="side-card">
-                  <div className="sc-head">Preview</div>
-                  {previewControls}
-                </section>
+                <Section title="Preview">{previewControls}</Section>
                 </Panel>
 )}
 

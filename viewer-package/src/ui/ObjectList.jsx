@@ -1,5 +1,6 @@
 import React from 'react'
 import { splitIcon, eyeIcon, eyeSlashIcon, deleteIcon } from '../core/icons.js'
+import { Section, Field } from './Section.jsx'
 
 // Object list card: print toggle, name, extruder selector, split and delete, plus the two slice toggles.
 // With more than one plate the rows group under plate headers — each object's `plate` annotation comes from
@@ -41,6 +42,9 @@ export default function ObjectList({
       : Array.isArray(paintedObjectIds) && paintedObjectIds.includes(objectId)
   }
 
+  let supportPaintClass = 'ctl-btn'
+  if (paintMode !== 'off') supportPaintClass = 'ctl-btn on'
+
   const toolOptions = [
     <option key="default" value={0}>Default (current tool)</option>,
     ...extruderColors.map((_color, index) => <option key={index} value={index + 1}>T{index + 1}</option>),
@@ -51,7 +55,7 @@ export default function ObjectList({
         className={`${o.visible === false ? 'obj-hidden' : ''}${isSelected(o.id) ? ' obj-selected' : ''}`.trim()}
         onClick={e => clickRow(e, o.id)}
         data-testid={`obj-row-${o.id}`}>
-      <button className="obj-eye" onClick={e => { e.stopPropagation(); onToggleVisible(o.id) }} title="Include/exclude this object from printing — excluding it keeps it in the scene" data-testid={`eye-${o.id}`}>
+      <button className="ctl-icon" onClick={e => { e.stopPropagation(); onToggleVisible(o.id) }} title="Include/exclude this object from printing — excluding it keeps it in the scene" data-testid={`eye-${o.id}`}>
         <img src={o.visible === false ? eyeSlashIcon : eyeIcon} alt={o.visible === false ? 'Hidden' : 'Visible'} />
       </button>
       <span className="obj-name" title={o.name}>{o.name}</span>
@@ -62,8 +66,8 @@ export default function ObjectList({
       <select className="obj-ext" value={o.extruder ?? 1} onClick={e => e.stopPropagation()} onChange={e => onExtruder(o.id, +e.target.value)} title="Which filament (extruder) prints this object" data-testid={`ext-${o.id}`}>
         {extruderColors.map((c, i) => <option key={i} value={i + 1}>T{i + 1}</option>)}
       </select>
-      <button className="obj-split" onClick={e => { e.stopPropagation(); onSplit(o.id) }} title="Split to objects — every disconnected part (connected component) becomes its own object. Split to parts is not implemented (no part concept)" data-testid={`split-${o.id}`}><img src={splitIcon} alt="Split" /></button>
-      <button className="obj-del" onClick={e => { e.stopPropagation(); onRemove(o.id) }} title="Remove this object from the scene"><img src={deleteIcon} alt="Delete" /></button>
+      <button className="ctl-icon" onClick={e => { e.stopPropagation(); onSplit(o.id) }} title="Split to objects — every disconnected part (connected component) becomes its own object. Split to parts is not implemented (no part concept)" data-testid={`split-${o.id}`}><img src={splitIcon} alt="Split" /></button>
+      <button className="ctl-icon danger" onClick={e => { e.stopPropagation(); onRemove(o.id) }} title="Remove this object from the scene"><img src={deleteIcon} alt="Delete" /></button>
     </li>
   )
   // Plate groups, only when there is more than one plate: headers on a single-plate scene would be furniture.
@@ -71,8 +75,7 @@ export default function ObjectList({
   for (const o of objects) { const p = o.plate ?? 0; if (!byPlate.has(p)) byPlate.set(p, []); byPlate.get(p).push(o) }
   const plateGroups = [...byPlate.keys()].sort((a, b) => a - b)
   return (
-    <section className="side-card" data-testid="object-section">
-      <div className="sc-head">Objects <span className="sc-count">{objects.length}</span></div>
+    <Section title="Objects" count={objects.length} testId="object-section">
       <ul className="obj-list2" data-testid="obj-list">
         {plateCount <= 1 ? objects.map(row) : plateGroups.map(p => (
           <React.Fragment key={`plate-${p}`}>
@@ -110,31 +113,31 @@ export default function ObjectList({
       {/* The two things you actually do about support — see where it is needed, and brush it — used to live only
           in the ribbon, with nothing here to hint they existed. */}
       {supportOn && (
-        <div className="sc-info sup-style"><span>Style</span>
-          <select className="sc-model" value={supportStyle} onChange={e => onSupportStyle(e.target.value)}
+        <Field label="Style" className="sup-style">
+          <select value={supportStyle} onChange={e => onSupportStyle(e.target.value)}
             data-testid="support-style"
             title="Support style (support_style). The kernel builds the tree/organic family as real tree support; the rest as grid.">
             {supportStyles.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-        </div>
+        </Field>
       )}
       {supportOn && onSupportFilament && (
-        <div className="sc-info sup-style"><span>Filament</span>
-          <select className="sc-model" value={supportTool} onChange={e => onSupportFilament(+e.target.value)}
+        <Field label="Filament" className="sup-style">
+          <select value={supportTool} onChange={e => onSupportFilament(+e.target.value)}
             data-testid="support-filament"
             title="Which filament prints the support body (support_filament). Default leaves it on whatever tool the layer is already using.">
             {toolOptions}
           </select>
-        </div>
+        </Field>
       )}
       {supportOn && onSupportInterfaceFilament && (
-        <div className="sc-info sup-style"><span>Interface filament</span>
-          <select className="sc-model" value={interfaceTool} onChange={e => onSupportInterfaceFilament(+e.target.value)}
+        <Field label="Interface filament" className="sup-style">
+          <select value={interfaceTool} onChange={e => onSupportInterfaceFilament(+e.target.value)}
             data-testid="support-interface-filament"
             title="Which filament prints the support interface — the few layers touching the model (support_interface_filament). This is where a release material pays off.">
             {toolOptions}
           </select>
-        </div>
+        </Field>
       )}
       {supportOn && dedicatedTool && (
         // A dedicated support tool is per-layer, not per-object: every layer that has both support and model
@@ -151,7 +154,7 @@ export default function ObjectList({
               title={`Shade the facets that will need support (slope below ${overhangAngle}°, the support threshold angle)`}
               data-testid="overhang-toggle" /> Show overhangs <span className="muted">&lt;{overhangAngle}°</span>
           </label>
-          <button className={paintMode !== 'off' ? 'sup-paint on' : 'sup-paint'} onClick={onTogglePaint}
+          <button className={supportPaintClass} onClick={onTogglePaint}
             disabled={!objects.length} data-testid="support-paint-btn"
             title="Brush facets to force or block support — the same tool as the Support painting button in the ribbon">
             {paintMode !== 'off' ? 'Painting…' : 'Paint support'}
@@ -159,6 +162,6 @@ export default function ObjectList({
         </div>
       )}
       </>)}
-    </section>
+    </Section>
   )
 }
