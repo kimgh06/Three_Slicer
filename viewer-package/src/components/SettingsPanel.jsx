@@ -119,7 +119,7 @@ function EditableOptionRow({ schema, optKey, lineTitle, settings, setSettings, d
     hint = `Disabled when: ${cond}`
   }
   // The key is what a preset file, a project and upstream's docs call this option; search still finds it.
-  const rowTitle = [hint, optKey].filter(Boolean).join('\n\n')
+  const rowTitle = [hint, def?.mode && `Mode: ${def.mode}`, optKey].filter(Boolean).join('\n\n')
   return (
     <div className={rowClass} title={rowTitle} data-testid={`row-${optKey}`}>
       <span className="lbl-cell">

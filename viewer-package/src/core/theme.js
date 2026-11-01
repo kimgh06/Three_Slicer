@@ -97,9 +97,20 @@ const rgbOf = hex => [1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16)).jo
 /** `#rrggbb` -> `rgba(r, g, b, a)`, for the scene's DOM overlays (the box-select band). */
 export const withAlpha = (hex, alpha) => `rgba(${rgbOf(hex)}, ${alpha})`
 
+// The one size of a sidebar input, in both shadow roots: the cards live in the viewer's and the settings forms in
+//  <SettingsPanel/>'s, so a rule in either stylesheet would reach only half of them.
+const TEXT_CONTROL = ':is(.sidebar,.settings-panel) :where(select,textarea,input:not([type=checkbox],[type=color],[type=range],[type=radio]))'
+const CONTROLS_CSS = `${TEXT_CONTROL}{box-sizing:border-box;height:26px;padding:0 6px;font:inherit;font-size:12.5px;color:var(--_light-text);`
+  + 'background:var(--_light-surface);border:1px solid var(--_light-border);border-radius:5px;}'
+  + `${TEXT_CONTROL}:focus-visible{outline:2px solid var(--_accent);outline-offset:-1px;}`
+  + `${TEXT_CONTROL}:disabled{background:var(--_light-subtle);color:var(--_light-text-faint);}`
+  + ':is(.sidebar,.settings-panel) textarea{height:auto;padding:4px 6px;}'
+  + ':is(.sidebar,.settings-panel) input[type=checkbox]{width:15px;height:15px;margin:0;accent-color:var(--_accent);}'
+  + ':is(.sidebar,.settings-panel) input[type=color]{box-sizing:border-box;width:26px;height:26px;padding:1px;border:1px solid var(--_light-border);border-radius:5px;background:none;cursor:pointer;}\n'
+
 // Prepended to each shadow root's stylesheet (ShadowHost).
 export const THEME_CSS = `:host{${Object.entries(UI_TOKENS).map(([key, value]) => {
   const name = kebab(key)
   const own = `--_${name}:var(--vp-${name},${value});`
   return WITH_ALPHA.includes(key) ? own + `--_${name}-rgb:var(--vp-${name}-rgb,${rgbOf(value)});` : own
-}).join('')}}\n`
+}).join('')}}\n${CONTROLS_CSS}`
