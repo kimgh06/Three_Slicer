@@ -185,7 +185,10 @@ export type LockablePanel =
 
 /** Panel keys accepted by {@link ViewportProps.panels}. `sidebar: false` hides the whole right column at once. */
 export type ViewportPanel =
-  | 'topBar' | 'gizmoRail' | 'objectToolbar' | 'paintPanel' | 'statsCard' | 'plateBar' | 'emptyHint' | 'status'
+  | 'topBar'
+  /** The File/Edit/Object/View/Slice/Help menu in the top bar row. Goes with `topBar` when that is off. */
+  | 'menuBar'
+  | 'gizmoRail' | 'objectToolbar' | 'paintPanel' | 'statsCard' | 'plateBar' | 'emptyHint' | 'status'
   | 'sidebar' | 'printerCard' | 'filamentCard' | 'objectList' | 'previewControls' | 'processCard' | 'sliceBar'
   /** The horizontal move scrub under the canvas — how far into the top shown layer the print has got. Preview
    *  and FFF only: a resin layer is cured in one exposure and has no intra-layer order to walk. */

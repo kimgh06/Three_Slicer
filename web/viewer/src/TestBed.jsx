@@ -15,7 +15,7 @@ import {
 // The configuration lives in the URL (`?off=sidebar,warmup&ro=printerCard`), which is the point: a viewer bug
 // reproduces by sending a link rather than by describing which toggles to flip.
 
-const PANELS = ['topBar', 'gizmoRail', 'objectToolbar', 'paintPanel', 'statsCard', 'plateBar', 'emptyHint',
+const PANELS = ['topBar', 'menuBar', 'gizmoRail', 'objectToolbar', 'paintPanel', 'statsCard', 'plateBar', 'emptyHint',
   'status', 'bedWarn', 'sidebar', 'printerCard', 'filamentCard', 'objectList', 'towerCard', 'previewControls',
   'processCard', 'sliceBar']
 // Only these take 'readonly' (types/viewer.d.ts LockablePanel) — the rest are on/off, so their third state is
