@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict'
 import { menuBar } from '../src/core/menu_items.js'
 import { makeKeyHandler } from '../src/core/shortcut_keymap.js'
-import { GIZMO_TOOLS, SUPPORT_PAINT_TOOL, objectTools } from '../src/core/toolbar_items.js'
-import { isRightClick } from '../src/core/right_click.js'
+import { GIZMO_TOOLS, SUPPORT_PAINT_TOOL, objectTools, ribbonGroups } from '../src/core/toolbar_items.js'
+import { isClick } from '../src/core/click.js'
 import { undoRedoDirection } from '../src/hooks/use_viewport_history.js'
 
 const run = () => {}
@@ -91,9 +91,15 @@ assert.ok(captions.every(Boolean))
 assert.equal(new Set(captions).size, captions.length)
 
 // A right press that moved is a camera pan, and a release with no press on the canvas is nobody's click.
-assert.equal(isRightClick({ x: 10, y: 10 }, { x: 12, y: 11 }), true)
-assert.equal(isRightClick({ x: 10, y: 10 }, { x: 60, y: 10 }), false)
-assert.equal(isRightClick(null, { x: 10, y: 10 }), false)
+assert.equal(isClick({ x: 10, y: 10 }, { x: 12, y: 11 }), true)
+assert.equal(isClick({ x: 10, y: 10 }, { x: 60, y: 10 }), false)
+assert.equal(isClick(null, { x: 10, y: 10 }), false)
+
+// The ribbon offers only what runs, and a group left empty goes with its tools.
+const wiredTools = objectTools({ add: run, remove: run, paintMaterial: run })
+const ribbon = ribbonGroups(wiredTools)
+assert.deepEqual(ribbon.map(group => group.caption), ['Objects', 'Surface'])
+assert.deepEqual(ribbon[1].tools.map(tool => tool.id), ['mmu'])
 
 // features.shortcuts off: no key is advertised.
 assert.ok(itemsOf(menuBar(allActions, { ...openState, shortcuts: false })).every(entry => !entry.shortcut))
