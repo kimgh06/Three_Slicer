@@ -187,6 +187,10 @@ struct Params {
   // Per-extruder filament values, indexed by tool: a two-material print wants ABS at 270 on T0 and PLA at 220 on
   //  T1, which the scalars above cannot express. Empty (the default) means every tool uses the scalar, so a
   //  single-material slice — and any host that never sends these — behaves exactly as before.
+  // Flat [fromZ, height, ...]: variable layer height. Empty is a fixed layer height (slice_planes.h).
+  std::vector<double> variable_layer_heights;
+  // Painted seam facets, nine floats per triangle, seated at z = 0 (seam_paint.cpp). Empty leaves the seam mode alone.
+  std::vector<double> seam_enforcers, seam_blockers;
   std::vector<double> extruder_nozzle_temp, extruder_filament_diameter, extruder_flow_ratio,
                       extruder_retract_length, extruder_retract_speed, extruder_z_hop;
   std::vector<double> extruder_first_layer_temp;   // nozzle_temperature_initial_layer per extruder (the first layer's own)

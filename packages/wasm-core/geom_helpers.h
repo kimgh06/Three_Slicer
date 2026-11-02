@@ -21,5 +21,6 @@ int fan_S(int layerIndex, const Params& params);
 void sort_monotonic(Paths& lines, double angleDeg);   // (defined in geom_helpers.cpp) for zigzag ordering
 struct MillimetrePoint { double x, y; };
 // Seam context (aligned = the previous layer's seam, random = a deterministic LCG)
-struct SeamContext { double lastX=0, lastY=0; bool hasLast=false; uint32_t randomState=1; };
+struct SeamMarks;
+struct SeamContext { double lastX=0, lastY=0; bool hasLast=false; uint32_t randomState=1; const SeamMarks* marks=nullptr; };
 void rotate_seam(Path& path, int mode, SeamContext& seamContext, double nozzleX, double nozzleY);

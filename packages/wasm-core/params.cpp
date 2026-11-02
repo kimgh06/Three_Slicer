@@ -288,6 +288,9 @@ Params parse_params(const std::string& params_json) {
   p.reduce_crossing_wall          = json_bool(params_json,"reduce_crossing_wall",p.reduce_crossing_wall);
   p.max_volumetric_extrusion_rate_slope = json_number(params_json,"max_volumetric_extrusion_rate_slope",p.max_volumetric_extrusion_rate_slope);
   p.extruder_count                = (int)json_number(params_json,"extruder_count",p.extruder_count);
+  p.variable_layer_heights        = json_number_array(params_json,"variable_layer_heights");
+  p.seam_enforcers                = json_number_array(params_json,"seam_enforcers");
+  p.seam_blockers                 = json_number_array(params_json,"seam_blockers");
   p.extruder_nozzle_temp          = json_number_array(params_json,"extruder_nozzle_temp");
   p.extruder_filament_diameter    = json_number_array(params_json,"extruder_filament_diameter");
   p.extruder_flow_ratio           = json_number_array(params_json,"extruder_flow_ratio");

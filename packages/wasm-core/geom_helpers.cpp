@@ -1,6 +1,7 @@
 // geom_helpers.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 #include "geom_helpers.h"
 
+#include "seam_paint.h"
 #include "fill_bridge.h"      // stage 8: bridge to the real ported OrcaSlicer Fill patterns (gyroid TPMS, …)
 
 #include <algorithm>
@@ -221,6 +222,7 @@ static uint32_t lcg(uint32_t& state){
 // Seam modes: 0=back (max Y) 1=nearest (closest to the nozzle) 2=aligned (previous seam) 3=random, -1=no rotation
 void rotate_seam(Path& path, int mode, SeamContext& seamContext, double nozzleX, double nozzleY) {
   if (mode < 0 || path.size() < 3) return;
+  if (seamContext.marks && seam_on_enforcer(path, *seamContext.marks)) return;
   size_t best = 0;
   if (mode == 0 || (mode == 2 && !seamContext.hasLast)) {          // back / the first layer of aligned
     cInt bestY=path[0].y();
@@ -251,5 +253,6 @@ void rotate_seam(Path& path, int mode, SeamContext& seamContext, double nozzleX,
   } else {                                             // random (deterministic)
     best = lcg(seamContext.randomState) % path.size();
   }
+  if (seamContext.marks) best = seam_off_blockers(path, best, *seamContext.marks);
   std::rotate(path.begin(), path.begin()+best, path.end());
 }

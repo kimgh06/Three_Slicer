@@ -50,6 +50,7 @@
 //   layer_data · slice_mm · stream_sink · stage_cache              — layer data, multi-material, streaming sink, cache
 //   pass1 · surfaces · support · preamble · raft · pass2 · finish  — the slice() phases (slice_ctx.h is the shared context)
 //   bindings                                                      — the embind block (declares slice() via slice_api.h)
+#include "seam_paint.h"
 #include "clipper.hpp"
 #include "pe_bridge.h"        // stage 8: bridge to the real ported OrcaSlicer PressureEqualizer (segment splitting)
 #include "gcode_time.h"       // stage 10: the ported GCodeProcessor time estimation algorithm (upstream trapezoidal planner)
@@ -122,6 +123,12 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     result.set("error", std::string("STL parse failed or 0 triangles"));
     return result;
   }
+  // Support, raft, multi-material and spiral paths all assume one layer height through the print. Refused rather than
+  //  sliced with a height they do not know.
+  if (!params.variable_layer_heights.empty() && (params.enable_support || params.raft_layers > 0 || params.spiral_mode || params.extruder_count > 1)) {
+    result.set("error", std::string("UNSUPPORTED_VARIABLE_LAYERS: variable layer height works without support, raft, spiral mode and several filaments"));
+    return result;
+  }
 
   // Model preparation (bbox -> center/seat -> over_bed) -> pass1.cpp
   ModelPrep modelPrep = prepare_model(triangles, params, reuseGeometry);
@@ -183,7 +190,9 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   g_segment_tool = singleTool;                             // the preview's tool channel: the filament the model prints with
 
   // Count the z levels (the progress total)
-  const int layerCount = (int)plan_layers(params.first_layer_height, params.layer_height, height).top.size();
+  const LayerPlan layerPlan = plan_layers(params.first_layer_height, params.layer_height, height, params.variable_layer_heights);
+  const int layerCount = (int)layerPlan.top.size();
+  seam_marks_prepare(params, layerPlan.plane);
   int total = 2*layerCount + 2;   // +2 = the surface and support completion ticks. Previously nothing was reported between PASS1 (50%) and the end of support -> it looked "stuck at 50%".
 
   // Phase timing (exposed only through stats — no effect on g-code, golden-safe)

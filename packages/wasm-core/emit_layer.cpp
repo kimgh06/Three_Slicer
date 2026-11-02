@@ -1,5 +1,6 @@
 // emit_layer.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 //  emit_layer_full stays `static` (called only by emit_layer_any); emit_layer_any lost it because slice() calls it.
+#include "seam_paint.h"
 #include "emit_layer.h"
 
 #include <cstdio>
@@ -237,6 +238,7 @@ void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vect
     writer.internal_area = std::move(precompute.internalArea);
   }
   seamContext.randomState = 2654435761u * (uint32_t)(layerIndex+1);
+  seamContext.marks = seam_marks_of(layerIndex);
   std::vector<float>* segmentWidths = &widths;
   if (writer.dry_run) segmentWidths = nullptr;
   g_segment_widths = segmentWidths;
