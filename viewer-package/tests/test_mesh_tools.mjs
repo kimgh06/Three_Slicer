@@ -8,7 +8,10 @@ import { glyphShapes } from '../src/core/glyph_shapes.js'
 import { seatShift } from '../src/core/model_soup.js'
 import { gizmoLayout, handleOffset } from '../src/core/gizmo_layout.js'
 import { createBodyDrag } from '../src/scene/body_drag.js'
-import { Mesh, BoxGeometry, Ray, Vector3 } from 'three'
+import { createFineTransform } from '../src/scene/fine_transform.js'
+import { resizedScales, arrowEdit, wrapAngle, twistDegrees } from '../src/core/fine_adjust.js'
+import { createRingDrag } from '../src/scene/ring_drag.js'
+import { Mesh, BoxGeometry, Ray, Vector3, Quaternion, PerspectiveCamera, MathUtils } from 'three'
 import { ShapeUtils } from 'three'
 
 const close = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) <= tolerance, `${a} vs ${b}`)
@@ -116,6 +119,83 @@ const close = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) <= tolerance
     refused.drag.move({ clientX: 140, clientY: 100 })
     assert.equal(refused.calls.length, 0); assert.equal(refused.orbit.enabled, true)
   }
+}
+
+// ---- fine adjust: typed values, committed as a drag ----
+{
+  assert.deepEqual(resizedScales([1, 2, 1], [10, 20, 30], 1, 40, false), [1, 4, 1])
+  assert.deepEqual(resizedScales([1, 2, 1], [10, 20, 30], 1, 40, true), [2, 4, 2])
+  assert.deepEqual(arrowEdit('translate', 1, 0, false, true), { kind: 'move', deltas: [0.1, -0] })
+  assert.deepEqual(arrowEdit('translate', 0, -1, true, true), { kind: 'move', deltas: [0, 1] })   // up is +Y, Shift goes ten times as far
+  assert.deepEqual(arrowEdit('rotate', 1, 0, false, true), { kind: 'rotate', axis: 2, degrees: -1 })
+  assert.deepEqual(arrowEdit('rotate', 0, 1, true, true), { kind: 'rotate', axis: 0, degrees: 10 })
+  close(arrowEdit('scale', 0, -1, false, true).ratio, 1.01)
+  assert.equal(arrowEdit('scale', 1, 0, false, true), null)
+  assert.deepEqual(arrowEdit('translate', 1, 0, false, false), { kind: 'move', deltas: [10, -0] })   // everyday steps
+  assert.deepEqual(arrowEdit('translate', 1, 0, true, false), { kind: 'move', deltas: [1, -0] })
+  assert.deepEqual(arrowEdit('rotate', 1, 0, false, false), { kind: 'rotate', axis: 2, degrees: -15 })
+  close(arrowEdit('scale', 0, -1, false, false).ratio, 1.05)
+  const events = []
+  const mesh = new Mesh(new BoxGeometry(10, 20, 30))   // scene x 10, height 20, scene z 30
+  mesh.position.set(100, 0, 40)
+  const transform = { object: mesh, dispatchEvent: event => events.push(event.value), snaps: {}, pointerDown() {}, pointerMove() {},
+    setTranslationSnap(value) { this.snaps.move = value }, setRotationSnap(value) { this.snaps.rotate = value }, setScaleSnap(value) { this.snaps.scale = value } }
+  const fine = createFineTransform({ transform })
+  const origin = { x: 90, z: 50 }
+  mesh.updateMatrixWorld(true)
+  const first = fine.read(origin)
+  assert.deepEqual(first.position, [10, 10])      // model Y runs along scene -Z
+  assert.deepEqual(first.sizes, [10, 30, 20])     // model order
+  fine.move(0, 25, origin)
+  close(mesh.position.x, 115)
+  fine.move(1, 0, origin)
+  close(mesh.position.z, 50)
+  assert.deepEqual(events, [true, false, true, false])   // each edit is one drag, so one undo step
+  fine.resize(0, 20, true)
+  close(mesh.scale.x, 2); close(mesh.scale.y, 2); close(mesh.scale.z, 2)
+  fine.reset('scale')
+  fine.resize(2, 40, false)
+  close(mesh.scale.y, 2); close(mesh.scale.x, 1)    // model Z is scene height
+  fine.rotate(2, 90)
+  close(mesh.rotation.y, Math.PI / 2)
+  fine.rotate(0, 90)
+  fine.rotate(2, 10)
+  mesh.updateMatrixWorld(true)
+  close(fine.read(origin).degrees[0], 90); close(fine.read(origin).degrees[2], 100)   // read back as turned
+  mesh.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), MathUtils.degToRad(100))     // from elsewhere: undo, Orient
+  assert.deepEqual(fine.read(origin).degrees.map(Math.round), [0, 0, 100])
+  fine.reset('rotate')
+  close(mesh.rotation.y, 0)
+  fine.setSnap(true); close(transform.snaps.move, 0.1)
+  fine.setSnap(false); assert.equal(transform.snaps.move, null)
+  transform.object = { userData: { isPrimeTower: true } }
+  assert.equal(fine.read(origin), null)            // the tower's place is a setting, with its own card
+}
+
+// ---- a ring turns by the angle the pointer sweeps around it, wherever the sweep begins ----
+{
+  close(wrapAngle(3 * Math.PI / 2), -Math.PI / 2); close(wrapAngle(-3 * Math.PI / 2), Math.PI / 2)
+  close(twistDegrees(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), MathUtils.degToRad(100)), [0, 1, 0]), 100)
+  const camera = new PerspectiveCamera(50, 1, 1, 2000)
+  camera.position.set(0, 200, 0); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true)
+  const ringPoint = (degrees) => {
+    const radians = MathUtils.degToRad(degrees)
+    const projected = new Vector3(60 * Math.cos(radians), 0, 60 * Math.sin(radians)).project(camera)
+    return { x: projected.x, y: projected.y, button: -1 }
+  }
+  const sweep = (from, by, rotationSnap = null) => {
+    const object = new Mesh()
+    const turns = []
+    const transform = { camera, object, mode: 'rotate', axis: 'Y', dragging: true, rotationSnap, worldPosition: new Vector3(),
+      dispatchEvent() {}, pointerDown() {}, pointerMove() {} }
+    createRingDrag(transform, { turned: (target, axis, degrees, rotate) => { rotate(); turns.push({ axis, degrees }) } })
+    transform.pointerDown({ ...ringPoint(from), button: 0 })
+    for (let step = 1; step <= 6; step++) transform.pointerMove(ringPoint(from + by * step / 6))
+    return { swept: Math.abs(twistDegrees(object.quaternion, [0, 1, 0])), turns }
+  }
+  for (const from of [0, 45, 90, 135, 180, 225, 270, 315, 350]) close(sweep(from, 30).swept, 30, 1e-3)   // the wrap at +-180 included
+  assert.equal(sweep(0, 30).turns[0].axis, 2)     // scene Y is model Z
+  close(sweep(0, 120, MathUtils.degToRad(1)).swept, 30)   // Alt: a quarter of the sweep, on whole degrees
 }
 
 // ---- arrange ----
