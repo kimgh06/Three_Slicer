@@ -8,7 +8,7 @@ import { createSceneTools, applyNegativeLook } from './scene_tools.js'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster } from './sla_raster.js'
 import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'; import { towerSelectionRule } from '../core/tower_layout.js'
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates, fitCameraDepth } from './plate_scene.js'; import { DEPTH_NEAR, DEPTH_FAR } from '../core/camera_depth.js'
-import { createScaleBox, clampMeshScale } from './scale_box.js'; import { fitGizmoToSelection } from './gizmo_fit.js'; import { createBodyDrag } from './body_drag.js'
+import { createScaleBox, clampMeshScale } from './scale_box.js'; import { fitGizmoToSelection } from './gizmo_fit.js'; import { createBodyDrag } from './body_drag.js'; import { createFineTransform } from './fine_transform.js'
 import { createBoxSelect } from './box_select.js'
 import { createPaintInput } from './paint_input.js'
 import { createSectionPlane } from './section_plane.js'
@@ -680,14 +680,14 @@ export function useThreeScene(deps) {
       sceneSnapshot: () => objectsRef.current.map(o => ({
         id: o.id, name: o.name, localPos: o.localPos, keepHeight: o.keepHeight, negative: o.negative,
         extruder: o.extruder || 1, visible: o.visible !== false, paint: o.paint ?? null,   // by reference: the store never mutates a map
-        pos: o.mesh.position.clone(), rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(),
+        pos: o.mesh.getWorldPosition(new THREE.Vector3()), rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(),   // world: a multi-selection's position is pivot-relative, and an undo then moved nothing
       })),
       /** Put the scene back the way a snapshot found it, as a diff by id: drop what is gone, re-create what is
        *  missing under its ORIGINAL id, and re-apply the rest. The caller still has to run the transform-commit
        *  work afterwards (the kernel selector's coordinates and the bed check) — restoring is a move like any
        *  other, and skipping that is how a paint overlay ends up in the wrong place. */
       restoreScene: (snapshot) => {
-        if (!Array.isArray(snapshot)) return
+        if (!Array.isArray(snapshot)) return; releasePivot()
         const wanted = new Map(snapshot.map(s => [s.id, s]))
         for (const o of [...objectsRef.current]) if (!wanted.has(o.id)) removeObjectById(o.id)
         for (const s of snapshot) {
@@ -708,12 +708,12 @@ export function useThreeScene(deps) {
         //  put back in the snapshot's order rather than in whatever order the re-creations happened to append in.
         const rank = new Map(snapshot.map((s, i) => [s.id, i]))
         objectsRef.current.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
-        if (objectsRef.current.length) objectsGroup.visible = true
+        if (objectsRef.current.length) objectsGroup.visible = true; refreshGizmo()
         if (overhangDeg != null) rebuildOverhang()
         paint(); setStatus(statusText()); invalidate()
       },
       // MM: merges triangles sorted by ascending extruder -> group0 (ext1) followed by group1 (ext2); returns split.
-      tools: sceneTools,
+      tools: sceneTools, fine: createFineTransform({ transform }),
       platePos: (i) => platePos(i),   // three (x,z) offset of plate i
       plateOfObject: (o) => {                                // membership by position = nearest plate center
         o.mesh.updateMatrixWorld(true)
