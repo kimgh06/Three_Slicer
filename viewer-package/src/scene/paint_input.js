@@ -28,8 +28,8 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
   //  number cannot answer that on its own. The eraser has no colour of its own, so it borrows the unpainted grey.
   const brushColor = () => {
     const mode = paintModeRef.current
-    if (mode === 'enforcer') return SUPPORT_OVERLAY_COLOR[1]
-    if (mode === 'blocker') return SUPPORT_OVERLAY_COLOR[2]
+    if (mode === 'enforcer' || mode === 'seam-enforcer') return SUPPORT_OVERLAY_COLOR[1]
+    if (mode === 'blocker' || mode === 'seam-blocker') return SUPPORT_OVERLAY_COLOR[2]
     const extruderIndex = materialExtruderRef?.current
     if (!Number.isInteger(extruderIndex)) return UNPAINTED_COLOR
     return extruderColorsRef?.current?.[extruderIndex] || UNPAINTED_COLOR
@@ -116,7 +116,7 @@ export function createPaintInput({ camera, raycaster, pointer, toPointer, active
     const message = {
       cmd: command, facet: target.facet, hx: hk[0], hy: hk[1], hz: hk[2],
       cx: ck[0], cy: ck[1], cz: ck[2], radius: brushRadiusRef.current,
-      enforcer: paintModeRef.current === 'enforcer',
+      enforcer: paintModeRef.current === 'enforcer' || paintModeRef.current === 'seam-enforcer',
       tool: brush.tool, cursor: brush.cursor, angle: brush.angle,
     }
     // A capsule from the previous sample to this one, which is what upstream paints between two consecutive mouse

@@ -3,11 +3,12 @@ import { buildSlaGroup, disposeSceneGroup as disposeGroup } from './sla_preview_
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
-import { isRightClick } from '../core/right_click.js'
+import { isClick } from '../core/click.js'; import { seatShift } from '../core/model_soup.js'
+import { createSceneTools, applyNegativeLook } from './scene_tools.js'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster } from './sla_raster.js'
 import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'; import { towerSelectionRule } from '../core/tower_layout.js'
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates, fitCameraDepth } from './plate_scene.js'; import { DEPTH_NEAR, DEPTH_FAR } from '../core/camera_depth.js'
-import { createScaleBox, clampMeshScale } from './scale_box.js'
+import { createScaleBox, clampMeshScale } from './scale_box.js'; import { fitGizmoToSelection } from './gizmo_fit.js'; import { createBodyDrag } from './body_drag.js'
 import { createBoxSelect } from './box_select.js'
 import { createPaintInput } from './paint_input.js'
 import { createSectionPlane } from './section_plane.js'
@@ -47,9 +48,9 @@ export function useThreeScene(deps) {
   const plateGrid = () => ({ plateCount: plateCountRef.current, bedWidth: plateBWRef.current, bedDepth: plateBDRef.current, plateDims: plateHeteroRef.current?.dims ?? null })
   // Objects as model_geometry.js takes them: plain data with the world matrix already up to date. WHICH objects go
   //  in is the scene's own call (visibility, selection), so the filter stays here and the geometry work does not.
-  const geometryInput = (keep) => objectsRef.current.filter(keep).map(o => {
+  const geometryInput = (keep) => objectsRef.current.filter(o => keep(o) && !o.negative).map(o => {
     o.mesh.updateMatrixWorld(true)
-    return { id: o.id, name: o.name, extruder: o.extruder, localPos: o.localPos, paint: o.paint, matrixWorld: o.mesh.matrixWorld }
+    return { id: o.id, name: o.name, extruder: o.extruder, localPos: o.cutPos ?? o.localPos, paint: o.paint, matrixWorld: o.mesh.matrixWorld }
   })
 
   useEffect(() => {
@@ -90,7 +91,7 @@ export function useThreeScene(deps) {
     transform.setMode('translate'); transform.setSize(0.8)
     // No lifting: a part prints off the bed, so the only moves that mean anything are on it. Hiding Y in translate
     //  mode takes the up arrow AND the XY/YZ plane handles with it (TransformControls hides a plane whose axes are
-    //  not all shown), leaving X, Z and the XZ plane. Rotate and scale still show every axis — hence per mode,
+    //  not all shown), leaving X and Z (gizmo_fit.js removes the XZ plane). Rotate and scale still show every axis — hence per mode,
     //  set here for the initial mode and in setMode for every switch. seatMesh below stays either way: rotating or
     //  scaling still moves the lowest point, so the re-seat on commit is what actually keeps the part on the bed.
     transform.showY = false
@@ -107,12 +108,13 @@ export function useThreeScene(deps) {
         for (const handle of [...(modeGroup.children ?? [])]) if (handle.name === 'XYZ') modeGroup.remove(handle)
       }
     }
+    fitGizmoToSelection(transform, camera, renderer.domElement); const bodyDrag = createBodyDrag({ transform, orbit })
     // Stage 29-1: re-seat on the bed after every transform commit (drag end) — measured from the desktop GLCanvas3D::do_move/rotate/scale
     //  "snaps object to buildplate" (ensure_on_bed). Applies to move/rotate/scale, only on commit (no need for it live during rotation).
     //  Upstream: flying (minZ>0) snaps to the bed, sinking (minZ<0) is kept down to SINKING_Z_THRESHOLD. **Difference (documented)**: our kernel
     //  cannot slice negative z, so sinking is unsupported -> any minZ≠0 snaps to 0 in either direction. World bbox minY (three height) -> 0.
     const _seatBox = new THREE.Box3()
-    const seatMesh = (m) => { if (!m) return; m.updateMatrixWorld(true); _seatBox.setFromObject(m); const minY = _seatBox.min.y; if (Number.isFinite(minY) && Math.abs(minY) > 1e-4) { m.position.y -= minY; m.updateMatrixWorld(true) } }
+    const seatMesh = (m) => { if (!m) return; m.updateMatrixWorld(true); _seatBox.setFromObject(m); const shift = seatShift(_seatBox.min.y, m.userData); if (Number.isFinite(shift) && Math.abs(shift) > 1e-4) { m.position.y -= shift; m.updateMatrixWorld(true) } }
     // The kernel's paint overlay is one mesh per state across every object the selector holds, so it cannot follow
     //  one dragged object: the paint module draws per object for the drag instead (support_paint.js beginPaintDrag).
     transform.addEventListener('objectChange', () => {
@@ -305,6 +307,7 @@ export function useThreeScene(deps) {
     //  A fill is one click (it selects by mesh topology, so repeating it per pointermove would redo the same flood
     //  over the same facets); the brush is the opposite — dragging is how it covers an area.
     const sectionPlane = createSectionPlane({ renderer, camera, objectsRef, workerRef, paintXformRef, invalidate })
+    const sceneTools = createSceneTools({ scene, camera, renderer, raycaster, pointer, toPointer, activeMeshes, objectsRef, invalidate })
     const paintInput = createPaintInput({
       camera, raycaster, pointer, toPointer, activeMeshes, cursorParent: scene, invalidate, sectionPlane, deps,
     })
@@ -319,7 +322,7 @@ export function useThreeScene(deps) {
     }
     const onMove = ev => {
       if (canvasModeRef.current === 'preview') return   // S2: no hover/selection in preview
-      if (boxSelect.dragging()) { boxSelect.move(ev); return }
+      if (boxSelect.dragging()) { boxSelect.move(ev); return } else bodyDrag.move(ev)
       if (scaleBox.dragging()) { scaleBox.move(ev); invalidate(); return }
       // Shift is the eraser while a brush is open, which is upstream's modifier (`if (!shift_down) new_state = …`,
       //  GLGizmoPainterBase.cpp:743) and the reason the box select below refuses to start in paint mode.
@@ -383,7 +386,7 @@ export function useThreeScene(deps) {
           return
         }
       }
-      if (transform.dragging || transform.axis) return
+      if (transform.dragging || transform.axis || sceneTools.picking()) return
       // Shift+drag starts a box select instead of an orbit. Upstream gates this on the painting gizmos being off
       //  (GLCanvas3D.cpp:4398) for the same reason it matters here: shift is the eraser modifier while painting.
       if (ev.shiftKey && paintModeRef.current === 'off') {
@@ -400,12 +403,13 @@ export function useThreeScene(deps) {
         //  dragged. Both are upstream's rules — `add(idx, !ctrl_down, true)` plus the already-selected branch.
         if (ev.ctrlKey || ev.metaKey) toggleSelect(hit)
         else if (!selection.has(hit)) selectOnly(hit)
-      } else if (!ev.shiftKey) clearSelection()
+      } else if (!ev.shiftKey && !bodyDrag.overSelection(raycaster.ray)) clearSelection()
+      bodyDrag.press(ev, pointer, raycaster.ray)
       announceSelection()
     }
     // Paint release is handled on window — so releasing the button outside the canvas cannot leave paintDrawing/orbit.enabled stuck.
     const onUp = (ev) => {
-      if (boxSelect.dragging()) { endBand(); return }
+      bodyDrag.release(); if (boxSelect.dragging()) { endBand(); return }
       // A corner drag commits the same way a gizmo drag does — re-seat on the bed, then let the component rebuild
       //  the paint/kernel coordinates the new size invalidates.
       if (scaleBox.dragging()) {
@@ -455,7 +459,7 @@ export function useThreeScene(deps) {
       const r = renderer.domElement.getBoundingClientRect()
       setCtxMenu({ x: ev.clientX - r.left, y: ev.clientY - r.top })
     }
-    const onRmbUp = ev => { if (ev.button === 2 && isRightClick(rmbDown, { x: ev.clientX, y: ev.clientY })) openObjectMenu(ev) }
+    const onRmbUp = ev => { if (ev.button === 2 && isClick(rmbDown, { x: ev.clientX, y: ev.clientY })) openObjectMenu(ev) }
     const onCtxMenu = ev => { if (ev.pointerType === 'touch') openObjectMenu(ev) }
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerdown', onDown)
@@ -481,14 +485,9 @@ export function useThreeScene(deps) {
       orbit.target.copy(c); camera.position.set(c.x + d * 0.7, c.y + d * 0.55 + s.y * 0.3, c.z + d); camera.updateProjectionMatrix(); orbit.update()
     }
 
-    // Shared path for registering an object mesh — used by addObject (fresh load) and spawnSnapshot (duplicate/paste).
-    //  Stage 26 R4 + 29-2: places them side by side on the selected plate (placeXRef = plate-relative cursor, PX = plate offset).
-    //  When pos is given, the object goes there instead of the placement cursor (split: parts must stay where they were).
-    //  `opts` is the undo path's entry: it restores an object under its ORIGINAL id, because the id is half of the
-    //  paint topology key (`${id}:${ext}:${faces}` below) — a re-created object with a fresh id reads as a different
-    //  mesh and its painting is dropped. `quiet` skips the camera reframe, which is welcome on a load and jarring
-    //  when it fires on every undo. (The placement cursor needs no such guard: it only advances when `pos` is
-    //  absent, and a restore always carries one.)
+    // Shared path for registering an object mesh: objects go side by side on the selected plate, or at `pos` if given.
+    //  `opts` is the undo path's entry: a restored object keeps its ORIGINAL id, half of the paint topology key, or its
+    //  paint is dropped. `quiet` skips the camera reframe. `keepHeight`: text on a surface is not re-seated on the bed.
     let firstFrameOfLoadPending = false
     const spawnMesh = (name, localPos, rot = null, scale = null, pos = null, opts = null) => {
       const geo = new THREE.BufferGeometry()
@@ -522,7 +521,8 @@ export function useThreeScene(deps) {
         mesh.position.set(place.x, 0, pp.z)
         placeXRef.current = place.cursor
       }
-      mesh.userData = { name }
+      mesh.userData = { name, keepHeight: !!opts?.keepHeight, negative: !!opts?.negative }
+      if (opts?.negative) applyNegativeLook(mesh, true)
       objectsGroup.add(mesh)
       const id = opts?.id ?? ++objIdCounter
       if (opts?.id != null) objIdCounter = Math.max(objIdCounter, opts.id)   // never hand a restored id out again
@@ -530,7 +530,7 @@ export function useThreeScene(deps) {
       const visible = opts?.visible !== false
       if (extruder !== 1) { const c = extruderColorsRef.current[extruder - 1]; if (c) mesh.material.color.set(c) }
       mesh.visible = visible
-      objectsRef.current.push({ id, name, mesh, localPos, extruder, visible })   // MM: extruder 1 by default
+      objectsRef.current.push({ id, name, mesh, localPos, extruder, visible, keepHeight: !!opts?.keepHeight, negative: !!opts?.negative })   // MM: extruder 1 by default
       objectsGroup.visible = true
       if (overhangDeg != null) rebuildOverhang()      // a newly added object gets shaded too
       setStatus(statusText())
@@ -660,11 +660,11 @@ export function useThreeScene(deps) {
       // ---- Shortcut support (duplicate/nudge/rotate/zoom-to) ----
       getSnapshot: (id) => {           // snapshot for copy/duplicate — localPos is immutable, so the reference is shared
         const o = objectsRef.current.find(x => x.id === id); if (!o) return null
-        return { name: o.name, extruder: o.extruder, localPos: o.localPos, rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(), pos: o.mesh.position.clone() }
+        return { name: o.name, extruder: o.extruder, keepHeight: o.keepHeight, negative: o.negative, localPos: o.localPos, rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(), pos: o.mesh.position.clone() }
       },
       // keepPos=true keeps the snapshot's original position (split). false (default) places it beside via the placement cursor (duplicate/paste).
       //  `quiet`: a duplicate/paste/split must not reframe the camera — a fresh LOAD is the only spawn where it is the point.
-      spawnSnapshot: (snap, keepPos = false) => snap && spawnMesh(snap.name, snap.localPos, snap.rot, snap.scale, (keepPos && snap.pos) || null, { quiet: true, extruder: snap.extruder }),
+      spawnSnapshot: (snap, keepPos = false) => snap && spawnMesh(snap.name, snap.localPos, snap.rot, snap.scale, (keepPos && snap.pos) || null, { quiet: true, extruder: snap.extruder, keepHeight: snap.keepHeight, negative: snap.negative }),
       nudgeSelected: (dx, dz) => { if (!selected) return; selected.position.x += dx; selected.position.z += dz },
       rotateSelectedY: (rad) => { if (!selected) return; selected.rotation.y += rad },
       frame: () => frameObjects(),                                   // Z: zoom to all objects
@@ -678,7 +678,7 @@ export function useThreeScene(deps) {
        *  along BY REFERENCE (`localPos` is immutable), so a whole entry is a few hundred bytes per object and a
        *  50-deep history costs kilobytes. Paint is not in here — see history.js. */
       sceneSnapshot: () => objectsRef.current.map(o => ({
-        id: o.id, name: o.name, localPos: o.localPos,
+        id: o.id, name: o.name, localPos: o.localPos, keepHeight: o.keepHeight, negative: o.negative,
         extruder: o.extruder || 1, visible: o.visible !== false, paint: o.paint ?? null,   // by reference: the store never mutates a map
         pos: o.mesh.position.clone(), rot: o.mesh.rotation.clone(), scale: o.mesh.scale.clone(),
       })),
@@ -694,7 +694,7 @@ export function useThreeScene(deps) {
           let o = objectsRef.current.find(x => x.id === s.id)
           if (!o) {
             spawnMesh(s.name, s.localPos, s.rot, s.scale, s.pos,
-                      { id: s.id, extruder: s.extruder, visible: s.visible, quiet: true })
+                      { id: s.id, extruder: s.extruder, visible: s.visible, keepHeight: s.keepHeight, negative: s.negative, quiet: true })
             o = objectsRef.current.find(x => x.id === s.id)
             if (!o) continue
             o.paint = s.paint   // a re-created object's paint lives only here; a live object keeps its own (later strokes)
@@ -702,7 +702,7 @@ export function useThreeScene(deps) {
           o.mesh.position.copy(s.pos); o.mesh.rotation.copy(s.rot); o.mesh.scale.copy(s.scale)
           o.mesh.updateMatrixWorld(true)
           o.extruder = s.extruder; o.visible = s.visible; o.mesh.visible = s.visible
-          const col = extruderColorsRef.current[(s.extruder || 1) - 1]; if (col) o.mesh.material.color.set(col)
+          const col = extruderColorsRef.current[(s.extruder || 1) - 1]; if (col && !o.negative) o.mesh.material.color.set(col)
         }
         // Merge order is the viewer's knowledge (buildMergedSTL sorts by extruder over THIS array), so the array is
         //  put back in the snapshot's order rather than in whatever order the re-creations happened to append in.
@@ -713,6 +713,7 @@ export function useThreeScene(deps) {
         paint(); setStatus(statusText()); invalidate()
       },
       // MM: merges triangles sorted by ascending extruder -> group0 (ext1) followed by group1 (ext2); returns split.
+      tools: sceneTools,
       platePos: (i) => platePos(i),   // three (x,z) offset of plate i
       plateOfObject: (o) => {                                // membership by position = nearest plate center
         o.mesh.updateMatrixWorld(true)
@@ -753,7 +754,7 @@ export function useThreeScene(deps) {
        *  second one would resurrect marks the user has since erased. */
       setObjectExtruder: (id, e) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.extruder = e; const c = extruderColorsRef.current[e - 1]; if (c) o.mesh.material.color.set(c) } },
       setObjectVisible: (id, v) => { const o = objectsRef.current.find(x => x.id === id); if (o) { o.visible = v; o.mesh.visible = v } },   // stage 27: print toggle (eye icon)
-      recolorObjects: () => { for (const o of objectsRef.current) { const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // reflect filament color changes
+      recolorObjects: () => { for (const o of objectsRef.current) { if (o.negative) continue; const c = extruderColorsRef.current[(o.extruder || 1) - 1]; if (c) o.mesh.material.color.set(c) } },   // reflect filament color changes
       selectedObjectId: () => selected ? (objectsRef.current.find(o => o.mesh === selected)?.id ?? null) : null,   // stage 27: viewport toolbar "delete selected"
       /** Every selected object's id, in scene order. The primary (`selectedObjectId`) is one OF these — callers
        *  that act on "the selection" want this one; callers that need a single subject want that one. */
@@ -782,7 +783,7 @@ export function useThreeScene(deps) {
       clearSelection: () => { clearSelection(); announceSelection() },
       // Stage 28 P1: seat on the bed — local geometry is baked to minZ->0 by bakeLocal (once on load). Re-seat after a gizmo Z move.
       //  (The upstream ensure_on_bed sinking allowance [allow_negative_z] is out of scope — we only seat by -min_z.)
-      placeOnBed: () => { for (const o of objectsRef.current) o.mesh.position.y = 0; if (selected) transform.update?.() },
+      placeOnBed: () => { for (const o of objectsRef.current) if (!o.negative && (!o.keepHeight || selection.has(o.mesh))) o.mesh.position.y = 0; if (selected) transform.update?.() },
       onSliced: () => { objectsGroup.visible = false; clearSelection(); paint() },
       showObjects: () => { objectsGroup.visible = true },
       // Footprint + height of everything currently on the plate, in the same coordinates the tower box uses.
@@ -878,7 +879,7 @@ export function useThreeScene(deps) {
     loop()
 
     return () => {
-      cancelAnimationFrame(raf)
+      cancelAnimationFrame(raf); sceneTools.dispose()
       ro.disconnect(); window.removeEventListener('keydown', onKey)
       renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('pointerdown', onDown)
       renderer.domElement.removeEventListener('pointerdown', onRmbDown); renderer.domElement.removeEventListener('pointerup', onRmbUp); renderer.domElement.removeEventListener('contextmenu', onCtxMenu)
