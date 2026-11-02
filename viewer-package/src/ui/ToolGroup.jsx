@@ -15,6 +15,7 @@ export function ToolButton({ tool, className = '', onClick, disabled, testId }) 
   return (
     <button className={className} onClick={onClick} disabled={disabled} title={tool.tip} data-testid={testId}>
       <img src={tool.icon} alt="" /><span>{tool.label}</span>
+      {tool.shortcut && <kbd className="tool-key">{tool.shortcut}</kbd>}
     </button>
   )
 }
