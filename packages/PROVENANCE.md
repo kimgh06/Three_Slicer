@@ -73,6 +73,13 @@ creative selection. Both were replaced outright, so neither needs resolving.
 trivially re-derivable, but taken from upstream — flagged rather than classified, and not part of any
 closure that would ship permissively.
 
+## 2a. `viewer-package` — Arrange and Orient are independently authored
+
+`src/core/arrange.js` and `src/core/orient.js` are written for this package and read no upstream source: the viewer is
+MIT, and upstream's nester and `Orient.cpp` are AGPL. Arrange is a greedy centre-first search over a rasterised footprint.
+Orient costs a set of candidate directions by downward area. Mesh boolean, seam paint and variable layers are kernel code
+under the package's AGPL. The viewer only messages the worker for them.
+
 ## 3. `packages/viewer` — `gcode_parse.js` is independently authored
 
 `src/core/gcode_parse.js` (170 lines) was checked against upstream directly. It is not a port:
