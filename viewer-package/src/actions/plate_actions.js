@@ -49,6 +49,7 @@ export function makePlateActions(deps) {
     runSlice, createPoolContext, kernelKindRef, progressSinkRef, setPlateRun, setSliceRate,
     ensurePlateToolpaths, buildPlateToolpath, showFocusedColorRange, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeResult, setExporting, setSl1Ready,
+    beforeSliceRef,
     setLayerLo, setLayerHi, setCanvasMode, setSlicedPlateCount, setSliceMenu, setError, setSliceNotice, clearError, clearSliceNotice,
     setDowngradeOffer, setSlicing, setProgress, setPlateCount, setSelectedPlate, setSettings, syncPaintSelector, flushPaintRef,
     onSlicedRef, extruderColorsRef,
@@ -469,6 +470,7 @@ export function makePlateActions(deps) {
   }
   async function onSlice(scope = 'current') {
     setSliceMenu(false); clearError(); clearSliceNotice(); setDowngradeOffer(null)
+    if (await beforeSliceRef?.current?.() === false) return
     const idx0 = selectedPlateRef.current
     // Per plate, not once for the run: a plate override can change line_width, and the toolpath mesh built when
     //  that plate's result lands reads whatever this ref holds at the time.

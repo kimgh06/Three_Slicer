@@ -15,6 +15,14 @@ export function boundObjectTools(deps) {
     //  addition on top, not a replacement. Opening it on T1 is what upstream does — the gizmo starts at
     //  m_selected_extruder_idx 0 — and the panel's chips are one click from any other filament.
     paintMaterial: () => deps.startMaterialPaint(0),
+    arrange: deps.objectTools.arrange, orient: deps.objectTools.orient, measure: deps.objectTools.openMeasure, text: deps.objectTools.openText,
+    // These go through the kernel, so a host without one has no such tools. Seam paint is FFF, as the other brushes are.
+    ...(deps.hasKernel && {
+      boolean: deps.objectTools.openBoolean, cut: deps.objectTools.openCut, negative: deps.objectTools.openNegative,
+      ...(deps.tech !== 'SLA' && { seam: deps.objectTools.openSeam, layers: deps.objectTools.openLayers }),
+    }),
+    seamActive: deps.seamPainting,
+    toolActive: (kind) => deps.toolPanel?.kind === kind,
     objectCount: () => deps.objects.length,
   })
 }

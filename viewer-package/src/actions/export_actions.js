@@ -45,7 +45,7 @@ export async function download(bytes, name, type, onExport) {
 const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()))
 
 export function makeExportActions(deps) {
-  const { apiRef, getWorker, flushPaintRef, settingsRef, plateSettingsRef, plateCountRef, bedRef, setError, setSliceNotice, setExporting, onExport } = deps
+  const { apiRef, getWorker, flushPaintRef, settingsRef, plateSettingsRef, plateCountRef, bedRef, setError, setSliceNotice, setExporting, onExport, beforeSliceRef } = deps
 
   const baseName = (objects) => {
     const first = objects?.[0]?.name ?? apiRef.current?.exportObjects?.()[0]?.name ?? 'project'
@@ -132,11 +132,11 @@ export function makeExportActions(deps) {
   }
 
   return {
-    exportProject: () => busy('project', () => runProjectExport(false)),
+    exportProject: () => busy('project', async () => { if (await beforeSliceRef?.current?.() !== false) await runProjectExport(false) }),
     exportSelectedProject: () => busy('project', () => runProjectExport(true)),
     // The STL path is fully synchronous, so without the frame the busy() helper yields it would freeze with the
     //  button still unchanged — the same reason, just more visible because nothing else is async to break it up.
-    exportSTL: () => busy('stl', () => runSTLExport(false)),
+    exportSTL: () => busy('stl', async () => { if (await beforeSliceRef?.current?.() !== false) await runSTLExport(false) }),
     exportSelectedSTL: () => busy('stl', () => runSTLExport(true)),
   }
 }

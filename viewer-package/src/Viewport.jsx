@@ -22,6 +22,7 @@ import {
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
   makeFilamentColors, DEFAULT_FILAMENT_COLORS, makePreviewControls,
 } from './actions/index.js'
+import { makeObjectTools, layerBandsOf } from './actions/object_tools.js'
 import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
 import { withToolBreakdown } from './core/stats_view.js'
@@ -31,7 +32,7 @@ import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } fro
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
 import {
-  TopBar, MenuBar, StatusBar, GizmoRail, Section, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
+  TopBar, MenuBar, StatusBar, GizmoRail, Section, ToolPanel, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, SliceError, TowerCard, writeTowerPosition,
 } from './ui/index.js'
 import { DEFAULT_BED, DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
@@ -73,7 +74,7 @@ const Panel = ({ panels, name, children }) => (panels?.[name] === 'readonly'
 export default function Viewport({
   settings = {}, setSettings = () => {}, plateSettings = {}, setPlateSettings = () => {},
   processPanel = null, motionPanel = null, filamentPanel = null,
-  panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false,
+  panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false, textFonts = null,
   sliceRequest = null, onEvent = null, onSliced = null, onSliceRun = null, onExport = null, catalog: catalogProp, slicer: useSlicer = useNoopSlicer,
 }) {
   // Two frames, one derivation (core/plate_settings.js plateContext): `globalFrame` is the GLOBAL map's own —
@@ -251,7 +252,9 @@ export default function Viewport({
   //  Not in here: `fileInputRef`/`presetInputRef` (one picker each, and makePresetActions takes the OTHER one under
   //  the same key — a spread would make that a silent ordering question), and anything produced by a factory
   //  further down, which cannot exist yet.
+  const beforeSliceRef = useRef(null)      // set below: what a slice or export awaits before it reads the geometry
   const wiring = {
+    beforeSliceRef,
     catalog: catalogProp, settings, setSettings, plateSettings, setPlateSettings,
     apiRef, workerRef, objectsRef, keyRef, clipboardRef, onSlicedRef, flushPaintRef,
     layersDataRef, toolpathRef, segDataRef, plateTpRef, lineWidthRef, plateResultsRef, plateOffsetsRef,
@@ -603,7 +606,14 @@ export default function Viewport({
 
   // Object toolbar and application menu — the lists live in core/, the binding in app_menu.js.
   const canSlice = objects.length > 0 && !gcodeOnly
-  const menuDeps = { gmode, supportPainting, setGizmo, togglePaintGizmo, objects, selectedIds, selectedPlate, plateCount, canvasMode, tech, slicing, exporting, gcodeOnly, gcodeResult, layerCount, historyDepth, bedOver, overBed, canSlice,
+  const [toolPanel, setToolPanel] = useState(null)
+  const toolRef = useRef({})
+  const objectTools = makeObjectTools({ ...wiring, toolRef, textFonts, setToolPanel, overhangAngle, recordHistory, refreshObjects, setPaintMode, getWorker, removeObject, setSettings,
+    plateBed: () => ({ bedW: ctx.bedW, bedD: ctx.bedD }), afterObjectsChanged: () => { if (selectorGeomRef.current) registerSelectorRef.current?.(); checkBed() } })
+  useEffect(() => { if (toolPanel && (canvasMode !== 'prepare' || paintMode !== 'off')) objectTools.closeTool() }, [canvasMode, paintMode])   // eslint-disable-line react-hooks/exhaustive-deps
+  beforeSliceRef.current = objectTools.prepareGeometry
+  const seamPainting = paintMode === 'seam-enforcer' || paintMode === 'seam-blocker'
+  const menuDeps = { hasKernel: useSlicer !== useNoopSlicer, seamPainting, objectTools, toolPanel, gmode, supportPainting, setGizmo, togglePaintGizmo, objects, selectedIds, selectedPlate, plateCount, canvasMode, tech, slicing, exporting, gcodeOnly, gcodeResult, layerCount, historyDepth, bedOver, overBed, canSlice,
     apiRef, clipboardRef, plateResultsRef, showPanel, feature, recordHistory, travelHistory, setShowHelp, enterCanvasMode, onSlice, cancelSlice, openFilePicker, startMaterialPaint,
     deleteSelected, deleteAllObjects, duplicateSelected, splitSelected, copySelected, pasteClipboard, exportProject, exportSTL, exportAllGcode, exportPlateSl1 }
   const OBJECT_TOOLS = boundObjectTools(menuDeps)
@@ -743,8 +753,10 @@ export default function Viewport({
             {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
           </div>
 
+          {ok && <ToolPanel tool={toolPanel} tools={objectTools} bands={layerBandsOf(settings)} />}
+
           {/* One brush, two targets — the panels are exclusive because the mode is. */}
-          {ok && canvasMode === 'prepare' && supportPainting && showPanel('paintPanel') && (
+          {ok && canvasMode === 'prepare' && (supportPainting || seamPainting) && showPanel('paintPanel') && (
             <PaintPanel paintMode={paintMode} onPaintMode={setPaintMode} onClear={clearPaint}
               overhangOnly={overhangOnly} onOverhangOnly={setOverhangOnly} overhangAngle={overhangAngle}
               brushRadius={brushRadius} paintCounts={paintCounts}

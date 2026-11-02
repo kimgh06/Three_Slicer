@@ -84,7 +84,6 @@ export function platePlacements(plates, loaded, bedWidth, bedDepth, origin = { x
 
 function droppedFeatures(project, loaded) {
   const dropped = []
-  if (loaded.some(o => o.paint?.seam?.size)) dropped.push('seam painting')
   if (loaded.some(o => o.paint?.fuzzy?.size)) dropped.push('fuzzy-skin painting')
   if (project.hasLayerHeightProfile) dropped.push('variable layer height')
   if (project.hasCustomGcodePerLayer) dropped.push('per-layer custom G-code')

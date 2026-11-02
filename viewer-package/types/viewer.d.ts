@@ -120,6 +120,12 @@ export interface ViewportProps {
    */
   catalog?: Catalog | null
   /**
+   * Fonts the Text tool offers beside its built-in Latin one, fetched when first used. This package ships none.
+   * `covers` lists the scripts (`hangul`, `kana`, `latin`) the font draws when the chosen font lacks a character;
+   * `han` is not a fallback, because one code point has a different form in each language's font.
+   */
+  textFonts?: Array<{ id: string; label: string; url: string; covers?: Array<'hangul' | 'kana' | 'latin'> }> | null
+  /**
    * A token whose identity CHANGE requests one slice of the current plate — the host's Slice button:
    * keep a counter in state and bump it. The mount value is inert (0 and null both slice nothing), so is
    * setting it back to `null`. Ignored while a `gcode`/`sl1` injection holds the plate or the scene is
