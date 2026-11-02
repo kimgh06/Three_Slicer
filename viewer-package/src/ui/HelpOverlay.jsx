@@ -12,7 +12,8 @@ export default function HelpOverlay({ onClose }) {
             <dl>
               <dt>M / G</dt><dd>Move (on the bed)</dd><dt>R</dt><dd>Rotate</dd>
               <dt>S</dt><dd>Scale — drag a box corner for all of XYZ</dd>
-              <dt>Arrow keys</dt><dd>Move 10mm (Shift 1mm)</dd>
+              <dt>Arrow keys</dt><dd>By gizmo: move 10mm, rotate 15°, scale 5% (Shift 1mm, 5°, 1%)</dd>
+              <dt>Hold Alt / Option</dt><dd>Fine adjust: numbers, fine snap, arrow keys in fine steps</dd>
               <dt>PageUp/Down</dt><dd>Rotate 45°</dd>
               <dt>Del</dt><dd>Delete selection</dd><dt>Esc</dt><dd>Clear selection / leave paint</dd>
               <dt>Click</dt><dd>Select · <b>Ctrl+click</b> adds or removes</dd>

@@ -70,6 +70,9 @@
 .tool-group button { width: 50px; min-height: 52px; padding: 3px 1px; border: 0; background: transparent; border-radius: 5px; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--_dark-text); font-size: 10.5px; line-height: 12px; }
 /* The toolbar SVGs come in two colours (dark green gizmos, white object tools); this draws both alike. */
+.tool-group button { position: relative; }
+.tool-key { position: absolute; top: 3px; right: 4px; font-family: inherit; font-size: 9px; font-weight: 600; line-height: 12px; color: var(--_dark-text-muted); }
+.tool-group button.on .tool-key { color: var(--_on-accent); }
 .tool-group button img { width: 22px; height: 22px; filter: grayscale(1) brightness(1.8); }
 .tool-group button:hover:not(:disabled):not(.on) { background: var(--_dark-control-hover); }
 .tool-group button:disabled { opacity: .4; cursor: not-allowed; }
@@ -153,6 +156,13 @@
 .tool-field input { width: 110px; min-width: 0; }
 .tool-field input[type=file] { width: 130px; font-size: 11px; }
 .tool-field select { width: 130px; min-width: 0; }
+.fine-panel { top: auto; bottom: 14px; width: 250px; }
+.fine-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.fine-title .bp-title { margin: 0; }
+.fine-title .ctl-btn.on, .fine-title .ctl-btn.on:hover:not(:disabled) { background: var(--_accent); border-color: var(--_accent); color: var(--_on-accent); }
+.fine-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 12px; color: var(--_dark-text-muted); }
+.fine-row .ctl-btn { flex: 1; }
+.fine-number { flex: 1; width: 0; min-width: 0; }
 .tool-problem { margin: 4px 0; font-size: 12px; color: var(--_danger-on-dark); }
 .bp-modes button.on:not(.enf):not(.blk) { background: var(--_accent); border-color: var(--_accent); color: var(--_on-accent); }
 .tool-check { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 12px; color: var(--_dark-text-muted); }

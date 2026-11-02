@@ -22,7 +22,7 @@ import {
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
   makeFilamentColors, DEFAULT_FILAMENT_COLORS, makePreviewControls,
 } from './actions/index.js'
-import { makeObjectTools, layerBandsOf } from './actions/object_tools.js'
+import { makeObjectTools, layerBandsOf } from './actions/object_tools.js'; import { useFineAdjust } from './hooks/use_fine_adjust.js'
 import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
 import { withToolBreakdown } from './core/stats_view.js'
@@ -32,7 +32,7 @@ import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } fro
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
 import {
-  TopBar, MenuBar, StatusBar, GizmoRail, Section, ToolPanel, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
+  TopBar, MenuBar, StatusBar, GizmoRail, Section, ToolPanel, FineAdjustPanel, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, SliceError, TowerCard, writeTowerPosition,
 } from './ui/index.js'
 import { DEFAULT_BED, DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
@@ -611,7 +611,7 @@ export default function Viewport({
   const objectTools = makeObjectTools({ ...wiring, toolRef, textFonts, setToolPanel, overhangAngle, recordHistory, refreshObjects, setPaintMode, getWorker, removeObject, setSettings,
     plateBed: () => ({ bedW: ctx.bedW, bedD: ctx.bedD }), afterObjectsChanged: () => { if (selectorGeomRef.current) registerSelectorRef.current?.(); checkBed() } })
   useEffect(() => { if (toolPanel && (canvasMode !== 'prepare' || paintMode !== 'off')) objectTools.closeTool() }, [canvasMode, paintMode])   // eslint-disable-line react-hooks/exhaustive-deps
-  beforeSliceRef.current = objectTools.prepareGeometry
+  beforeSliceRef.current = objectTools.prepareGeometry; const fineAdjust = useFineAdjust({ apiRef, selectedPlateRef, gizmoMode: gmode, available: canvasMode === 'prepare' && paintMode === 'off' && !toolPanel })
   const seamPainting = paintMode === 'seam-enforcer' || paintMode === 'seam-blocker'
   const menuDeps = { hasKernel: useSlicer !== useNoopSlicer, seamPainting, objectTools, toolPanel, gmode, supportPainting, setGizmo, togglePaintGizmo, objects, selectedIds, selectedPlate, plateCount, canvasMode, tech, slicing, exporting, gcodeOnly, gcodeResult, layerCount, historyDepth, bedOver, overBed, canSlice,
     apiRef, clipboardRef, plateResultsRef, showPanel, feature, recordHistory, travelHistory, setShowHelp, enterCanvasMode, onSlice, cancelSlice, openFilePicker, startMaterialPaint,
@@ -652,7 +652,7 @@ export default function Viewport({
     // Both repeat while the key is held, so they record under a kind: history.js folds a run of them into the one
     //  entry that takes the object back to where it stood before the run started.
     rotateSelected: (rad) => { recordHistory('rotate'); apiRef.current?.rotateSelectedY(rad) },
-    nudgeSelected: (dx, dy) => { recordHistory('nudge'); apiRef.current?.nudgeSelected(dx, dy); refreshObjects() },
+    nudgeSelected: (dx, dy, right, down, shift) => { if (fineAdjust.onArrow(right, down, shift)) return; recordHistory('nudge'); apiRef.current?.nudgeSelected(dx, dy); refreshObjects() },
     toggleHelp: () => setShowHelp(v => !v),
   })
 
@@ -753,7 +753,7 @@ export default function Viewport({
             {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
           </div>
 
-          {ok && <ToolPanel tool={toolPanel} tools={objectTools} bands={layerBandsOf(settings)} />}
+          {ok && <ToolPanel tool={toolPanel} tools={objectTools} bands={layerBandsOf(settings)} />}{ok && fineAdjust.open && <FineAdjustPanel {...fineAdjust} />}
 
           {/* One brush, two targets — the panels are exclusive because the mode is. */}
           {ok && canvasMode === 'prepare' && (supportPainting || seamPainting) && showPanel('paintPanel') && (
