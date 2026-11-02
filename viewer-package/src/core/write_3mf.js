@@ -213,7 +213,7 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
 export const VIEWER_SETTINGS_MEMBER = 'Metadata/three_slicer_settings.json'
 
 // The per-facet paint attributes upstream's 3mf uses, one per annotation of the per-object store.
-const PAINT_ATTRIBUTES = [['color', 'paint_color'], ['supports', 'paint_supports']]
+const PAINT_ATTRIBUTES = [['color', 'paint_color'], ['supports', 'paint_supports'], ['seam', 'paint_seam']]
 
 // A hole in an array value — wipe_tower_x/y hold `null` for a plate whose tower is placed automatically — is not
 //  something upstream can read, and not harmlessly: its loader rejects an array whose entries are not all strings

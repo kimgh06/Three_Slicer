@@ -544,6 +544,9 @@ export function useSlicer(deps) {
     }
     if (downgradeRef.current) { params.sparse_infill_pattern = 'rectilinear'; params.infill_density = Math.min(params.infill_density ?? 0.15, 0.08); params.economy = true }  // downgrade retry
     if (typeof window !== 'undefined' && window.__vpForceTree) { params.enable_support = true; params.support_style = 'tree'; params.support_threshold_angle = 40 }  // stage-31 test hook: force tree support (not set in production)
+    // Omitted without seam paint, as every optional parameter is (AGENTS.md).
+    if (merged.seam?.enforcers.length) params.seam_enforcers = merged.seam.enforcers
+    if (merged.seam?.blockers.length) params.seam_blockers = merged.seam.blockers
     if (painted && typeof window !== 'undefined') window.__vpParams = params   // dev/test aid: the parameters actually handed to the kernel (the selector worker's — a pool run would race it)
     return params
   }

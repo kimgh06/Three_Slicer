@@ -118,7 +118,7 @@ export function parseTransform(value) {
 export const PAINT_ATTRS = [
   ['paint_color', 'color'],        // multi-material: state 1..16 == Extruder1..16
   ['paint_supports', 'supports'],  // support enforcer/blocker: states 1 and 2
-  ['paint_seam', 'seam'],          // unsupported by the kernel — collected for the warning only
+  ['paint_seam', 'seam'],          // seam enforcer/blocker: states 1 and 2
   ['paint_fuzzy_skin', 'fuzzy'],   // ditto
 ]
 const PAINT_SLOT = Object.fromEntries(PAINT_ATTRS)

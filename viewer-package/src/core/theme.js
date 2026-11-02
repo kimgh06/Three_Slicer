@@ -18,6 +18,7 @@ export const THEME = Object.freeze({
   slaModel: '#d7862a',
   slaSupport: '#9b78d8',
   slaPad: '#b0a06a',
+  negativePart: '#e23b3b',      // a negative part: what is cut away where it overlaps
   inkOnLight: '#10141a',        // label text on a light swatch
   inkOnDark: '#ffffff',
 })
