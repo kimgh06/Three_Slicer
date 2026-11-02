@@ -176,7 +176,8 @@ arrows and Delete working.
 | Prepare | |
 | --- | --- |
 | `M` or `G` · `R` · `S` | Move · rotate · scale gizmo |
-| `Arrow keys` | Nudge 10mm — `Shift` for 1mm |
+| `Arrow keys` | By gizmo mode: move 10mm, rotate 15°, scale 5% — `Shift` for 1mm, 5°, 1% |
+| Hold `Alt` / `Option` | Fine adjust while held (a field with focus keeps it open for typing, and the panel's Hold button keeps it on): typed position, rotation and size, gizmo drags snap to 0.1 mm, 1° and 1%, and the arrow keys take the same steps for the gizmo's mode (`Shift` for ten times as far) |
 | `PageUp` / `PageDown` | Rotate ±45° |
 | `Delete` / `Backspace` | Remove the selection |
 | `Z` · `B` | Zoom to all · zoom to bed |

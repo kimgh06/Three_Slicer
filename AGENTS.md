@@ -337,6 +337,13 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 - **Dragging the selection or the box around it moves it on the bed** (`scene/body_drag.js`), in move mode only. It runs on
   TransformControls' XZ drag and starts past the click distance, because a drag records an undo step. A left drag on a
   model therefore no longer orbits; empty space and the right button still do.
+- **Fine adjust lasts while Alt (Option) is held** (`hooks/use_fine_adjust.js`). Option changes what digits type, so a
+  field that takes focus keeps the panel open past the key, as the panel's Hold button does until it is released. Typed values go through the gizmo's `dragging-changed` pair
+  (`scene/fine_transform.js`), so they commit as a drag does. Scale box corners do not snap.
+- **A rotate ring turns by the angle the pointer sweeps around it** (`scene/ring_drag.js`), not by TransformControls' travel
+  across the axis: one 30 degree sweep measured 56 to 146 degrees by where it began. With Alt held it runs at a quarter
+  speed, because 1:1 was over a degree per pixel and the 1 degree snap skipped values. The panel's angles are kept per axis
+  beside the rotation they led to, since Euler angles read 100 degrees about Y as `[-180, 80, -180]`.
 - **Corner handles must win the pointer where they overlap a gizmo axis** — they are drawn over everything, so they
   have to act there too. TransformControls picks its axis on HOVER and its listener is registered first, so it cannot
   be outrun in `onDown`; it is switched off while the pointer is on a handle instead (`updateHandleHover`).
