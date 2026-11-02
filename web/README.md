@@ -103,3 +103,5 @@ This whole directory is **AGPL-3.0-or-later**, the same as the parent repository
 and they retain the original copyright notices. External dependencies: three/React (MIT), Clipper and Boost (BSL-1.0),
 CGAL (GPL, used header-only) and the emscripten toolchain. **When distributing externally (npm and the like)** this package must be
 distributed under AGPL-3.0, which carries the obligation to publish the source.
+
+`web/viewer/src/fonts/` holds the Text tool's default fonts: Noto Sans CJK Regular (KR, JP, SC, TC), SIL Open Font License 1.1 (`OFL.txt` beside them). `kernel_viewport.jsx` passes them as `textFonts`.
