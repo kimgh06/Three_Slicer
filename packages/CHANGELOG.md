@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.4.2 — 2026-11-03
+
+### Added
+
+- Object tools in the ribbon: Arrange, Orient, Measure, Boolean, Cut, Negative part, Text, Seam painting and Variable
+  layers. Boolean, Cut, negative parts and engraving run on the kernel's CGAL (`mesh_boolean`); a non-solid input is
+  refused with a typed `MESH_BOOLEAN_…` code. Arrange and Orient are this package's own algorithms.
+- Seam paint reaches the kernel as `seam_enforcers` / `seam_blockers`, on classic, Arachne and multi-material walls, and
+  round-trips through a 3mf as `paint_seam`.
+- Variable layer height (`variable_layer_heights`, Z bands). It is refused with support, raft, spiral mode and several
+  filaments (`UNSUPPORTED_VARIABLE_LAYERS`), and a band under 0.01 mm is `INVALID_VARIABLE_LAYERS`.
+- `textFonts` prop: fonts the Text tool offers beside its built-in Latin one. The demo binds Noto Sans CJK for Korean,
+  Japanese, Simplified and Traditional; a `.ttf` or `.otf` upload lasts for the session.
+- Fine adjust: holding Alt (Option) opens typed position, angle and size for the gizmo's mode, with fine drag snap; a
+  Hold button keeps it on.
+- Measure snaps to corners and edges while Ctrl (Cmd) is held, and previews the second point under the pointer.
+
+### Changed
+
+- The window is a title row with the menu bar, a labelled ribbon, the canvas and a task pane; sidebar sections are
+  collapsible boxes, and the plate tabs sit over a split slice button that fills with each plate's progress.
+- The gizmo stands outside the selection and is sized by it. A rotate ring turns by the angle the pointer sweeps around
+  it (a 30 degree sweep measured 56 to 146 degrees before).
+- In move mode a left drag on a model or inside its box moves it on the bed; the right button and empty space orbit.
+  The right-click menu opens on release, on an object only.
+- The arrow keys follow the gizmo's mode: 10 mm, 15 degrees, 5% (Shift 1 mm, 5 degrees, 1%), and move every selected
+  object.
+
+### Fixed
+
+- Text placed low on a wall went under the bed, and the kernel's seat lifted the whole plate by that much (a 20 mm cube
+  sliced as 138 layers).
+- An undo after moving a multi-selection restored pivot-relative positions and moved nothing.
+- A copy, a duplicate and a split keep the object's filament.
+
 ## 0.4.1 — 2026-10-28
 
 ### Added
