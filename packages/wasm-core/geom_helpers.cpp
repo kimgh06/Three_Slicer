@@ -221,10 +221,11 @@ static uint32_t lcg(uint32_t& state){
 }
 // Seam modes: 0=back (max Y) 1=nearest (closest to the nozzle) 2=aligned (previous seam) 3=random, -1=no rotation
 void rotate_seam(Path& path, int mode, SeamContext& seamContext, double nozzleX, double nozzleY) {
-  if (mode < 0 || path.size() < 3) return;
+  if ((mode < 0 && !seamContext.marks) || path.size() < 3) return;
   if (seamContext.marks && seam_on_enforcer(path, *seamContext.marks)) return;
   size_t best = 0;
-  if (mode == 0 || (mode == 2 && !seamContext.hasLast)) {          // back / the first layer of aligned
+  if (mode < 0) {                                      // no seam mode of its own: only the blockers move it
+  } else if (mode == 0 || (mode == 2 && !seamContext.hasLast)) {          // back / the first layer of aligned
     cInt bestY=path[0].y();
     for (size_t i=1;i<path.size();++i) {
       if (path[i].y()>bestY) {

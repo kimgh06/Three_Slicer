@@ -123,6 +123,13 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     result.set("error", std::string("STL parse failed or 0 triangles"));
     return result;
   }
+  // A height of 0 never reaches the top of the object, and one of 0.0001 mm wrote 123 MB of G-code for a 20 mm cube.
+  for (size_t at = 1; at < params.variable_layer_heights.size(); at += 2) {
+    if (!(params.variable_layer_heights[at] >= MIN_VARIABLE_LAYER_MM)) {
+      result.set("error", std::string("INVALID_VARIABLE_LAYERS: a layer height band must be at least 0.01 mm"));
+      return result;
+    }
+  }
   // Support, raft, multi-material and spiral paths all assume one layer height through the print. Refused rather than
   //  sliced with a height they do not know.
   if (!params.variable_layer_heights.empty() && (params.enable_support || params.raft_layers > 0 || params.spiral_mode || params.extruder_count > 1)) {

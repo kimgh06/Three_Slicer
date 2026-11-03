@@ -49,29 +49,36 @@ const SeamMarks* seam_marks_of(int layerIndex) {
   return &g_marks[layerIndex];
 }
 
-// Starts the loop at the point of it nearest any enforcer mark, adding that point when it falls along an edge: a flat
-//  wall has no vertex where the paint is.
-bool seam_on_enforcer(Path& path, const SeamMarks& marks) {
+// The point of the loop nearest any enforcer mark, within reach, and the edge it lies on.
+bool seam_nearest_enforcer(const Path& path, const SeamMarks& marks, size_t& edge, double& x, double& y) {
   double bestDistance = SEAM_REACH_MM;
   size_t bestEdge = path.size();
-  double bestX = 0, bestY = 0;
   for (const SeamMark& mark : marks.enforcers) {
-    for (size_t edge = 0; edge < path.size(); ++edge) {
-      const double ax = path[edge].x() * INV, ay = path[edge].y() * INV;
-      const IntPoint& next = path[(edge + 1) % path.size()];
+    for (size_t candidate = 0; candidate < path.size(); ++candidate) {
+      const double ax = path[candidate].x() * INV, ay = path[candidate].y() * INV;
+      const IntPoint& next = path[(candidate + 1) % path.size()];
       const double dx = next.x() * INV - ax, dy = next.y() * INV - ay;
       const double lengthSquared = dx * dx + dy * dy;
       if (lengthSquared == 0) continue;
       const double along = std::clamp(((mark.x - ax) * dx + (mark.y - ay) * dy) / lengthSquared, 0.0, 1.0);
-      const double x = ax + along * dx, y = ay + along * dy;
-      const double distance = std::hypot(x - mark.x, y - mark.y);
-      if (distance < bestDistance) { bestDistance = distance; bestEdge = edge; bestX = x; bestY = y; }
+      const double nearX = ax + along * dx, nearY = ay + along * dy;
+      const double distance = std::hypot(nearX - mark.x, nearY - mark.y);
+      if (distance < bestDistance) { bestDistance = distance; bestEdge = candidate; x = nearX; y = nearY; }
     }
   }
-  if (bestEdge == path.size()) return false;
-  const IntPoint seam((cInt)std::llround(bestX * SCALE), (cInt)std::llround(bestY * SCALE));
-  path.insert(path.begin() + bestEdge + 1, seam);
-  std::rotate(path.begin(), path.begin() + bestEdge + 1, path.end());
+  edge = bestEdge;
+  return bestEdge != path.size();
+}
+
+// Starts the loop at the point of it nearest any enforcer mark, adding that point when it falls along an edge: a flat
+//  wall has no vertex where the paint is.
+bool seam_on_enforcer(Path& path, const SeamMarks& marks) {
+  size_t edge = 0;
+  double x = 0, y = 0;
+  if (!seam_nearest_enforcer(path, marks, edge, x, y)) return false;
+  const IntPoint seam((cInt)std::llround(x * SCALE), (cInt)std::llround(y * SCALE));
+  path.insert(path.begin() + edge + 1, seam);
+  std::rotate(path.begin(), path.begin() + edge + 1, path.end());
   return true;
 }
 

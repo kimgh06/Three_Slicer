@@ -16,8 +16,8 @@
 #include <CGAL/boost/graph/helpers.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <map>
 
 namespace {
@@ -26,11 +26,12 @@ using Kernel = CGAL::Exact_predicates_exact_constructions_kernel;
 using Point = Kernel::Point_3;
 using Mesh = CGAL::Surface_mesh<Point>;
 
-using FloatBits = std::array<uint32_t, 3>;
+using WeldKey = std::array<int64_t, 3>;
+const double WELD_PER_MM = 1e4;   // three.js' seam and pole vertices differ by 1e-16 near 0, where a float keeps those bits
 
-// Unwelded triangles become a mesh by joining corners with identical float bits, the weld write_3mf.js uses.
+// Unwelded triangles become a mesh by joining corners on a 0.1 micron grid.
 bool soup_to_mesh(const float* positions, size_t floatCount, Mesh& mesh) {
-  std::map<FloatBits, size_t> corners;
+  std::map<WeldKey, size_t> corners;
   std::vector<Point> points;
   std::vector<std::vector<size_t>> faces;
   faces.reserve(floatCount / 9);
@@ -38,11 +39,10 @@ bool soup_to_mesh(const float* positions, size_t floatCount, Mesh& mesh) {
     std::vector<size_t> face;
     for (int corner = 0; corner < 3; ++corner) {
       const float* xyz = positions + at + corner * 3;
-      FloatBits bits;
-      std::memcpy(bits.data(), xyz, sizeof bits);
-      auto found = corners.find(bits);
+      const WeldKey key = { std::llround(xyz[0] * WELD_PER_MM), std::llround(xyz[1] * WELD_PER_MM), std::llround(xyz[2] * WELD_PER_MM) };
+      auto found = corners.find(key);
       if (found == corners.end()) {
-        found = corners.emplace(bits, points.size()).first;
+        found = corners.emplace(key, points.size()).first;
         points.emplace_back(xyz[0], xyz[1], xyz[2]);
       }
       face.push_back(found->second);

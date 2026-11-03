@@ -24,6 +24,7 @@ struct SliceSegment { double x0, y0, x1, y1; };
 //  `bands` is the variable layer height: flat [fromZ, height, ...], ascending, each height applying from its fromZ up.
 //  Empty is the fixed-height case and its arithmetic is unchanged.
 struct LayerPlan { std::vector<double> top, plane; };
+const double MIN_VARIABLE_LAYER_MM = 0.01;
 inline double band_height(const std::vector<double>& bands, double z, double fallback) {
   double height = fallback;
   for (size_t at = 0; at + 1 < bands.size(); at += 2) if (z >= bands[at] - 1e-6) height = bands[at + 1];
