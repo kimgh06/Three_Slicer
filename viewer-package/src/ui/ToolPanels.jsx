@@ -1,4 +1,5 @@
 import React from 'react'
+import NumberField from './NumberField.jsx'
 
 // The floating panels of the object tools. Props in, markup out: core/ and actions/ hold what they do.
 const mm = (value) => value.toFixed(2)
@@ -7,12 +8,16 @@ const NEGATIVE_SHAPES = ['box', 'cylinder', 'sphere']
 const CUT_SIDES = [['both', 'Keep both'], ['upper', 'Keep upper'], ['lower', 'Keep lower']]
 const DEFAULT_BAND = { from: 10, height: 0.1 }
 
+const SNAP_LABELS = { corner: 'On a corner', edge: 'On an edge' }
+
 function MeasurePanel({ tool, onClose }) {
-  const { picks, result } = tool
+  const { picks, result, preview, snapped } = tool
   return (
     <div className="brush-panel" data-testid="measure-panel">
       <div className="bp-title">Measure</div>
-      {!result && <div className="tool-hint">{picks === 0 && 'Click the first point on a model'}{picks === 1 && 'Click the second point'}</div>}
+      {(!result || preview) && <div className="tool-hint">{picks === 0 && 'Click the first point on a model'}{picks === 1 && 'Click the second point'}</div>}
+      {snapped && <div className="tool-hint" data-testid="measure-snap">{SNAP_LABELS[snapped]}</div>}
+      {!snapped && <div className="tool-hint">Hold Ctrl (⌘ on a Mac) to snap to corners and edges</div>}
       {result && (
         <dl className="tool-readout">
           <dt>Distance</dt><dd data-testid="measure-distance">{mm(result.distance)} mm</dd>
@@ -131,19 +136,15 @@ function NegativePanel({ tool, onOption, onAdd, onToggle, onHeight, onClose }) {
 }
 
 function LayerBandsPanel({ bands, onBands, onClose }) {
-  const edit = (index, key) => (event) => {
-    const value = Number(event.target.value)
-    if (!(value >= 0)) return
-    onBands(bands.map((band, at) => { if (at === index) return { ...band, [key]: value }; return band }))
-  }
+  const edit = (index, key) => (value) => onBands(bands.map((band, at) => { if (at === index) return { ...band, [key]: value }; return band }))
   return (
     <div className="brush-panel" data-testid="layers-panel">
       <div className="bp-title">Variable layers</div>
       <div className="tool-hint">Each height applies from its Z upward. Below the first band the plate's layer height applies</div>
       {bands.map((band, index) => (
         <div className="tool-band-row" key={index}>
-          <label>From Z <input type="number" min="0" step="0.5" value={band.from} onChange={edit(index, 'from')} data-testid={`layers-from-${index}`} /></label>
-          <label>Height <input type="number" min="0.04" step="0.02" value={band.height} onChange={edit(index, 'height')} data-testid={`layers-height-${index}`} /></label>
+          <label>From Z <NumberField value={band.from} step={0.5} onCommit={edit(index, 'from')} testId={`layers-from-${index}`} /></label>
+          <label>Height <NumberField value={band.height} step={0.02} onCommit={edit(index, 'height')} testId={`layers-height-${index}`} /></label>
           <button className="bp-remove" onClick={() => onBands(bands.filter((_band, at) => at !== index))} title="Remove this band">×</button>
         </div>
       ))}
