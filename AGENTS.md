@@ -298,7 +298,8 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   A missing or empty list now stops the extraction. Regenerate the list first when the mapping changes.
 - **The object tools have one kernel entry for all geometry edits.** Boolean, Cut, engraved Text and negative parts all go
   through `mesh_boolean` (`mesh_boolean.cpp`, CGAL corefinement with exact constructions; the worker's `meshBoolean`
-  command), and a non-solid input is refused with a typed `MESH_BOOLEAN_…` code. A negative part stays a live object:
+  command), and a non-solid input is refused with a typed `MESH_BOOLEAN_…` code. Corners weld on a 0.1 micron grid, not by float
+  bits: three.js' cylinder seam and sphere poles differ by 1e-16 near 0, which refused them on plate 0 only. A negative part stays a live object:
   `prepareGeometry` (`actions/object_tools.js`) cuts each object it overlaps and caches that on the object as `cutPos`
   against the transforms involved, before a slice or export reads the geometry, because `buildMergedSTL` is synchronous
   and the boolean is not. `geometryInput` is the one place negative parts leave the merge and `cutPos` enters it. A
@@ -308,7 +309,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   needs material and support paint from it, so the brush uses it only to edit (`kind: 'seam'`, modes `seam-enforcer` and
   `seam-blocker`). A slice swaps seam marks out of it, because they share state numbers with support marks, and
   `buildMergedSTL` sends `object.paint.seam` as `seam_enforcers` / `seam_blockers`. `seam_paint.cpp` cuts those with each
-  layer plane, and `rotate_seam` inserts a vertex at the mark nearest the loop.
+  layer plane, and `rotate_seam` inserts a vertex at the mark nearest the loop. Arachne walls take the same point through
+  `seamed_walls` (`emit_layer.cpp`), with an interpolated width, and the multi-material path sets the marks around its walls
+  only, because its prime tower shares the seam context.
 - **The Text tool's fonts are the host's.** `viewer-package` ships only the three.js Latin font (tarball 315 kB; the four
   Noto Sans CJK files are 23 MB) and takes the others through the `textFonts` prop; the demo binds them once in
   `web/viewer/src/kernel_viewport.jsx`, so the extension gets them too. Han never falls back by script
@@ -317,7 +320,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
 - **Variable layer height is `plan_layers`' `bands` argument** (`variable_layer_heights`, flat `[fromZ, height, ...]`, in
   the settings map). With no bands the arithmetic is the fixed-height loop, so golden is untouched. Support, raft,
   multi-material and spiral all assume one height, so together with bands they are refused with
-  `UNSUPPORTED_VARIABLE_LAYERS`.
+  `UNSUPPORTED_VARIABLE_LAYERS`. A band under 0.01 mm is `INVALID_VARIABLE_LAYERS`: 0 never reached the top of the object.
 - **Arrange and Orient are this package's own algorithms.** `viewer-package` is MIT, so upstream's AGPL `Arrange.cpp` and
   `Orient.cpp` must not be read while changing them (`packages/PROVENANCE.md`).
 - **The transform gizmo is deliberately not the stock one.** Three edits to `TransformControls`, each measured, each

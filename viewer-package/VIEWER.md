@@ -431,7 +431,7 @@ The ribbon's tools come in two groups. The first needs no kernel, so it works wi
 
 | Tool | What it does |
 |---|---|
-| Measure | Distance, per-axis offset and face angle between two clicked points |
+| Measure | Distance, per-axis offset and face angle between two clicked points. With Ctrl (⌘) held, picks snap to corners and to edges where faces meet at more than 30°, and after the first click the second point is previewed under the pointer |
 | Arrange | Packs the selected plate's objects from the bed centre, keeping 3 mm between them. What does not fit stays put and is reported. It ignores rotation, the prime tower and non-rectangular beds |
 | Orient | Turns the selection so the least surface needs support |
 | Text | Raises letters from a clicked surface or lays them on the bed. One click places one text, closes the panel and selects it. Text keeps its height on a model but never goes under the bed, and Place on bed drops a selected text. The built-in font is Latin only; the `textFonts` prop adds a host's fonts (the demo adds Korean, Japanese, Simplified and Traditional), and a `.ttf` or `.otf` upload adds any other for the session. Hangul and kana fall back to the font that covers them. Hanzi and kanji are drawn only by the picked font, because one code point has a different form per language |
