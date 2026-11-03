@@ -36,6 +36,17 @@ near(volume(slicer.mesh_boolean(first, second, INTERSECTION).positions), 4000)
 assert.match(slicer.mesh_boolean(first, boxSoup([50, 50, 50], [60, 60, 60]), INTERSECTION).error, /^MESH_BOOLEAN_EMPTY: /)
 assert.match(slicer.mesh_boolean(first.subarray(0, 9 * 11), second, UNION).error, /^MESH_BOOLEAN_NOT_SOLID: /)
 
+// Corners that differ only by float noise near 0 are one corner: three.js' cylinder seam and sphere poles land there.
+{
+  const noisy = boxSoup([-5, -5, 0], [5, 5, 10])
+  for (let at = 0; at < noisy.length; at += 3) if (noisy[at] === 5) noisy[at] = (at % 2) * 2.4e-13 + 5
+  const seamed = new Float32Array(noisy)
+  for (let at = 0; at < seamed.length; at += 9) seamed[at] += (at % 18) * 1e-13
+  const zeroX = boxSoup([0, 0, 0], [10, 10, 10])
+  for (let at = 0; at < zeroX.length; at += 3) if (zeroX[at] === 0) zeroX[at] = ((at % 6) - 3) * 1e-16
+  assert.equal(slicer.mesh_boolean(boxSoup([-20, -20, 0], [20, 20, 20]), zeroX, DIFFERENCE).error, undefined)
+}
+
 // ---- variable layers ----
 const params = { layer_height: 0.2, first_layer_height: 0.2, line_width: 0.42, wall_loops: 2, infill_density: 0.15, nozzle_diameter: 0.4,
   filament_diameter: 1.75, flow_ratio: 1, print_speed: 60, first_layer_speed: 20, travel_speed: 150, nozzle_temp: 210, bed_temp: 60,
@@ -57,6 +68,8 @@ near(banded.stats.layers, 50 + 100, 2)
 const refused = slice({ variable_layer_heights: [10, 0.1], enable_support: true, support_style: 'grid', support_threshold_angle: 30, support_density: 0.15 })
 assert.match(refused.error, /^UNSUPPORTED_VARIABLE_LAYERS: /)
 
+for (const height of [0, -0.1, 0.0001]) assert.match(slice({ variable_layer_heights: [10, height] }).error, /^INVALID_VARIABLE_LAYERS: /)
+
 // ---- painted seams ----
 const wallStarts = (gcode) => {
   // The position a layer's first wall extrusion starts from, relative to the bed centre.
@@ -76,6 +89,19 @@ const nearStripe = (gcode) => (gcode.match(/^G1 .*/gm) ?? []).filter(line => {
 }).length
 assert.ok(nearStripe(marked.gcode) > nearStripe(fixed.gcode) + 40, `${nearStripe(marked.gcode)} vs ${nearStripe(fixed.gcode)}`)
 assert.ok(wallStarts !== null)
+// The multi-material path: a painted facet routes there, and a seam mark moves its wall start.
+slicer.selector_prepare(cube)
+slicer.selector_import_paint(Int32Array.from([0, 1]), ['8', '8'].join('\n'))
+const material = { extruder_count: 2 }
+const paintedPlain = slice(material)
+assert.ok(/^T1$/m.test(paintedPlain.gcode), 'the paint reached the multi-material path')
+slicer.selector_prepare(cube)
+slicer.selector_import_paint(Int32Array.from([0, 1]), ['8', '8'].join('\n'))
+const paintedMarked = slice({ ...material, seam_enforcers: Array.from(boxSoup([9.9, -0.5, 0], [10.1, 0.5, 20])) })
+assert.ok(nearStripe(paintedMarked.gcode) > nearStripe(paintedPlain.gcode) + 20, `multi-material ${nearStripe(paintedMarked.gcode)} vs ${nearStripe(paintedPlain.gcode)}`)
+const arachneFixed = slice({ wall_generator: 'arachne' })
+const arachneMarked = slice({ wall_generator: 'arachne', seam_enforcers: Array.from(boxSoup([9.9, -0.5, 0], [10.1, 0.5, 20])) })
+assert.ok(nearStripe(arachneMarked.gcode) > nearStripe(arachneFixed.gcode) + 40, `arachne ${nearStripe(arachneMarked.gcode)} vs ${nearStripe(arachneFixed.gcode)}`)
 
 // ---- st and mt give the same bytes ----
 const { default: createThreaded } = await import('../../engine/src/slicer_core.mt.js')

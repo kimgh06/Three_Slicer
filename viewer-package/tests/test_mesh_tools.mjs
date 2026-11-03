@@ -1,6 +1,7 @@
 // The object tools' pure halves: measuring, arranging, orienting. Fixtures are built here, with known answers.
 import assert from 'node:assert/strict'
 import { measureBetween, worldToModel } from '../src/core/measure.js'
+import { edgeGrid, snapPoint } from '../src/core/edge_snap.js'
 import { arrangeOnBed } from '../src/core/arrange.js'
 import { bestOrientation } from '../src/core/orient.js'
 import { scriptOf, fallbackFor, textRuns } from '../src/core/text_runs.js'
@@ -9,7 +10,7 @@ import { seatShift } from '../src/core/model_soup.js'
 import { gizmoLayout, handleOffset } from '../src/core/gizmo_layout.js'
 import { createBodyDrag } from '../src/scene/body_drag.js'
 import { createFineTransform } from '../src/scene/fine_transform.js'
-import { resizedScales, arrowEdit, wrapAngle, twistDegrees } from '../src/core/fine_adjust.js'
+import { resizedScales, arrowEdit, wrapAngle, twistDegrees, arrowHint, arrowHelp } from '../src/core/fine_adjust.js'
 import { createRingDrag } from '../src/scene/ring_drag.js'
 import { Mesh, BoxGeometry, Ray, Vector3, Quaternion, PerspectiveCamera, MathUtils } from 'three'
 import { ShapeUtils } from 'three'
@@ -135,6 +136,8 @@ const close = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) <= tolerance
   assert.deepEqual(arrowEdit('translate', 1, 0, true, false), { kind: 'move', deltas: [1, -0] })
   assert.deepEqual(arrowEdit('rotate', 1, 0, false, false), { kind: 'rotate', axis: 2, degrees: -15 })
   close(arrowEdit('scale', 0, -1, false, false).ratio, 1.05)
+  assert.equal(arrowHint('translate'), 'Arrow keys move 0.1 mm, Shift 1 mm')   // read from the steps themselves
+  assert.match(arrowHelp(), /move 10mm, rotate 15°, scale 5%/)
   const events = []
   const mesh = new Mesh(new BoxGeometry(10, 20, 30))   // scene x 10, height 20, scene z 30
   mesh.position.set(100, 0, 40)
@@ -166,6 +169,11 @@ const close = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) <= tolerance
   assert.deepEqual(fine.read(origin).degrees.map(Math.round), [0, 0, 100])
   fine.reset('rotate')
   close(mesh.rotation.y, 0)
+  const heldScale = mesh.scale.toArray(), heldPosition = mesh.position.toArray()
+  const before = events.length
+  fine.resize(0, 0, true); fine.resize(0, -5, true); fine.resize(0, NaN, true); fine.move(0, NaN, origin); fine.rotate(0, NaN); fine.setHeight(NaN)
+  assert.equal(events.length, before)                 // refused before the commit, so no undo step either
+  assert.deepEqual(mesh.scale.toArray(), heldScale); assert.deepEqual(mesh.position.toArray(), heldPosition)
   fine.setSnap(true); close(transform.snaps.move, 0.1)
   fine.setSnap(false); assert.equal(transform.snaps.move, null)
   transform.object = { userData: { isPrimeTower: true } }
@@ -196,6 +204,16 @@ const close = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) <= tolerance
   for (const from of [0, 45, 90, 135, 180, 225, 270, 315, 350]) close(sweep(from, 30).swept, 30, 1e-3)   // the wrap at +-180 included
   assert.equal(sweep(0, 30).turns[0].axis, 2)     // scene Y is model Z
   close(sweep(0, 120, MathUtils.degToRad(1)).swept, 30)   // Alt: a quarter of the sweep, on whole degrees
+}
+
+// ---- measure snaps to corners first, then edges, and only within reach ----
+{
+  const square = [0, 0, 0, 10, 0, 0, 10, 0, 0, 10, 10, 0, 10, 10, 0, 0, 10, 0, 0, 10, 0, 0, 0, 0]
+  const grid = edgeGrid(Float32Array.from(square), 4)
+  assert.deepEqual(snapPoint(grid, [9.2, 0.6, 0], 1), { point: [10, 0, 0], kind: 'corner' })
+  assert.deepEqual(snapPoint(grid, [5, 0.6, 0], 1), { point: [5, 0, 0], kind: 'edge' })
+  assert.deepEqual(snapPoint(grid, [5, 5, 0], 1), { point: [5, 5, 0], kind: null })
+  assert.deepEqual(snapPoint(grid, [5, 10.5, 2], 1), { point: [5, 10.5, 2], kind: null })   // out of reach in 3D
 }
 
 // ---- arrange ----
