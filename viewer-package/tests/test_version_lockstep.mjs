@@ -36,6 +36,14 @@ console.log('[lockstep: one version across the pair]')
 check('both packages carry the same version', agpl.version === permissive.version,
   `${agpl.name}@${agpl.version} vs ${permissive.name}@${permissive.version}`)
 
+// The extension is built from this pair and carries its version, so a store build names the release it came from.
+//  The store refuses an upload that does not raise it, which `make bump` now does for both.
+const extensionPath = join(here, '..', 'web', 'extension', 'package.json')
+if (existsSync(extensionPath)) {
+  const extension = JSON.parse(readFileSync(extensionPath, 'utf8'))
+  check('the browser extension carries the same version', extension.version === permissive.version, `${extension.version} vs ${permissive.version}`)
+}
+
 console.log('\n[lockstep: the dependency is an exact pin]')
 const declared = agpl.dependencies?.[permissive.name]
 check(`${agpl.name} depends on ${permissive.name}`, typeof declared === 'string', String(declared))

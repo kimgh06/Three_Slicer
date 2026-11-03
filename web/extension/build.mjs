@@ -28,6 +28,7 @@ const dist = resolve(here, target.outDir)
 const sourceManifest = JSON.parse(readFileSync(resolve(here, 'manifest.json'), 'utf8'))
 const manifest = target.manifest(sourceManifest)
 manifest.version = packageJson.version
+if (target.namesVersion) manifest.version_name = packageJson.version   // the npm release the extension was built from
 
 const define = {
   __OPENABLE_EXTENSIONS__: JSON.stringify(openableExtensions()),

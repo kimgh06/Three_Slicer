@@ -13,6 +13,8 @@ export const TARGETS = {
     outDir: 'dist',
     // An extension may read file: URLs once the user allows it, so a download only on disk can be opened.
     readsSavedFiles: true,
+    // The Chrome Web Store shows version_name; Firefox does not know the key and AMO's lint warns on it.
+    namesVersion: true,
     settingsUrl: (extensionId) => `chrome://extensions/?id=${extensionId}`,
     manifest: (manifest) => manifest,
   },
@@ -21,6 +23,7 @@ export const TARGETS = {
     // Firefox gives an extension no way to read a file: URL. A download that exists only on disk (a blob: download)
     // is therefore not opened, and the Thingiverse badge, whose downloads are all blob:, is left out.
     readsSavedFiles: false,
+    namesVersion: false,
     settingsUrl: null,
     manifest: ({ background, content_scripts: contentScripts, ...rest }) => ({
       ...rest,

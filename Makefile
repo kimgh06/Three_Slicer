@@ -35,7 +35,7 @@ step = mkdir -p $(LOG_DIR); label='$(1)'; \
 
 .PHONY: bump preflight publish
 
-bump:  ## set three-slicer, three-slicer-viewer, the pin and the demo app's pins to V=x.y.z
+bump:  ## set three-slicer, three-slicer-viewer, the pin, the demo app's pins and the extension to V=x.y.z
 	@test -n "$(V)" || { echo "usage: make bump V=0.3.0"; exit 1; }
 	@node -e ' \
 	  const fs = require("fs"); \
@@ -43,6 +43,7 @@ bump:  ## set three-slicer, three-slicer-viewer, the pin and the demo app's pins
 	  edit("viewer-package/package.json", p => { p.version = "$(V)" }); \
 	  edit("packages/package.json", p => { p.version = "$(V)"; p.dependencies["three-slicer-viewer"] = "$(V)" }); \
 	  edit("web/viewer/package.json", p => { p.dependencies["three-slicer"] = "$(V)"; p.dependencies["three-slicer-viewer"] = "$(V)" }); \
+	  edit("web/extension/package.json", p => { p.version = "$(V)" }); \
 	  console.log("bumped both packages and the pin to $(V)")'
 	@npm i --package-lock-only --no-audit --no-fund >/dev/null
 	@node viewer-package/tests/test_version_lockstep.mjs >/dev/null && echo "lockstep ok"
