@@ -10,6 +10,7 @@ import { builtInFont, fontFromFile, textSoup } from '../scene/text_mesh.js'
 import { fallbackFor, textRuns } from '../core/text_runs.js'
 
 const ARRANGE_SPACING_MM = 3
+const MIN_LAYER_BAND_MM = 0.01  // the kernel refuses less with INVALID_VARIABLE_LAYERS
 const TEXT_SINK_MM = 0.3      // text sinks this far into the surface, so the two solids slice as one
 const BUILT_IN_FONT = Object.freeze({ id: 'latin', label: 'Latin', covers: ['latin'] })
 const UPLOADED_FONT_ID = 'uploaded'
@@ -54,29 +55,42 @@ export function makeObjectTools(deps) {
     tools()?.clearMarks()
     setToolPanel(null)
   }
-  function openTool(panel, onPick) {
+  function openTool(panel, onPick, pickOptions) {
     setPaintMode('off')
     clearError()
     tools()?.clearMarks()
-    tools()?.setPick(onPick)
+    tools()?.setPick(onPick, pickOptions)
     setToolPanel(panel)
   }
 
+  // A second point is previewed under the pointer once the first is down, with its distance in the panel.
   function openMeasure() {
     toolRef.current.picks = []
-    openTool({ kind: 'measure', picks: 0 }, (surface) => {
-      const held = toolRef.current.picks
-      const picks = held.length === 2 ? [surface] : [...held, surface]
-      toolRef.current.picks = picks
-      tools()?.showMarks(picks.map(pick => pick.worldPoint))
-      let result = null
+    const show = (picks, hover) => {
+      tools()?.showMarks(picks.map(pick => pick.worldPoint), hover)
+      let result = null, preview = false
       if (picks.length === 2) result = measureBetween(picks[0], picks[1])
-      setToolPanel({ kind: 'measure', picks: picks.length, result })
-    })
+      else if (picks.length === 1 && hover) { result = measureBetween(picks[0], hover); preview = true }
+      setToolPanel({ kind: 'measure', picks: picks.length, result, preview, snapped: hover?.snapped ?? null })
+    }
+    const onPick = (surface) => {
+      let picks = [...toolRef.current.picks, surface]
+      if (picks.length > 2) picks = [surface]   // a third click starts the next measurement
+      toolRef.current.picks = picks
+      show(toolRef.current.picks, null)
+    }
+    openTool({ kind: 'measure', picks: 0 }, onPick, { hover: hover => show(toolRef.current.picks, hover), snap: true })
   }
 
+  // Text on a model and a negative part in one move with what they sit on: pulled apart, the text hangs in the air and the
+  //  hole is gone. A text alone on the bed is arranged like any object, and a negative part over nothing stays put.
   function arrange() {
-    const objects = onThePlate()
+    releaseSelection()   // positions read below are relative to the pivot while a selection holds them
+    const onPlate = onThePlate()
+    const plain = onPlate.filter(object => !object.negative && !object.keepHeight)
+    const hostOf = (object) => plain.find(candidate => boxOf(candidate).intersectsBox(boxOf(object)))
+    const attached = onPlate.filter(object => !plain.includes(object) && hostOf(object)).map(object => ({ object, host: hostOf(object) }))
+    const objects = onPlate.filter(object => plain.includes(object) || (!object.negative && !hostOf(object)))
     if (!objects.length) { setError('There is nothing to arrange on this plate'); return }
     const { bedW, bedD } = plateBed()
     const items = objects.map((object) => {
@@ -87,9 +101,13 @@ export function makeObjectTools(deps) {
     })
     const { placed, unplaced } = arrangeOnBed(items, { width: bedW, depth: bedD, spacing: ARRANGE_SPACING_MM })
     if (!placed.length) { setError('No object fits this plate'); return }
-    releaseSelection()
     recordHistory()
+    const before = new Map(attached.map(({ host }) => [host, host.mesh.position.clone()]))
     for (const { id, x, y } of placed) apiRef.current?.placeObjectOnPlate(id, selectedPlateRef.current, x, y)
+    for (const { object, host } of attached) {
+      object.mesh.position.x += host.mesh.position.x - before.get(host).x
+      object.mesh.position.z += host.mesh.position.z - before.get(host).z
+    }
     refresh()
     clearError()
     if (unplaced.length) setSliceNotice(`Arranged ${placed.length} object(s). ${unplaced.length} did not fit and stayed where they were`)
@@ -166,7 +184,7 @@ export function makeObjectTools(deps) {
     setBusy({ kind: 'boolean', names: [first.name, second.name], busy: true })
     const done = await replaceObjects([first, second], async () => {
       const positions = await kernelBoolean(soupOf(first), soupOf(second), BOOLEAN_OPERATIONS[operation])
-      return () => spawnSoup(`${first.name} ${operation}`, positions, { extruder: first.extruder })
+      return () => spawnSoup(`${first.name} ${operation}`, positions, { extruder: first.extruder, seated: true })
     }, `Boolean ${operation} done`)
     if (done) closeTool()
     else setBusy({ kind: 'boolean', names: [first.name, second.name] })
@@ -250,6 +268,7 @@ export function makeObjectTools(deps) {
   function setNegativeHeight(height) {
     const id = apiRef.current?.selectedObjectId()
     if (!id || !objectById(id)?.negative) { setError('Select a negative part first'); return }
+    recordHistory('negative-height')
     tools()?.setHeight(id, height)
     refresh()
   }
@@ -262,6 +281,7 @@ export function makeObjectTools(deps) {
     if (selectorGeomRef?.current?.kind === 'seam') await flushPaintRef?.current?.()
     const negatives = objectsRef.current.filter(object => object.negative && object.visible !== false)
     for (const object of objectsRef.current) {
+      if (!negatives.length) { object.cutPos = null; object.cutSignature = null; continue }
       if (object.negative) continue
       const box = boxOf(object)
       const cutters = negatives.filter(negative => boxOf(negative).intersectsBox(box))
@@ -325,7 +345,7 @@ export function makeObjectTools(deps) {
       const cutter = placeOnSurface(letters, point, normal, depth)
       await replaceObjects([target], async () => {
         const positions = await kernelBoolean(soupOf(target), cutter, BOOLEAN_OPERATIONS.difference)
-        return () => spawnSoup(target.name, positions, { extruder: target.extruder })
+        return () => spawnSoup(target.name, positions, { extruder: target.extruder, keepHeight: target.keepHeight, seated: !target.keepHeight })
       }, `Engraved "${text}"`)
       closeTool()
       return
@@ -372,6 +392,8 @@ export function makeObjectTools(deps) {
     openTool({ kind: 'layers' }, null)
   }
   function setLayerBands(bands) {
+    if (bands.some(band => !(band.height >= MIN_LAYER_BAND_MM))) { setError(`A layer height band must be at least ${MIN_LAYER_BAND_MM} mm`); return }
+    clearError()
     const sorted = [...bands].sort((a, b) => a.from - b.from)
     setSettings?.((previous) => {
       const next = { ...previous }

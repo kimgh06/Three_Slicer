@@ -307,7 +307,7 @@ export function useThreeScene(deps) {
     //  A fill is one click (it selects by mesh topology, so repeating it per pointermove would redo the same flood
     //  over the same facets); the brush is the opposite — dragging is how it covers an area.
     const sectionPlane = createSectionPlane({ renderer, camera, objectsRef, workerRef, paintXformRef, invalidate })
-    const sceneTools = createSceneTools({ scene, camera, renderer, raycaster, pointer, toPointer, activeMeshes, objectsRef, invalidate })
+    const sceneTools = createSceneTools({ scene, camera, renderer, raycaster, pointer, toPointer, activeMeshes, objectsRef, extruderColorsRef, invalidate })
     const paintInput = createPaintInput({
       camera, raycaster, pointer, toPointer, activeMeshes, cursorParent: scene, invalidate, sectionPlane, deps,
     })
@@ -332,7 +332,7 @@ export function useThreeScene(deps) {
         return
       }
       if (updateHandleHover(ev)) return                 // over a corner handle: no hover change under it either
-      if (transform.dragging || transform.axis) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
+      if (transform.dragging || transform.axis || sceneTools.picking()) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
     // Which plate the pointer is over: a clicked object belongs to its own plate, otherwise it is wherever the ray
     //  meets the bed plane. A camera looking exactly along the plane never meets it — then there is no answer.
     const _bedPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), _bedHit = new THREE.Vector3()
@@ -699,7 +699,7 @@ export function useThreeScene(deps) {
             if (!o) continue
             o.paint = s.paint   // a re-created object's paint lives only here; a live object keeps its own (later strokes)
           }
-          o.mesh.position.copy(s.pos); o.mesh.rotation.copy(s.rot); o.mesh.scale.copy(s.scale)
+          if (!!o.negative !== !!s.negative) sceneTools.setNegative(o.id, !!s.negative); o.keepHeight = !!s.keepHeight; o.mesh.userData.keepHeight = !!s.keepHeight; o.mesh.position.copy(s.pos); o.mesh.rotation.copy(s.rot); o.mesh.scale.copy(s.scale)
           o.mesh.updateMatrixWorld(true)
           o.extruder = s.extruder; o.visible = s.visible; o.mesh.visible = s.visible
           const col = extruderColorsRef.current[(s.extruder || 1) - 1]; if (col && !o.negative) o.mesh.material.color.set(col)
