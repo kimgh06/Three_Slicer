@@ -1,4 +1,5 @@
 import React from 'react'
+import { arrowHelp } from '../core/fine_adjust.js'
 
 // The '?' shortcut cheat sheet. Static content — the key handling lives in the shortcut hook.
 export default function HelpOverlay({ onClose }) {
@@ -12,7 +13,7 @@ export default function HelpOverlay({ onClose }) {
             <dl>
               <dt>M / G</dt><dd>Move (on the bed)</dd><dt>R</dt><dd>Rotate</dd>
               <dt>S</dt><dd>Scale — drag a box corner for all of XYZ</dd>
-              <dt>Arrow keys</dt><dd>By gizmo: move 10mm, rotate 15°, scale 5% (Shift 1mm, 5°, 1%)</dd>
+              <dt>Arrow keys</dt><dd>{arrowHelp()}</dd>
               <dt>Hold Alt / Option</dt><dd>Fine adjust: numbers, fine snap, arrow keys in fine steps</dd>
               <dt>PageUp/Down</dt><dd>Rotate 45°</dd>
               <dt>Del</dt><dd>Delete selection</dd><dt>Esc</dt><dd>Clear selection / leave paint</dd>

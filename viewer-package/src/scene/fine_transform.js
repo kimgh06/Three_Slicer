@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { FINE_MOVE_SNAP_MM, FINE_ROTATE_SNAP_DEGREES, FINE_SCALE_SNAP, resizedScales, twistDegrees } from '../core/fine_adjust.js'
-import { clampMeshScale } from './scale_box.js'
+import { clampMeshScale, MIN_MM, MAX_MM } from './scale_box.js'
 import { createRingDrag } from './ring_drag.js'
 
 // Model X, Y, Z in the scene's axes: the scene is Y up, and model Y runs along scene -Z.
@@ -74,6 +74,7 @@ export function createFineTransform({ transform }) {
       }
     },
     move(axis, value, origin) {
+      if (!Number.isFinite(value)) return
       commit((object) => {
         box.setFromObject(object).getCenter(centre)
         if (axis === 0) object.position.x += value - (centre.x - origin.x)
@@ -81,16 +82,23 @@ export function createFineTransform({ transform }) {
       })
     },
     setHeight(value) {
+      if (!Number.isFinite(value)) return
       commit((object) => { object.position.y += value - box.setFromObject(object).min.y })
     },
     rotate(axis, degrees) {
+      if (!Number.isFinite(degrees)) return
       commit(object => turned(object, axis, degrees, () => object.rotateOnWorldAxis(WORLD_AXES[axis], THREE.MathUtils.degToRad(degrees))))
     },
     // A multi-selection scales as a block: its pivot can only take one ratio without shearing a rotated member.
     resize(axis, size, uniform) {
+      if (!(size > 0) || !Number.isFinite(size)) return
       commit((object) => {
         const sizes = sizesOf(object)
-        if (!object.isMesh) { object.scale.multiplyScalar(size / sizes[axis]); return }
+        if (!object.isMesh) {
+          const ratio = Math.min(MAX_MM / Math.max(...sizes), Math.max(MIN_MM / Math.min(...sizes), size / sizes[axis]))
+          object.scale.multiplyScalar(ratio)
+          return
+        }
         const scales = resizedScales(SCALE_KEYS.map(key => object.scale[key]), sizes, axis, size, uniform)
         SCALE_KEYS.forEach((key, index) => { object.scale[key] = scales[index] })
       })

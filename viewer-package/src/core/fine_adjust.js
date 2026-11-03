@@ -13,6 +13,17 @@ const ARROW_STEPS = {
   fine: { translate: [FINE_MOVE_SNAP_MM, 1], rotate: [FINE_ROTATE_SNAP_DEGREES, 10], scale: [1, 10] },
 }
 
+const FINE_HINTS = {
+  translate: ([plain, shifted]) => `Arrow keys move ${plain} mm, Shift ${shifted} mm`,
+  rotate: ([plain, shifted]) => `Arrow keys turn ${plain}°, Shift ${shifted}°. Ring drags run at a quarter speed.`,
+  scale: ([plain, shifted]) => `Up and down keys scale ${plain}%, Shift ${shifted}%`,
+}
+export const arrowHint = (mode) => FINE_HINTS[mode](ARROW_STEPS.fine[mode])
+export function arrowHelp() {
+  const { translate, rotate, scale } = ARROW_STEPS.everyday
+  return `By gizmo: move ${translate[0]}mm, rotate ${rotate[0]}°, scale ${scale[0]}% (Shift ${translate[1]}mm, ${rotate[1]}°, ${scale[1]}%)`
+}
+
 // What an arrow key does, by gizmo mode. `right` and `down` are -1, 0 or 1 on the screen's keys.
 // Move: left and right on model X, up and down on model Y. Rotate: left and right turn on the bed, up and down tip over X.
 // Scale: up and down, with proportions kept. Left and right do nothing there.

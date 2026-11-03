@@ -30,7 +30,7 @@ export function dragRatio(centre, start, now, lo, hi) {
 //  drag at a distance of ~0 from the centre, and the ratio it divides by that leaves the part at 4e7 — off any bed
 //  and impossible to grab back. Corner drags clamp the RATIO instead (below), which keeps all three axes equal;
 //  this per-component form is for the gizmo, where the axes are meant to move independently.
-const MIN_MM = 0.2, MAX_MM = 5000
+export const MIN_MM = 0.2, MAX_MM = 5000
 export function clampMeshScale(mesh) {
   const geometry = mesh?.geometry
   if (!geometry) return

@@ -1,36 +1,9 @@
-import React, { useState } from 'react'
-import { FINE_MOVE_SNAP_MM } from '../core/fine_adjust.js'
+import React from 'react'
+import { FINE_MOVE_SNAP_MM, arrowHint } from '../core/fine_adjust.js'
+import NumberField from './NumberField.jsx'
 
 // The numbers behind the gizmo, for the mode it is in. Props in, markup out: hooks/use_fine_adjust.js does the rest.
 const AXES = ['X', 'Y', 'Z']
-const LARGE_STEP = 10
-
-// Applies on Enter or on leaving the field, and Escape puts the value back. The up and down keys step right away, and
-//  Shift steps ten times as far.
-function NumberField({ value, step, onCommit, testId }) {
-  const [draft, setDraft] = useState(null)
-  const apply = () => {
-    const typed = Number(draft)
-    if (draft !== null && draft.trim() && Number.isFinite(typed) && typed !== value) onCommit(typed)
-    setDraft(null)
-  }
-  const onKeyDown = (event) => {
-    if (event.key === 'Enter') event.target.blur()
-    else if (event.key === 'Escape') { event.stopPropagation(); setDraft(null); event.target.blur() }
-    else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      event.preventDefault()
-      event.stopPropagation()
-      const direction = { ArrowUp: 1, ArrowDown: -1 }[event.key]
-      const size = { true: step * LARGE_STEP, false: step }[event.shiftKey]
-      onCommit(Number(draft ?? value) + direction * size)
-      setDraft(null)
-    }
-  }
-  return (
-    <input className="fine-number" inputMode="decimal" value={draft ?? value.toFixed(2)} data-testid={testId}
-      onChange={event => setDraft(event.target.value)} onBlur={apply} onKeyDown={onKeyDown} />
-  )
-}
 
 function MoveRows({ values, onMove, onHeight }) {
   return (
@@ -85,11 +58,6 @@ function ScaleRows({ values, uniform, setUniform, onResize, onReset }) {
 }
 
 const TITLES = { translate: 'Move', rotate: 'Rotate', scale: 'Scale' }
-const ARROW_HINTS = {
-  translate: 'Arrow keys move 0.1 mm, Shift 1 mm',
-  rotate: 'Arrow keys turn 1°, Shift 10°. Ring drags run at a quarter speed.',
-  scale: 'Up and down keys scale 1%, Shift 10%',
-}
 
 export default function FineAdjustPanel({ values, gizmoMode, uniform, setUniform, rotateStep, setRotateStep, setEditing, pinned, setPinned, onMove, onHeight, onRotate, onResize, onReset }) {
   // A field with focus keeps the panel open past the key. Focus moving on inside the panel is not the end of that.
@@ -106,7 +74,7 @@ export default function FineAdjustPanel({ values, gizmoMode, uniform, setUniform
       {values && gizmoMode === 'translate' && <MoveRows values={values} onMove={onMove} onHeight={onHeight} />}
       {values && gizmoMode === 'rotate' && <RotateRows values={values} step={rotateStep} setStep={setRotateStep} onRotate={onRotate} onReset={onReset} />}
       {values && gizmoMode === 'scale' && <ScaleRows values={values} uniform={uniform} setUniform={setUniform} onResize={onResize} onReset={onReset} />}
-      <div className="tool-hint">{ARROW_HINTS[gizmoMode]}</div>
+      <div className="tool-hint">{arrowHint(gizmoMode)}</div>
       <div className="tool-hint">Gizmo drags snap to fine steps while this panel is open. Click a field to type.</div>
     </div>
   )
