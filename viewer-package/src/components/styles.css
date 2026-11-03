@@ -9,9 +9,8 @@
   align-items: center; padding: 3px 0; border-bottom: 1px dashed var(--_light-divider); }
 .row .lbl { color: var(--_light-text); text-decoration: none; }
 .row .lbl:hover { color: var(--_accent-ink); text-decoration: underline; }
-.row .key { font-size: 11px; color: var(--_light-text-faint); overflow: hidden; text-overflow: ellipsis; }
 .row input[type="text"], .row input:not([type]), .row select, .row textarea {
-  width: 100%; max-width: 260px; padding: 2px 6px; }
+  width: 100%; max-width: 260px; }
 .inputwrap { display: inline-flex; align-items: center; gap: 4px; }
 .unit { color: var(--_light-text-faint); font-size: 12px; white-space: nowrap; }
 .pts { font-size: 11px; color: var(--_light-text-muted); }
@@ -46,6 +45,7 @@
 .sp-builder { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--_light-text-muted); }
 .sp-builder select { flex: 1; padding: 4px 6px; }
 .sp-pages { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.sp-pages button, .sp-modes button, .bse-modes button { box-sizing: border-box; height: 26px; }
 .sp-pages button { border: 1px solid var(--_light-border); background: var(--_light-subtle); border-radius: 6px;
   padding: 4px 8px; font-size: 12px; cursor: pointer; }
 .sp-pages button.on { background: var(--_accent-soft); color: var(--_accent-ink); border-color: var(--_accent-soft-border); font-weight: 700; }
@@ -56,23 +56,33 @@
 .settings-panel .sp-body { flex: 1 1 auto; overflow-y: auto; padding: 8px 14px 24px; }
 .settings-panel .sp-body h2 { font-size: 16px; }
 
-/* The sidebar is narrow, so option rows are re-stacked vertically */
-.settings-panel .row { grid-template-columns: 1fr auto; grid-template-areas: "lbl badge" "key widget";
-  row-gap: 2px; padding: 6px 0; }
-.settings-panel .row .lbl { grid-area: lbl; font-weight: 600; }
+/* One line per option: the panel is narrow, so the label wraps and the widget column keeps a fixed edge. */
+.settings-panel .row { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "lbl widget badge";
+  padding: 4px 0; }
+.settings-panel .row .lbl-cell { grid-area: lbl; }
+.settings-panel .row .lbl-cell .lbl { white-space: normal; text-align: left; }
+.settings-panel .row .widget-cell { grid-area: widget; justify-self: end; }
 .settings-panel .row .badge { grid-area: badge; justify-self: end; }
-.settings-panel .row .key { grid-area: key; }
-.settings-panel .row .inputwrap, .settings-panel .row > select,
-.settings-panel .row > input, .settings-panel .row > textarea,
-.settings-panel .row > .pts, .settings-panel .row > .muted { grid-area: widget; justify-self: end; }
-.settings-panel .row input:not([type="checkbox"]):not([type="color"]),
-.settings-panel .row select, .settings-panel .row textarea { max-width: 200px; }
+.settings-panel .row .inputwrap input { width: 72px; }
+.settings-panel .row .unit { min-width: 52px; }
+.settings-panel .row select { max-width: 150px; }
+/* A text block or an editor does not fit beside its label. */
+.settings-panel .row:has(textarea), .settings-panel .row:has(.bse), .settings-panel .row:has(.pts) {
+  grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "lbl badge" "widget widget"; }
+.settings-panel .row:has(textarea) .widget-cell { justify-self: stretch; }
+.settings-panel .row textarea { width: 100%; max-width: none; }
 .settings-panel .row.custom { grid-template-columns: 1fr; grid-template-areas: "lbl"; }
-.sp-search { width: 100%; box-sizing: border-box; padding: 6px 9px; border: 1px solid var(--_light-border); border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+.sp-search { width: 100%; margin-bottom: 8px; }
 
 /* ---- Embedded variant (sp-embedded on :host — full width inside cards such as the viewer process-card) ---- */
 :host(.sp-embedded) .settings-panel { position: static; width: auto; flex: none; border: 0; height: auto; }
-:host(.sp-embedded) .sp-body { padding: 4px 2px 8px; max-height: 460px; }
+/* The sidebar is the one scroller: a second one inside a card traps the wheel halfway down the page. */
+:host(.sp-embedded) .sp-body { padding: 4px 2px 8px; overflow: visible; }
+:host(.sp-embedded) .sp-body { font-size: 12.5px; font-weight: 400; text-align: left; }
+:host(.sp-embedded) .sp-top { padding-left: 0; padding-right: 0; }
+:host(.sp-embedded) h3 { font-size: 13px; font-weight: 700; margin: 12px 0 4px; color: var(--_light-text); }
+/* The tooltip names the mode instead: 196 pills on one screen read louder than the options. */
+:host(.sp-embedded) .row .badge { display: none; }
 
 /* ---- BedShapeEditor (printable_area custom widget) ---- */
 .bse { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 220px; }
@@ -82,7 +92,7 @@
 .bse-modes button.on { background: var(--_accent-soft); color: var(--_accent-ink); border-color: var(--_accent-soft-border); font-weight: 700; }
 .bse-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
 .bse-grid label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--_light-text-muted); white-space: nowrap; }
-.bse-grid input { width: 56px; padding: 2px 4px; font-size: 12px; }
+.bse-grid input { width: 56px; }
 .bse-json { width: 100%; font: 11px ui-monospace, monospace; padding: 4px 6px;
   border: 1px solid var(--_light-border); border-radius: 6px; box-sizing: border-box; }
 .bse-json.err { border-color: var(--_danger); background: var(--_danger-soft); }

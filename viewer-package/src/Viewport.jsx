@@ -8,7 +8,7 @@ import shadowCss from '../styles.css?inline'   // Shadow DOM isolation — inlin
 import { SUPPORTED_EXT, SL1_EXT, openableExtensions } from './scene/model_loaders.js'
 import { MAX_PLATES } from './core/plate_layout.js'
 import { useSliceRun } from './hooks/use_slice_run.js'
-import { objectTools } from './core/toolbar_items.js'
+import { appMenus, boundObjectTools } from './actions/app_menu.js'
 import { makeKeyHandler } from './core/shortcut_keymap.js'
 import { setLogging } from './core/log.js'
 import { useStateRef } from './hooks/use_state_ref.js'
@@ -22,6 +22,7 @@ import {
   makePlateActions, makeModelLoad, makeExportActions, makePresetActions, PRESET_ACCEPT, makeObjectActions,
   makeFilamentColors, DEFAULT_FILAMENT_COLORS, makePreviewControls,
 } from './actions/index.js'
+import { makeObjectTools, layerBandsOf } from './actions/object_tools.js'; import { useFineAdjust } from './hooks/use_fine_adjust.js'
 import { bedOverflow, overflowText, bedRectangle } from './core/bed_bounds.js'
 import { materialPaintCounts as paintedCountsPerExtruder } from './core/paint_counts.js'
 import { withToolBreakdown } from './core/stats_view.js'
@@ -31,7 +32,7 @@ import { overriddenPlateKeys, plateTechnology, plateContext, plateDimsList } fro
 import { makeSupportSettings } from './core/support_settings.js'
 import { objectRows } from './core/object_rows.js'
 import {
-  TopBar, VersionBadge, GizmoRail, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
+  TopBar, MenuBar, StatusBar, GizmoRail, Section, ToolPanel, FineAdjustPanel, ObjectToolbar, ContextMenu, HelpOverlay, PaintPanel, MaterialPaintPanel, PlateBar,
   PreviewControls, StatsCard, PrinterCard, ProcessCard, FilamentCard, ResinCard, ObjectList, SliceBar, SliceError, TowerCard, writeTowerPosition,
 } from './ui/index.js'
 import { DEFAULT_BED, DEFAULT_LINE_WIDTH } from './core/viewer_defaults.js'
@@ -73,7 +74,7 @@ const Panel = ({ panels, name, children }) => (panels?.[name] === 'readonly'
 export default function Viewport({
   settings = {}, setSettings = () => {}, plateSettings = {}, setPlateSettings = () => {},
   processPanel = null, motionPanel = null, filamentPanel = null,
-  panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false,
+  panels = null, features = null, gcode = null, sl1 = null, files = null, defaultExtruderColors = null, defaultAutoSlice = false, textFonts = null,
   sliceRequest = null, onEvent = null, onSliced = null, onSliceRun = null, onExport = null, catalog: catalogProp, slicer: useSlicer = useNoopSlicer,
 }) {
   // Two frames, one derivation (core/plate_settings.js plateContext): `globalFrame` is the GLOBAL map's own —
@@ -155,7 +156,7 @@ export default function Viewport({
   const autoTimerRef = useRef(0)
   const [progress, setProgress] = useState(0)
   const [sliceRate, setSliceRate] = useState(0)   // layers/second while a slice runs, 0 between them (use_slicer computes it)
-  const [kernelKind, setKernelKind] = useState(null)   // 'mt' | 'st' once the worker has loaded — a measured 9.8x apart, so it is shown
+  const [kernelKind, setKernelKind] = useState(null)   // 'mt' | 'st' once the worker has loaded, which sets the Auto worker count
   const [error, setError] = useState('')
   const [stats, setStats] = useState(null)
   const [overBed, setOverBed] = useState(false)
@@ -251,7 +252,9 @@ export default function Viewport({
   //  Not in here: `fileInputRef`/`presetInputRef` (one picker each, and makePresetActions takes the OTHER one under
   //  the same key — a spread would make that a silent ordering question), and anything produced by a factory
   //  further down, which cannot exist yet.
+  const beforeSliceRef = useRef(null)      // set below: what a slice or export awaits before it reads the geometry
   const wiring = {
+    beforeSliceRef,
     catalog: catalogProp, settings, setSettings, plateSettings, setPlateSettings,
     apiRef, workerRef, objectsRef, keyRef, clipboardRef, onSlicedRef, flushPaintRef,
     layersDataRef, toolpathRef, segDataRef, plateTpRef, lineWidthRef, plateResultsRef, plateOffsetsRef,
@@ -601,20 +604,27 @@ export default function Viewport({
     duplicateSelected, copySelected, pasteClipboard, deleteSelected, deleteObject, deleteAllObjects, splitSelected, setGizmo,
   } = makeObjectActions({ ...wiring, setPaintMode, removeObject, refreshObjects, recordHistory })
 
-  // Object toolbar — the button list lives in toolbar_items.js; only the actions are bound here.
-  const OBJECT_TOOLS = objectTools({
-    add: openFilePicker,
-    remove: deleteSelected,
-    removeAll: deleteAllObjects,
-    duplicate: duplicateSelected,
-    split: splitSelected,
-    placeOnBed: () => { recordHistory(); apiRef.current?.placeOnBed() },
-    // The toolbar is upstream's entry point for the MMU brush; the filament rows' brush buttons are this viewer's
-    //  addition on top, not a replacement. Opening it on T1 is what upstream does — the gizmo starts at
-    //  m_selected_extruder_idx 0 — and the panel's chips are one click from any other filament.
-    paintMaterial: () => startMaterialPaint(0),
-    objectCount: () => objects.length,
-  })
+  // Object toolbar and application menu — the lists live in core/, the binding in app_menu.js.
+  const canSlice = objects.length > 0 && !gcodeOnly
+  const [toolPanel, setToolPanel] = useState(null)
+  const toolRef = useRef({})
+  const objectTools = makeObjectTools({ ...wiring, toolRef, textFonts, setToolPanel, overhangAngle, recordHistory, refreshObjects, setPaintMode, getWorker, removeObject, setSettings,
+    plateBed: () => ({ bedW: ctx.bedW, bedD: ctx.bedD }), afterObjectsChanged: () => { if (selectorGeomRef.current) registerSelectorRef.current?.(); checkBed() } })
+  useEffect(() => { if (toolPanel && (canvasMode !== 'prepare' || paintMode !== 'off')) objectTools.closeTool() }, [canvasMode, paintMode])   // eslint-disable-line react-hooks/exhaustive-deps
+  beforeSliceRef.current = objectTools.prepareGeometry; const fineAdjust = useFineAdjust({ apiRef, selectedPlateRef, gizmoMode: gmode, available: canvasMode === 'prepare' && paintMode === 'off' && !toolPanel })
+  const seamPainting = paintMode === 'seam-enforcer' || paintMode === 'seam-blocker'
+  const menuDeps = { hasKernel: useSlicer !== useNoopSlicer, seamPainting, objectTools, toolPanel, gmode, supportPainting, setGizmo, togglePaintGizmo, objects, selectedIds, selectedPlate, plateCount, canvasMode, tech, slicing, exporting, gcodeOnly, gcodeResult, layerCount, historyDepth, bedOver, overBed, canSlice,
+    apiRef, clipboardRef, plateResultsRef, showPanel, feature, recordHistory, travelHistory, setShowHelp, enterCanvasMode, onSlice, cancelSlice, openFilePicker, startMaterialPaint,
+    deleteSelected, deleteAllObjects, duplicateSelected, splitSelected, copySelected, pasteClipboard, exportProject, exportSTL, exportAllGcode, exportPlateSl1 }
+  const OBJECT_TOOLS = boundObjectTools(menuDeps)
+  // The tabs sit over the slice button. A sidebar that is off or locked cannot hold them: choosing a plate is not an edit.
+  const platesInSidebar = showPanel('sidebar') && panels?.sidebar !== 'readonly'
+  const plateBar = (docked) => ok && (
+    <PlateBar docked={docked} plateCount={plateCount} selectedPlate={selectedPlate} maxPlates={MAX_PLATES} overridePlates={overridePlates}
+      plateRun={plateRun} onSelect={selectPlate} onAdd={addPlate} onDelete={deletePlate} />
+  )
+  const showGizmos = ok && canvasMode === 'prepare' && showPanel('gizmoRail')
+  const showObjectTools = ok && canvasMode === 'prepare' && showPanel('objectToolbar')
 
   // ---- Keyboard shortcuts (upstream SPECS §4 + PrusaSlicer/Cura conventions) ----
   //  Which keys are live depends on Prepare/Preview. All are ignored while an input widget has focus.
@@ -642,7 +652,7 @@ export default function Viewport({
     // Both repeat while the key is held, so they record under a kind: history.js folds a run of them into the one
     //  entry that takes the object back to where it stood before the run started.
     rotateSelected: (rad) => { recordHistory('rotate'); apiRef.current?.rotateSelectedY(rad) },
-    nudgeSelected: (dx, dy) => { recordHistory('nudge'); apiRef.current?.nudgeSelected(dx, dy); refreshObjects() },
+    nudgeSelected: (dx, dy, right, down, shift) => { if (fineAdjust.onArrow(right, down, shift)) return; recordHistory('nudge'); apiRef.current?.nudgeSelected(dx, dy); refreshObjects() },
     toggleHelp: () => setShowHelp(v => !v),
   })
 
@@ -700,22 +710,19 @@ export default function Viewport({
         onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadPresetFile(f) }}
         data-testid="preset-input" style={{ display: 'none' }} />
 
-      {showPanel('topBar') && (
-        <TopBar showTabs={ok} canvasMode={canvasMode} onCanvasMode={enterCanvasMode} prepareEnabled={!gcodeOnly} gcodeJob={gcode == null && importedGcode} onCloseGcode={closeImportedGcode}
+      {(showPanel('topBar') || showGizmos || showObjectTools) && (
+        <TopBar chrome={showPanel('topBar')} menu={showPanel('menuBar') && <MenuBar getMenus={() => appMenus(menuDeps, OBJECT_TOOLS)} />} showTabs={ok} canvasMode={canvasMode} onCanvasMode={enterCanvasMode} prepareEnabled={!gcodeOnly} gcodeJob={gcode == null && importedGcode} onCloseGcode={closeImportedGcode}
           previewEnabled={layerCount > 0} onOpen={openFilePicker}
           onSaveProject={exportProject} onExportSTL={exportSTL} canSave={objects.length > 0} exporting={exporting}
           onUndo={() => travelHistory('undo')} onRedo={() => travelHistory('redo')}
           canUndo={historyDepth.undo > 0 && canvasMode === 'prepare'}
-          canRedo={historyDepth.redo > 0 && canvasMode === 'prepare'} />
+          canRedo={historyDepth.redo > 0 && canvasMode === 'prepare'}>
+          {showGizmos && <GizmoRail gizmoMode={gmode} paintMode={paintMode} onGizmo={setGizmo} onTogglePaint={togglePaintGizmo} paintEnabled={tech !== 'SLA'} />}
+          {showObjectTools && <ObjectToolbar tools={OBJECT_TOOLS} />}
+        </TopBar>
       )}
 
       <div className="app-body">
-        {ok && canvasMode === 'prepare' && showPanel('gizmoRail') && (
-          <GizmoRail gizmoMode={gmode} paintMode={paintMode}
-            onGizmo={m => { setPaintMode('off'); apiRef.current?.setMode(m) }}
-            onTogglePaint={togglePaintGizmo} paintEnabled={tech !== 'SLA'} />
-        )}
-
         {/* Center viewport */}
         <div className="viewport-col">
           {/* tabIndex + focus on press: a plain div cannot receive key events, which is why every other shortcut
@@ -735,23 +742,21 @@ export default function Viewport({
             )}
             {dragOver && <div className="drop-overlay" data-testid="drop-overlay">Drop here ({EXT_LABEL})</div>}
             {ctxMenu && (
-              <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} canPaste={!!clipboardRef.current}
+              <ContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)}
                 selectedCount={selectedIds.length}
                 actions={{
                   duplicate: duplicateSelected, copy: copySelected, split: splitSelected,
                   placeOnBed: () => apiRef.current?.placeOnBed(), remove: deleteSelected,
-                  openFile: openFilePicker, paste: pasteClipboard,
-                  zoomAll: () => apiRef.current?.frame(), zoomBed: () => apiRef.current?.frameBed(),
                   exportSelectedSTL, exportSelectedProject,
                 }} />
             )}
             {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
           </div>
 
-          {ok && canvasMode === 'prepare' && showPanel('objectToolbar') && <ObjectToolbar tools={OBJECT_TOOLS} />}
+          {ok && <ToolPanel tool={toolPanel} tools={objectTools} bands={layerBandsOf(settings)} />}{ok && fineAdjust.open && <FineAdjustPanel {...fineAdjust} />}
 
           {/* One brush, two targets — the panels are exclusive because the mode is. */}
-          {ok && canvasMode === 'prepare' && supportPainting && showPanel('paintPanel') && (
+          {ok && canvasMode === 'prepare' && (supportPainting || seamPainting) && showPanel('paintPanel') && (
             <PaintPanel paintMode={paintMode} onPaintMode={setPaintMode} onClear={clearPaint}
               overhangOnly={overhangOnly} onOverhangOnly={setOverhangOnly} overhangAngle={overhangAngle}
               brushRadius={brushRadius} paintCounts={paintCounts}
@@ -782,12 +787,8 @@ export default function Viewport({
             <div className="stats-card" data-testid="slice-stats">{statsBlock}</div>
           )}
 
-          {ok && showPanel('plateBar') && (
-            <PlateBar plateCount={plateCount} selectedPlate={selectedPlate} maxPlates={MAX_PLATES} overridePlates={overridePlates}
-              plateRun={plateRun} onSelect={selectPlate} onAdd={addPlate} onDelete={deletePlate} />
-          )}
+          {showPanel('plateBar') && !platesInSidebar && plateBar(false)}
 
-          {ok && showPanel('status') && <div className="vp-status" data-testid="vp-status"><VersionBadge on={feature('versionBadge')} />{status}</div>}
         </div>
 
         {/* S4 right sidebar */}
@@ -857,10 +858,7 @@ export default function Viewport({
               {/* Preview controls (view type / slider / legend) */}
               {canvasMode === 'preview' && previewControls && showPanel('previewControls') && (
                 <Panel panels={panels} name="previewControls">
-                <section className="side-card">
-                  <div className="sc-head">🎚 Preview</div>
-                  {previewControls}
-                </section>
+                <Section title="Preview">{previewControls}</Section>
                 </Panel>
 )}
 
@@ -872,15 +870,16 @@ export default function Viewport({
 )}
             </div>
 
+            {showPanel('plateBar') && platesInSidebar && plateBar(true)}
             {showPanel('sliceBar') && (
               <Panel panels={panels} name="sliceBar">
               <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
-                plateRun={plateRun} kernelKind={kernelKind} workers={Number(settings?.slice_workers) || 0} autoWorkers={autoWorkers} maxWorkers={cores} memoryWorkers={memoryWorkers}
+                plateRun={plateRun} workers={Number(settings?.slice_workers) || 0} autoWorkers={autoWorkers} maxWorkers={cores} memoryWorkers={memoryWorkers}
                 onSetting={(key, value) => setSettings?.(prev => ({ ...prev, [key]: value }))} gpuSetting={settings?.gpu_acceleration}
                 onSliceMenu={() => setSliceMenu(v => !v)} slicedPlateCount={slicedPlateCount}
-                canSlice={objects.length > 0 && !gcodeOnly} onSlice={onSlice} onCancel={cancelSlice}
-                onExportAll={exportAllGcode} gcodeReady={!!gcodeResult} onExportGcode={() => exportPlainGcode(gcodeResult)}
+                canSlice={canSlice} onSlice={onSlice} onCancel={cancelSlice}
+                gcodeReady={!!gcodeResult} onExportGcode={() => exportPlainGcode(gcodeResult)}
                 slaResult={!!plateResultsRef.current[selectedPlate]?.stats?.sla} slaTech={tech === 'SLA'}
                 onExportSl1={() => exportPlateSl1()} exporting={exporting} sl1Ready={sl1Ready} onExportGcode3mf={exportAllGcode} onExportPlateGcode3mf={() => exportPlateGcode3mf()}
                 bedWarning={bedOver || overBed
@@ -892,6 +891,7 @@ export default function Viewport({
           </aside></Panel>
         )}
       </div>
+      {ok && showPanel('status') && <StatusBar status={status} selectedPlate={selectedPlate} plateCount={plateCount} timeSec={stats?.timeSec} versionBadge={feature('versionBadge')} />}
     </div>
     </ShadowHost>
   )

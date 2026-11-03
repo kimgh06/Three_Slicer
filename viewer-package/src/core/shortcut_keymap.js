@@ -1,6 +1,8 @@
 // Keyboard shortcuts (upstream SPECS §4 + PrusaSlicer/Cura conventions).
 // Which keys are live depends on Prepare/Preview. All are ignored while an input widget has focus.
 // The component rebuilds the handler each render so it closes over fresh state; this file only holds the map.
+const ARROW_STEPS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
+
 export function makeKeyHandler(deps) {
   return (e) => {
     // Shadow DOM: at window level e.target is retargeted to the shadow host -> use composedPath to find the real target
@@ -68,10 +70,10 @@ export function makeKeyHandler(deps) {
     else if (k === 'Escape')        { stop(); deps.cancelTool() }
     else if (k === 'PageUp')        { stop(); deps.rotateSelected(Math.PI / 4) }
     else if (k === 'PageDown')      { stop(); deps.rotateSelected(-Math.PI / 4) }
-    else if (k.startsWith?.('Arrow')) {                                     // nudge: 10mm, Shift = 1mm (Prusa convention)
+    else if (k.startsWith?.('Arrow')) {                                     // by gizmo mode (core/fine_adjust.js arrowEdit)
       stop(); const d = e.shiftKey ? 1 : 10
-      deps.nudgeSelected(k === 'ArrowLeft' ? -d : k === 'ArrowRight' ? d : 0,
-                         k === 'ArrowUp' ? -d : k === 'ArrowDown' ? d : 0)
+      const [stepX, stepY] = ARROW_STEPS[k] ?? [0, 0]
+      deps.nudgeSelected(stepX * d, stepY * d, stepX, stepY, e.shiftKey)
     }
     else if (k === '?' || (e.shiftKey && e.code === 'Slash')) { stop(); deps.toggleHelp() }
   }

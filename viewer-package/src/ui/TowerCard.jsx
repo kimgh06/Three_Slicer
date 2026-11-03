@@ -2,6 +2,7 @@ import React from 'react'
 import { cardScope } from '../core/plate_settings.js'
 import { clampTowerPosition } from '../core/tower_layout.js'
 import ScopeToggle from './ScopeToggle.jsx'
+import { Section, Field } from './Section.jsx'
 
 // Prime tower card. Everything about the tower used to be one checkbox in the object list, with its size, position
 // and purge amount unreachable — the kernel read prime_tower_* parameters that nothing in the UI wrote. This card is
@@ -117,69 +118,69 @@ export default function TowerCard({
     return next
   })
 
+  let positionLabel = 'Position'
+  if (plateCount > 1) positionLabel = `Position · plate ${selectedPlate + 1}`
   return (
-    <section className="side-card" data-testid="tower-section">
-      <div className="sc-head">🗼 Prime tower
-        {plateCount > 1 && setPlateSettings && (
-          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
-            testid="tower-scope" plateTestid="tower-scope-plate" />
-        )}
-      </div>
+    <Section title="Prime tower" testId="tower-section"
+      scope={plateCount > 1 && setPlateSettings && (
+        <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
+          testid="tower-scope" plateTestid="tower-scope-plate" />
+      )}>
 
-      <div className="sc-info"><span>Mode</span>
+      <Field label="Mode">
         {/* The real WipeTower is the only implementation that sizes a purge from a volume, but it is not
             reproducible yet (see params.h), so the option says so rather than presenting the two as equals. */}
-        <select className="sc-model" data-testid="tower-mode" value={mode} onChange={e => setMode(e.target.value)}>
+        <select data-testid="tower-mode" value={mode} onChange={e => setMode(e.target.value)}>
           <option value="ring">Ring — deterministic</option>
           <option value="real">Real wipe tower — not reproducible yet</option>
           <option value="off">Off — no tower</option>
         </select>
-      </div>
+      </Field>
 
       {/* Where the purge goes. Without a tower it has to go somewhere, and the model's own sparse infill is the
           one place the material is not wasted — but a layer with no infill to give cannot absorb it, which is why
           turning the tower off without this is called out rather than silently accepted. */}
-      <div className="sc-info"><span>Purge into</span>
-        <select className="sc-model" data-testid="tower-flush"
+      <Field label="Purge into">
+        <select data-testid="tower-flush"
           value={flushIntoInfill ? 'infill' : 'tower'} onChange={e => setFlush(e.target.value === 'infill')}
           title="Infill hides the purge inside the part; a layer with no sparse infill still needs the tower.">
           <option value="tower">The tower</option>
           <option value="infill">The model's infill</option>
         </select>
-      </div>
+      </Field>
       {towerOff && !flushIntoInfill && (
         <div className="bp-note" data-testid="tower-off-warning">
           With no tower and no flush destination, a tool change carries the previous colour into the model.
         </div>
       )}
 
-      {mode !== 'off' && <div className="sc-info"><span>Width</span>
+      {mode !== 'off' && <Field label="Width">
         <span className="sc-num">
           <input type="number" min="5" max="150" step="1" value={width || ''} placeholder="auto"
             data-testid="tower-width" title="Footprint of the tower (mm). Empty uses the slicer's own default."
             onChange={e => set('prime_tower_width', e.target.value)} /> mm
         </span>
-      </div>}
+      </Field>}
 
       {/* Position is always per plate (its own array entry, whatever the scope), so with several plates the label
           says which one is being edited; the rows above follow the Global | Plate switch. */}
-      {mode !== 'off' && <div className="sc-info"><span>{plateCount > 1 ? `Position · plate ${selectedPlate + 1}` : 'Position'}</span>
-        <select className="sc-model" data-testid="tower-position-mode" value={manual ? 'manual' : 'auto'}
+      {mode !== 'off' && <Field label={positionLabel}>
+        <select data-testid="tower-position-mode" value={manual ? 'manual' : 'auto'}
           onChange={e => setPosition(e.target.value === 'auto' ? null : (towerStats?.x ?? 10), towerStats?.y ?? 10)}
           title="Auto places the tower beside the model; manual pins it to a bed coordinate.">
           <option value="auto">Beside the model</option>
           <option value="manual">Fixed coordinate</option>
         </select>
-      </div>}
+      </Field>}
       {mode !== 'off' && manual && (
-        <div className="sc-info"><span>X / Y</span>
+        <Field label="X / Y">
           <span className="sc-num">
             <input type="number" step="1" value={Number(towerX)} data-testid="tower-x"
               onChange={e => setPosition(e.target.value, Number(towerY) || 0)} />
             <input type="number" step="1" value={Number(towerY) || 0} data-testid="tower-y"
               onChange={e => setPosition(Number(towerX) || 0, e.target.value)} /> mm
           </span>
-        </div>
+        </Field>
       )}
 
       {/* The purge table. A grid rather than a settings row because it is N×N: one column per destination
@@ -231,6 +232,6 @@ export default function TowerCard({
           {Number.isFinite(towerStats.x) && ` · at ${towerStats.x.toFixed(0)}, ${towerStats.y.toFixed(0)}`}
         </div>
       )}
-    </section>
+    </Section>
   )
 }

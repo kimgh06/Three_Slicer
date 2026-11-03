@@ -22,6 +22,7 @@ import { settingRaw, printerTechnology } from 'three-slicer-viewer/settings'
 import { disabledKeys, makeCfg } from 'three-slicer-viewer/toggle'
 import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
 import { THEME_CSS } from '../core/theme.js'
+import { zeroMeansAuto, cleanDefaultText, rowLabel } from '../core/setting_display.js'
 
 const MODES = ['all', 'simple', 'advanced', 'expert', 'develop']
 const builderLabel = b => b.replace('::build', '').replace('Tab', '').replace('_sla', ' (SLA)')
@@ -70,7 +71,9 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled, customWi
   const Custom = customWidgets?.[optKey] ?? CUSTOM_WIDGETS[optKey]
   if (Custom) return <Custom def={def} value={raw} onChange={set} disabled={disabled} />
   const kind = widgetFor(def)
-  const scalar = Array.isArray(raw) ? raw[0] : raw
+  let scalar = raw
+  if (Array.isArray(raw)) scalar = raw[0]
+  if (!settings || !(optKey in settings)) scalar = cleanDefaultText(scalar)
   switch (kind) {
     case 'select':
       return (<select value={scalar ?? ''} onChange={e => set(e.target.value)} disabled={disabled}>
@@ -95,21 +98,30 @@ function EditableWidget({ def, optKey, settings, setSettings, disabled, customWi
     default:
       return (<span className="inputwrap">
         <input value={scalar ?? ''} onChange={e => set(e.target.value)} disabled={disabled} />
-        {def.sidetext && <span className="unit">{def.sidetext}</span>}
+        {zeroMeansAuto(optKey, def, scalar) && <span className="unit">= auto</span>}
+        {!zeroMeansAuto(optKey, def, scalar) && def.sidetext && <span className="unit">{def.sidetext}</span>}
       </span>)
   }
 }
 
-function EditableOptionRow({ schema, optKey, settings, setSettings, disabled, onOptionOpen, customWidgets, overridden, onRevertKey }) {
+function EditableOptionRow({ schema, optKey, lineTitle, settings, setSettings, disabled, onOptionOpen, customWidgets, overridden, onRevertKey }) {
   if (optKey.startsWith('<')) return <div className="row custom"><span className="muted">⚙ Custom widget {optKey}</span></div>
   const def = schema[optKey]
   const cond = disabled ? disabled[optKey] : undefined
   const off = cond != null
   const dirty = isDirty(schema, settings, optKey)
   const reset = () => setSettings(s => { const n = { ...s }; delete n[optKey]; return n })
-  const label = def?.label || def?.full_label || optKey
+  const label = rowLabel(def, optKey, lineTitle)
+  let rowClass = 'row'
+  let hint = def?.tooltip
+  if (off) {
+    rowClass = 'row disabled'
+    hint = `Disabled when: ${cond}`
+  }
+  // The key is what a preset file, a project and upstream's docs call this option; search still finds it.
+  const rowTitle = [hint, def?.mode && `Mode: ${def.mode}`, optKey].filter(Boolean).join('\n\n')
   return (
-    <div className={'row' + (off ? ' disabled' : '')} title={off ? `Disabled when: ${cond}` : (def?.tooltip ?? '')} data-testid={`row-${optKey}`}>
+    <div className={rowClass} title={rowTitle} data-testid={`row-${optKey}`}>
       <span className="lbl-cell">
         {overridden && <button type="button" className="override-dot" onClick={() => onRevertKey?.(optKey)}
           title="This plate's override — click to follow the global value again" data-testid={`override-${optKey}`} />}
@@ -118,7 +130,6 @@ function EditableOptionRow({ schema, optKey, settings, setSettings, disabled, on
           ? <button type="button" className="lbl lbl-link" onClick={() => onOptionOpen(optKey)} title="Details">{label}</button>
           : <span className="lbl">{label}</span>}
       </span>
-      <code className="key">{optKey}</code>
       <ModeBadge mode={def?.mode} />
       <span className="widget-cell">
         <EditableWidget def={def} optKey={optKey} settings={settings} setSettings={setSettings} disabled={off} customWidgets={customWidgets} />
@@ -155,7 +166,9 @@ export default function SettingsPanel({ schema = leanSchema, uiTree = DEFAULT_TR
       .filter(([k, d]) => k.includes(q) || d.label?.toLowerCase().includes(q) || d.full_label?.toLowerCase().includes(q))
       .slice(0, 60).map(([k]) => k)
   }, [q])
-  const row = (k, i) => <EditableOptionRow schema={schema} key={k + i} optKey={k} settings={settings} setSettings={setSettings} disabled={disabled} onOptionOpen={onOptionOpen} customWidgets={customWidgets}
+  // Read from the whole tree, because a search hit is listed outside its group.
+  const lineTitles = useMemo(() => Object.assign({}, ...Object.values(uiTree).flat().flatMap(p => p.groups).map(g => g.line_titles ?? {})), [uiTree])
+  const row = (k, i) => <EditableOptionRow schema={schema} key={k + i} optKey={k} lineTitle={lineTitles[k]} settings={settings} setSettings={setSettings} disabled={disabled} onOptionOpen={onOptionOpen} customWidgets={customWidgets}
     overridden={overriddenKeys?.includes(k)} onRevertKey={onRevertKey} />
   return (
     <ShadowHost css={THEME_CSS + shadowCss} className={embedded ? 'sp-embedded' : undefined}>
@@ -184,13 +197,13 @@ export default function SettingsPanel({ schema = leanSchema, uiTree = DEFAULT_TR
             {!hits.length && <p className="muted">No matches</p>}
           </section>
         ) : page ? (<>
-          {!only && <h2>{page.page} <span className="muted">Tab.cpp:{page.line}</span></h2>}
+          {!only && <h2>{page.page}</h2>}
           {page.groups.map(g => {
             // Embedded in a host card there is no room for the unimplemented-widget placeholders — drop them there.
             const opts = g.options.filter(k => passesMode(schema, k, mode) && !(only && k.startsWith('<')))
             if (!opts.length) return null
             return (<section key={g.group + g.line}>
-              <h3>{g.group || '(untitled group)'} <span className="muted">:{g.line}</span></h3>
+              <h3>{g.group || '(untitled group)'}</h3>
               {opts.map(row)}
             </section>)
           })}

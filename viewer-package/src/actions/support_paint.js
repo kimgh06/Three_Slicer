@@ -20,8 +20,8 @@ export { MAX_PAINT_EXTRUDERS }   // defined in core/viewer_defaults.js; re-expor
 // Paint mode -> the integer the selector stores on every brushed facet. `materialExtruderIndex` is 0-based (T1 = 0);
 //  null/absent means the eraser is selected, which writes NONE — the same value that clears a support mark.
 export function paintStateFor(paintMode, materialExtruderIndex) {
-  if (paintMode === 'enforcer') return PAINT_STATE_ENFORCER
-  if (paintMode === 'blocker') return PAINT_STATE_BLOCKER
+  if (paintMode === 'enforcer' || paintMode === 'seam-enforcer') return PAINT_STATE_ENFORCER
+  if (paintMode === 'blocker' || paintMode === 'seam-blocker') return PAINT_STATE_BLOCKER
   if (paintMode !== 'material') return PAINT_STATE_NONE
   if (!Number.isInteger(materialExtruderIndex) || materialExtruderIndex < 0) return PAINT_STATE_NONE   // eraser
   return Math.min(materialExtruderIndex + 1, MAX_PAINT_EXTRUDERS)
@@ -54,6 +54,7 @@ export async function requestPaintExport(worker, timeoutMs = PAINT_EXPORT_TIMEOU
 export function paintKindOfMode(mode) {
   if (mode === 'material') return 'color'
   if (mode === 'enforcer' || mode === 'blocker') return 'supports'
+  if (mode === 'seam-enforcer' || mode === 'seam-blocker') return 'seam'
   return null
 }
 
@@ -418,8 +419,11 @@ export function makeSupportPaint(deps) {
     const identity = geomIdentity(merged.buf)
     // The kind the selector must end up holding; null means "whatever is there / nothing".
     let wantedKind = held?.kind ?? null
-    if (requestedKind === 'color' || requestedKind === 'supports') wantedKind = requestedKind
+    if (requestedKind === 'color' || requestedKind === 'supports' || requestedKind === 'seam') wantedKind = requestedKind
     if (requestedKind === 'auto') wantedKind = paintKindFor(objectsById(), merged.members) ?? held?.kind ?? null
+    // Seam marks use the same states as support marks, so a slice must never run on a selector holding them: the slice
+    //  reads the seam from the store (buildMergedSTL), and this swap takes the marks out of the selector.
+    if (requestedKind === 'auto' && wantedKind === 'seam') wantedKind = 'color'
     const kindChanges = held != null && wantedKind !== null && wantedKind !== held.kind
     // A selector whose load failed is empty while the store is not: it takes neither shortcut below (both turn
     //  strokes back on), so a re-registration — a drag commit, a brush opened again — retries the load instead.
@@ -466,7 +470,7 @@ export function makeSupportPaint(deps) {
     // Only a kernel that cannot export loses paint here now — and that must not be silent.
     if (hadPaint && !kept) setSliceNotice?.('The painted regions were reset: this kernel cannot hand its painting '
                                            + 'back, so it does not survive switching the painted mesh.')
-    const brushAsked = requestedKind === 'color' || requestedKind === 'supports'
+    const brushAsked = requestedKind === 'color' || requestedKind === 'supports' || requestedKind === 'seam'
     const loaded = await loadStoredPaint(worker, merged, wantedKind, { reportDropped: !brushAsked })
     if (loaded === null) {
       // The worker answered the load with an error or died: the selector is empty while the store is not. Nothing may

@@ -120,6 +120,12 @@ export interface ViewportProps {
    */
   catalog?: Catalog | null
   /**
+   * Fonts the Text tool offers beside its built-in Latin one, fetched when first used. This package ships none.
+   * `covers` lists the scripts (`hangul`, `kana`, `latin`) the font draws when the chosen font lacks a character;
+   * `han` is not a fallback, because one code point has a different form in each language's font.
+   */
+  textFonts?: Array<{ id: string; label: string; url: string; covers?: Array<'hangul' | 'kana' | 'latin'> }> | null
+  /**
    * A token whose identity CHANGE requests one slice of the current plate — the host's Slice button:
    * keep a counter in state and bump it. The mount value is inert (0 and null both slice nothing), so is
    * setting it back to `null`. Ignored while a `gcode`/`sl1` injection holds the plate or the scene is
@@ -185,7 +191,10 @@ export type LockablePanel =
 
 /** Panel keys accepted by {@link ViewportProps.panels}. `sidebar: false` hides the whole right column at once. */
 export type ViewportPanel =
-  | 'topBar' | 'gizmoRail' | 'objectToolbar' | 'paintPanel' | 'statsCard' | 'plateBar' | 'emptyHint' | 'status'
+  | 'topBar'
+  /** The File/Edit/Object/View/Slice/Help menu in the top bar row. Goes with `topBar` when that is off. */
+  | 'menuBar'
+  | 'gizmoRail' | 'objectToolbar' | 'paintPanel' | 'statsCard' | 'plateBar' | 'emptyHint' | 'status'
   | 'sidebar' | 'printerCard' | 'filamentCard' | 'objectList' | 'previewControls' | 'processCard' | 'sliceBar'
   /** The horizontal move scrub under the canvas — how far into the top shown layer the print has got. Preview
    *  and FFF only: a resin layer is cured in one exposure and has no intra-layer order to walk. */

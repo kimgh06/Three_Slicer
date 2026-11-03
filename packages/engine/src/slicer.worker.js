@@ -349,6 +349,13 @@ const handleMessage = async (e) => {
     //  The caller (3mf save) rebases the facet indices back onto per-object numbering; this worker cannot, because
     //  which objects were merged in what order is the viewer's knowledge. A kernel built before the binding existed
     //  reports supported:false rather than throwing — the save then falls back to the paint it imported.
+    // Boolean, Cut and negative parts: two soups in, one soup out, or a typed refusal in `error`.
+    if (d.cmd === 'meshBoolean') {
+      if (!Module.mesh_boolean) { reply({ type: 'meshBoolean', error: 'MESH_BOOLEAN_UNAVAILABLE: this kernel has no mesh boolean' }); return }
+      const result = Module.mesh_boolean(d.first, d.second, d.operation)
+      reply({ type: 'meshBoolean', error: result.error, positions: result.positions })
+      return
+    }
     if (d.cmd === 'exportPaint') {
       let exported = null
       if (Module.selector_export_paint) exported = Module.selector_export_paint()

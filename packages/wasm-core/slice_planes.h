@@ -21,9 +21,26 @@ struct SliceSegment { double x0, y0, x1, y1; };
 //  at each layer's top and keep only tops below the object's height, so the top face's plane cut nothing and the
 //  last layer was lost: a 20 mm cube printed 99 layers, 19.8 mm (measured against OrcaSlicer 2.4.2: 100 layers).
 //  `top` keeps the old accumulation (z += layer_height), so the print z of every layer is the one it always had.
+//  `bands` is the variable layer height: flat [fromZ, height, ...], ascending, each height applying from its fromZ up.
+//  Empty is the fixed-height case and its arithmetic is unchanged.
 struct LayerPlan { std::vector<double> top, plane; };
-inline LayerPlan plan_layers(double first_layer_height, double layer_height, double height) {
+const double MIN_VARIABLE_LAYER_MM = 0.01;
+inline double band_height(const std::vector<double>& bands, double z, double fallback) {
+  double height = fallback;
+  for (size_t at = 0; at + 1 < bands.size(); at += 2) if (z >= bands[at] - 1e-6) height = bands[at + 1];
+  return height;
+}
+inline LayerPlan plan_layers(double first_layer_height, double layer_height, double height, const std::vector<double>& bands = {}) {
   LayerPlan plan;
+  if (!bands.empty()) {
+    double layer = first_layer_height;
+    for (double z = first_layer_height; z - 0.5 * layer < height - 1e-4; z += layer) {
+      plan.top.push_back(z);
+      plan.plane.push_back(z - 0.5 * layer);
+      layer = band_height(bands, z, layer_height);
+    }
+    return plan;
+  }
   double currentLayerHeight = first_layer_height;
   for (double z = first_layer_height; z - 0.5 * currentLayerHeight < height - 1e-4; z += layer_height, currentLayerHeight = layer_height) {
     plan.top.push_back(z);

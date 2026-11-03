@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero } from './plate_layout.js'
+import { appendModelPositions } from './model_soup.js'
+import { paintTriangles } from './paint_store.js'
 import { STL_HEADER_BYTES, STL_DATA_OFFSET, STL_TRIANGLE_BYTES, stlByteLength } from './stl_format.js'
 
 // The object list -> model-space geometry. Both consumers of that conversion live here because they share three
@@ -27,6 +29,23 @@ export function plateOfObject(object, { plateCount, bedWidth, bedDepth, plateDim
 
 // When plateIndex != null, only objects on that plate are used and coordinates are converted to plate-local
 //  (three-x -= PX) (keeps the stage-28 contract).
+const SEAM_ENFORCER = 1, SEAM_BLOCKER = 2
+
+function seamTriangles(objects, originX, originY, minZ) {
+  const seam = { enforcers: [], blockers: [] }
+  for (const object of objects) {
+    if (!object.paint?.seam?.size) continue
+    for (const [state, triangles] of paintTriangles(object.localPos, object.paint.seam)) {
+      const target = { [SEAM_ENFORCER]: seam.enforcers, [SEAM_BLOCKER]: seam.blockers }[state]
+      if (!target) continue
+      const positions = []
+      appendModelPositions(positions, triangles, object.matrixWorld)
+      for (let i = 0; i < positions.length; i += 3) target.push(positions[i] - originX, positions[i + 1] - originY, positions[i + 2] - minZ)
+    }
+  }
+  return seam
+}
+
 export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, plateCount, bedWidth, bedDepth, plateDims = null }) {
   const grid = { plateCount, bedWidth, bedDepth, plateDims }
   let arr = objects
@@ -34,7 +53,7 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
   if (!arr.length) return null
   const sorted = sortByExtruder(arr)
   const usedExtruders = new Set(sorted.map(o => o.extruder || 1))
-  const tmp = new THREE.Vector3(); const out = []
+  const out = []
   // One boundary per extruder change, not just the first: with objects on T1/T2/T3 a single boundary would
   //  fold T3's triangles into T2's group and print them with T2's material. `tools` carries the real
   //  extruder number of each group, because assignments can skip one (T1 and T3 with nothing on T2).
@@ -60,9 +79,8 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
     if (tools.length === 0) tools.push(ext - 1)
     else if (ext - 1 !== tools[tools.length - 1]) { splits.push(triCount); tools.push(ext - 1) }
     if (ext >= 2 && split === 0) split = triCount   // start boundary of ext2 (the pre-N-way scalar form)
-    const M = o.matrixWorld, lp = o.localPos
-    for (let i = 0; i < lp.length; i += 3) { tmp.set(lp[i], lp[i + 1], lp[i + 2]).applyMatrix4(M); out.push(tmp.x, -tmp.z, tmp.y) }  // Rinv -> model (world)
-    triCount += lp.length / 9
+    appendModelPositions(out, o.localPos, o.matrixWorld)
+    triCount += o.localPos.length / 9
   }
   // The slice frame is the PLATE, not the model. This used to subtract the content's own bbox centre, which
   //  made the frame move whenever the model moved — and everything anchored to something else then needed a
@@ -96,6 +114,10 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
     if (out[i] < minX) minX = out[i]; if (out[i] > maxX) maxX = out[i]
     if (out[i + 1] < minY) minY = out[i + 1]; if (out[i + 1] > maxY) maxY = out[i + 1]
   }
+  // Painted seams as triangles in this frame, seated as the kernel seats the mesh (seam_paint.cpp).
+  let minZ = Infinity
+  for (let i = 2; i < out.length; i += 3) if (out[i] < minZ) minZ = out[i]
+  const seam = seamTriangles(sorted, originModelX, originModelY, minZ)
   // Ready for the kernel's selector_import_paint: a facet-index array and the matching hex strings, joined
   //  with the newline that binding splits on. A slot with nothing painted is null, not an empty pair.
   const paint = {}
@@ -110,7 +132,7 @@ export function buildMergedSTL(objects, { plateIndex = null, selectedPlate = 0, 
   //  printer's custom G-code prints as input_filename_base / first_object_name (settings_core.js placeholderConfig).
   const members = sorted.map(o => ({ id: o.id, name: o.name ?? '', faceCount: o.localPos.length / 9 }))
   return { buf, split, splits, tools, extruders: usedExtruders.size, offX: offX3, offZ: offZ3,
-           plate, topology: topology.join('|'), members, minX, minY, maxX, maxY, paint }
+           plate, topology: topology.join('|'), members, minX, minY, maxX, maxY, paint, seam }
 }
 
 /** Every object as the 3mf writer needs it: world MODEL-space triangles (three (x,y,z) -> model (x,-z,y),

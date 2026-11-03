@@ -573,7 +573,11 @@ export function deriveKernelParams(settings, opts) {
     })
   }
 
+  const bands = settings?.variable_layer_heights
+  const layerBands = {}
+  if (Array.isArray(bands) && bands.length) layerBands.variable_layer_heights = bands
   return {
+    ...layerBands,
     ...widths,
     ...machine,
     ...passthrough,     // present only for keys the settings map actually holds (see PASSTHROUGH_* above)

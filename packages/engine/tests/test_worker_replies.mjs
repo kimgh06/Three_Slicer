@@ -48,6 +48,9 @@ const expectReply = async (label, data, expectedType) => {
 }
 
 await expectReply('warmup', { cmd: 'warmup', quiet: true }, 'warm')
+const openShell = new Float32Array(18)
+const refused = await expectReply('meshBoolean', { cmd: 'meshBoolean', first: openShell, second: openShell, operation: 0 }, 'meshBoolean')
+assert.match(refused.error, /^MESH_BOOLEAN_/)
 await expectReply('prepare', { cmd: 'prepare', stl: cubeSTL }, 'prepared')
 const painted = await expectReply('paint', { cmd: 'paint', facet: 0, hx: 5, hy: 5, hz: 0, cx: 5, cy: 5, cz: -100, radius: 8, state: T2, states: STATES }, 'painted')
 assert.ok(painted.counts[T2] > 0, 'the stroke marked facets')

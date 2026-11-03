@@ -296,9 +296,36 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   failure modes: a comment quoting a key added a column, and when the mapping moved into `viewer-package` the scan fell
   to 3 keys without an error (the committed presets predate the move, so it only showed on the next extraction).
   A missing or empty list now stops the extraction. Regenerate the list first when the mapping changes.
+- **The object tools have one kernel entry for all geometry edits.** Boolean, Cut, engraved Text and negative parts all go
+  through `mesh_boolean` (`mesh_boolean.cpp`, CGAL corefinement with exact constructions; the worker's `meshBoolean`
+  command), and a non-solid input is refused with a typed `MESH_BOOLEAN_…` code. Corners weld on a 0.1 micron grid, not by float
+  bits: three.js' cylinder seam and sphere poles differ by 1e-16 near 0, which refused them on plate 0 only. A negative part stays a live object:
+  `prepareGeometry` (`actions/object_tools.js`) cuts each object it overlaps and caches that on the object as `cutPos`
+  against the transforms involved, before a slice or export reads the geometry, because `buildMergedSTL` is synchronous
+  and the boolean is not. `geometryInput` is the one place negative parts leave the merge and `cutPos` enters it. A
+  multi-selection holds its meshes on a pivot, so their `position` is pivot-relative until it is released: a tool clears
+  the selection before `recordHistory` (measured: an undo put the object 10 mm under the bed).
+- **Seam paint reaches the kernel as triangles, not through the selector.** The selector holds one annotation, and a slice
+  needs material and support paint from it, so the brush uses it only to edit (`kind: 'seam'`, modes `seam-enforcer` and
+  `seam-blocker`). A slice swaps seam marks out of it, because they share state numbers with support marks, and
+  `buildMergedSTL` sends `object.paint.seam` as `seam_enforcers` / `seam_blockers`. `seam_paint.cpp` cuts those with each
+  layer plane, and `rotate_seam` inserts a vertex at the mark nearest the loop. Arachne walls take the same point through
+  `seamed_walls` (`emit_layer.cpp`), with an interpolated width, and the multi-material path sets the marks around its walls
+  only, because its prime tower shares the seam context.
+- **The Text tool's fonts are the host's.** `viewer-package` ships only the three.js Latin font (tarball 315 kB; the four
+  Noto Sans CJK files are 23 MB) and takes the others through the `textFonts` prop; the demo binds them once in
+  `web/viewer/src/kernel_viewport.jsx`, so the extension gets them too. Han never falls back by script
+  (`core/text_runs.js`): one code point has a different form per language, so only the picked font may draw it. Outlines go through `core/glyph_shapes.js`, not `Font.generateShapes`: three.js'
+  `toShapes` reads holes from TrueType's contour order and winding, which turned ㅁ of a CFF `.otf` inside out.
+- **Variable layer height is `plan_layers`' `bands` argument** (`variable_layer_heights`, flat `[fromZ, height, ...]`, in
+  the settings map). With no bands the arithmetic is the fixed-height loop, so golden is untouched. Support, raft,
+  multi-material and spiral all assume one height, so together with bands they are refused with
+  `UNSUPPORTED_VARIABLE_LAYERS`. A band under 0.01 mm is `INVALID_VARIABLE_LAYERS`: 0 never reached the top of the object.
+- **Arrange and Orient are this package's own algorithms.** `viewer-package` is MIT, so upstream's AGPL `Arrange.cpp` and
+  `Orient.cpp` must not be read while changing them (`packages/PROVENANCE.md`).
 - **The transform gizmo is deliberately not the stock one.** Three edits to `TransformControls`, each measured, each
   easy to mistake for superstition and delete: (1) `showY` is false in **translate** mode only — a part prints off
-  the bed, so up/down is not a move (it also takes the XY/YZ plane handles, leaving X/Z/XZ). Set per mode, and
+  the bed, so up/down is not a move (it also takes the XY/YZ plane handles, leaving X/Z; `gizmo_fit.js` removes the XZ plane). Set per mode, and
   `seatMesh` still has to run on commit because rotate and scale move the lowest point. (2) The scale gizmo's `XYZ`
   handle is **removed from the object graph**, not hidden — the per-frame update rewrites `visible` and `scale` on
   every handle it owns, so flags do not stick; the bounding-box corners (`scale_box.js`) are the usable version of
@@ -306,6 +333,20 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   distance-now/distance-at-press, and every axis picker reaches the origin, so a press there divides by ~0 — measured
   4e7 on a 20mm cube, and negative past the centre, which mirrors the mesh and inverts the winding the kernel slices.
   `clampMeshScale` bounds the result (0.2mm..5000mm, positive) for the drags that stay legal.
+- **The gizmo stands outside the selection** (`core/gizmo_layout.js`, applied by `scene/gizmo_fit.js`). Handles sit past
+  the selection's box, sized by it with a pixel floor (the gap has one too, so it grows with the camera's distance), and rotate rings clear its corners. TransformControls resets each
+  handle every frame, so its `updateMatrixWorld` is wrapped; arm stems and plane handles are removed and pickers shrink
+  to the arm's end, because they reached the centre and took clicks meant for the model.
+- **Dragging the selection or the box around it moves it on the bed** (`scene/body_drag.js`), in move mode only. It runs on
+  TransformControls' XZ drag and starts past the click distance, because a drag records an undo step. A left drag on a
+  model therefore no longer orbits; empty space and the right button still do.
+- **Fine adjust lasts while Alt (Option) is held** (`hooks/use_fine_adjust.js`). Option changes what digits type, so a
+  field that takes focus keeps the panel open past the key, as the panel's Hold button does until it is released. Typed values go through the gizmo's `dragging-changed` pair
+  (`scene/fine_transform.js`), so they commit as a drag does. Scale box corners do not snap.
+- **A rotate ring turns by the angle the pointer sweeps around it** (`scene/ring_drag.js`), not by TransformControls' travel
+  across the axis: one 30 degree sweep measured 56 to 146 degrees by where it began. With Alt held it runs at a quarter
+  speed, because 1:1 was over a degree per pixel and the 1 degree snap skipped values. The panel's angles are kept per axis
+  beside the rotation they led to, since Euler angles read 100 degrees about Y as `[-180, 80, -180]`.
 - **Corner handles must win the pointer where they overlap a gizmo axis** — they are drawn over everything, so they
   have to act there too. TransformControls picks its axis on HOVER and its listener is registered first, so it cannot
   be outrun in `onDown`; it is switched off while the pointer is on a handle instead (`updateHandleHover`).

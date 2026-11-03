@@ -19,5 +19,7 @@ std::string make_layer_key(const Params& params) {
     params.nozzle_diameter, (int)params.detect_thin_wall, params.wall_sequence.c_str(), params.wall_direction.c_str(),
     params.filter_out_gap_fill, (int)params.has_gap_fill(), params.infill_wall_overlap, params.top_bottom_infill_wall_overlap,
     (int)params.precise_outer_wall, (int)params.only_one_wall_first_layer, (int)params.alternate_extra_wall, (int)params.enable_arc_fitting);
-  return std::string(key);
+  std::string out(key);
+  for (double value : params.variable_layer_heights) out += "|" + std::to_string(value);
+  return out;
 }

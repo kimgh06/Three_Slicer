@@ -147,6 +147,13 @@ console.log('\n[theming]')
   for (const [key, value] of Object.entries(UI_TOKENS)) {
     check(`VIEWER.md documents --vp-${kebab(key)} with its default`, readme.includes(`| \`--vp-${kebab(key)}\` | \`${value}\` |`))
   }
+  // The sidebar's inputs take their size from one rule in theme.js. A card that sizes its own input is how the sidebar
+  //  came to hold four heights of select.
+  const viewerSheet = readFileSync(join(here, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  const ownSized = [...viewerSheet.matchAll(/([^{}]*\b(?:select|input)\b[^{}]*)\{([^}]*)\}/g)]
+    .filter(([, selector, body]) => /\.(sc|field|side|obj|gpu|slice|purge|fil)[-\w]*/.test(selector) && !/type=range/.test(selector) && /(^|[\s;])(height|font-size|padding|border-radius)\s*:/.test(body))
+    .map(([, selector]) => selector.trim())
+  check('no sidebar input sizes itself', ownSized.length === 0, ownSized.join(' | '))
   // A literal colour in either stylesheet is a colour a host cannot theme. The status line's black text-shadow is
   //  the one exception: a legibility shadow, not part of the palette.
   for (const sheet of ['styles.css', 'src/components/styles.css']) {

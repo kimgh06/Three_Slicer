@@ -2,6 +2,7 @@ import React from 'react'
 import { deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { cardScope } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
+import { Section, Field } from './Section.jsx'
 import { resolveCatalog } from '../core/catalog.js'
 
 // Resin (SLA) card — shown in place of the filament card when the printer profile declares SLA: resin has no
@@ -23,13 +24,13 @@ export default function ResinCard({ catalog, settings: globalSettings, setSettin
   const writeBool = (key) => (e) => { const on = !!e.target.checked; setSettings(s => ({ ...s, [key]: on })) }
   const blurOnEnter = (e) => { if (e.key === 'Enter') e.target.blur() }
   const row = (key, value, unit, label, step) => (
-    <div className="sc-info"><span>{label}</span>
+    <Field label={label}>
       <span className="sc-bed">
         <input type="number" min="0" step={step} key={`${key}${value}`} defaultValue={value}
           onBlur={write(key)} onKeyDown={blurOnEnter} data-testid={`resin-${key}`} />
         {unit}
       </span>
-    </div>
+    </Field>
   )
   // Material picker: the vendor catalog filtered to presets whose compatibility layer height matches the one
   //  in use (upstream's compatible_prints_condition, reduced to a number at extraction). Grouped by type the
@@ -44,16 +45,14 @@ export default function ResinCard({ catalog, settings: globalSettings, setSettin
     if (vals) setSettings(s => ({ ...s, ...vals }), plateScope ? Object.keys(vals) : undefined)   // a pick is written whole in plate scope
   }
   return (
-    <section className="side-card" data-testid="resin-card">
-      <div className="sc-head">🧪 Resin
-        {plateCount > 1 && setSettingsScope && (
-          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
-            testid="resin-scope-toggle" plateTestid="resin-scope-plate" />
-        )}
-      </div>
+    <Section title="Resin" testId="resin-card"
+      scope={plateCount > 1 && setSettingsScope && (
+        <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
+          testid="resin-scope-toggle" plateTestid="resin-scope-plate" />
+      )}>
       {compatible.length > 0 && (
-        <div className="sc-info"><span>Material</span>
-          <select className="sc-model" value={picked} onChange={e => pickMaterial(e.target.value)}
+        <Field label="Material">
+          <select value={picked} onChange={e => pickMaterial(e.target.value)}
             data-testid="resin-material"
             title="Resin preset from the upstream vendor bundles — applies its exposure times">
             {!compatible.some(r => r.name === picked) && <option value="">Custom (current values)</option>}
@@ -64,32 +63,30 @@ export default function ResinCard({ catalog, settings: globalSettings, setSettin
               </optgroup>
             ))}
           </select>
-        </div>
+        </Field>
       )}
       {row('layer_height', p.layer_height, 'mm', 'Layer height', 0.01)}
       {row('initial_layer_height', p.initial_layer_height, 'mm', 'First layer', 0.05)}
       {row('exposure_time', p.exposure_time, 's', 'Exposure', 0.5)}
       {row('initial_exposure_time', p.initial_exposure_time, 's', 'First exposure', 1)}
       {row('faded_layers', p.faded_layers, '', 'Fade layers', 1)}
-      <div className="sc-info"><span>Display</span>
+      <Field label="Display">
         {/* The mm figure is the PRINT AREA — without it on screen, a model judged over-bed against the display
             while a larger printable_area bed is drawn looks like it fits and fails for no visible reason. */}
         <b title="The resin printer's LCD — resolution and physical size, from the printer profile. The physical size is the print area; the pixel grid is what the SL1 export draws on.">
           {p.display_pixels_x}×{p.display_pixels_y} px · {p.display_width}×{p.display_height} mm
         </b>
-      </div>
-      <label className="sc-info" title="Generate grid-pillar supports under overhangs and floating islands (kernel slice_sla) — they render in the preview and rasterize into the SL1 masks">
-        <span>Supports</span>
+      </Field>
+      <Field label="Supports" as="label" title="Generate grid-pillar supports under overhangs and floating islands (kernel slice_sla) — they render in the preview and rasterize into the SL1 masks">
         <input type="checkbox" checked={p.supports_enable} onChange={writeBool('supports_enable')} data-testid="resin-supports" />
-      </label>
-      <label className="sc-info" title="A flat slab under everything that reaches the plate">
-        <span>Pad</span>
+      </Field>
+      <Field label="Pad" as="label" title="A flat slab under everything that reaches the plate">
         <input type="checkbox" checked={p.pad_enable} onChange={writeBool('pad_enable')} data-testid="resin-pad" />
-      </label>
+      </Field>
       {p.supports_enable && row('support_object_elevation', p.support_object_elevation, 'mm', 'Elevation', 0.5)}
       {stats?.sla && (
-        <div className="sc-info" data-testid="resin-used"><span>Resin</span><b>{(stats.resinMl ?? 0).toFixed(1)} ml</b></div>
+        <Field label="Resin" data-testid="resin-used"><b>{(stats.resinMl ?? 0).toFixed(1)} ml</b></Field>
       )}
-    </section>
+    </Section>
   )
 }

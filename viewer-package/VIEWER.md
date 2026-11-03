@@ -70,7 +70,7 @@ Every panel can be switched off, and the values the component owns can be seeded
 
 - **`panels`** — `{name: false}` hides one. Everything is visible by default, so a host only ever opts out and a
   panel added in a later version does not vanish for hosts that listed the ones they wanted. `sidebar: false` drops
-  the whole right column; the rest are `topBar`, `gizmoRail`, `objectToolbar`, `paintPanel`, `statsCard`, `plateBar`,
+  the whole right column; the rest are `topBar`, `menuBar` (off with `topBar`), `gizmoRail`, `objectToolbar` (both sit in the ribbon under the title row, which stays for them when `topBar` is off), `paintPanel`, `statsCard`, `plateBar` (over the slice button, floating over the canvas when the sidebar is off or read-only),
   `emptyHint`, `status`, `printerCard`, `filamentCard`, `resinCard`, `towerCard`, `objectList`, `previewControls`,
   `processCard`, `sliceBar`, `moveBar`, `bedWarn` (the off-bed warning strip). Which of `filamentCard`/`resinCard` renders follows the printer profile's technology: a profile whose
   `printer_technology` says SLA swaps the filament card (and the prime tower, and the painting brushes) for the
@@ -176,7 +176,8 @@ arrows and Delete working.
 | Prepare | |
 | --- | --- |
 | `M` or `G` · `R` · `S` | Move · rotate · scale gizmo |
-| `Arrow keys` | Nudge 10mm — `Shift` for 1mm |
+| `Arrow keys` | By gizmo mode: move 10mm, rotate 15°, scale 5% — `Shift` for 1mm, 5°, 1% |
+| Hold `Alt` / `Option` | Fine adjust while held (a field with focus keeps it open for typing, and the panel's Hold button keeps it on): typed position, rotation and size, gizmo drags snap to 0.1 mm, 1° and 1%, and the arrow keys take the same steps for the gizmo's mode (`Shift` for ten times as far) |
 | `PageUp` / `PageDown` | Rotate ±45° |
 | `Delete` / `Backspace` | Remove the selection |
 | `Z` · `B` | Zoom to all · zoom to bed |
@@ -211,7 +212,8 @@ model falls through to the camera, so the view can be turned mid-paint without c
 offers *on overhangs only*, which restricts every stroke to facets steeper than the support threshold.
 
 Mouse selection follows upstream's rules: a plain click **replaces** the selection, `Ctrl/⌘ + click` adds or
-removes, a plain click on something already selected **keeps** the set (which is what makes dragging several
+removes, a plain click on something already selected **keeps** the set (in move mode a left drag on a model or inside
+its selection box moves it on the bed; which is what makes dragging several
 objects work), `Shift + drag` is a box select, and clicking empty space clears. Alt is not a de-select, in
 upstream or here.
 
@@ -258,7 +260,7 @@ opt-out only, everything on unless you say `false`, an unknown key stays on.
 | `warmup` | The WASM kernel is not loaded on mount. Nothing is downloaded or compiled until something actually slices — which for a `gcode`-only viewer is never, so this is several megabytes and a thread pool you stop paying for. |
 | `drop` | No drag and drop onto the canvas. |
 | `filePicker` | The file dialog never opens, from any of the buttons that open it. |
-| `contextMenu` | No right-click menu. The browser's own menu stays suppressed over the canvas either way — OrbitControls preventDefaults `contextmenu` itself. |
+| `contextMenu` | No right-click menu on objects (empty space has none). The browser's own menu stays suppressed over the canvas either way — OrbitControls preventDefaults `contextmenu` itself. |
 | `logs` | No console output, from the component or from the slice worker. |
 | `versionBadge` | The build number at the right end of the status bar is not drawn. It is there so a bug report can name a build; turn it off when the viewer is embedded as part of your own product. `panels.status: false` hides it too, since it rides that bar. |
 
@@ -422,6 +424,30 @@ union's area (within 2e-10 relative) and other vertices, so the G-code is not th
 within 0.3 % in those two models). The slice never depends on the GPU: without a device, or when the GPU refuses an
 input, the kernel slices by itself, a layer whose loops the GPU leaves open gets the kernel's own union, and the stats
 card says which happened (`Contours on the GPU`, with the count of layers that went back to the CPU).
+
+## Object tools
+
+The ribbon's tools come in two groups. The first needs no kernel, so it works with any host.
+
+| Tool | What it does |
+|---|---|
+| Measure | Distance, per-axis offset and face angle between two clicked points. With Ctrl (⌘) held, picks snap to corners and to edges where faces meet at more than 30°, and after the first click the second point is previewed under the pointer |
+| Arrange | Packs the selected plate's objects from the bed centre, keeping 3 mm between them. What does not fit stays put and is reported. It ignores rotation, the prime tower and non-rectangular beds |
+| Orient | Turns the selection so the least surface needs support |
+| Text | Raises letters from a clicked surface or lays them on the bed. One click places one text, closes the panel and selects it. Text keeps its height on a model but never goes under the bed, and Place on bed drops a selected text. The built-in font is Latin only; the `textFonts` prop adds a host's fonts (the demo adds Korean, Japanese, Simplified and Traditional), and a `.ttf` or `.otf` upload adds any other for the session. Hangul and kana fall back to the font that covers them. Hanzi and kanji are drawn only by the picked font, because one code point has a different form per language |
+
+The second goes through the kernel, so it is absent without a `slicer`.
+
+| Tool | What it does |
+|---|---|
+| Boolean | Union, difference or intersection of two selected closed meshes (CGAL corefinement). An open or self-intersecting mesh is refused with a typed `MESH_BOOLEAN_…` error |
+| Cut | Cuts the selection along X, Y or Z into solid pieces |
+| Negative part | A red part cuts away what it overlaps when you slice or export. The geometry is cut then, not when the part is placed, so it can be moved freely. A saved project holds the cut result, not the part. Painted objects refuse it, because the cut renumbers their facets |
+| Text, engraved | Cuts the letters into the clicked object |
+| Seam painting | Brushes where the seam goes or must not go. Saved as `paint_seam` in a 3mf |
+| Variable layers | Layer height by Z band. Refused with `UNSUPPORTED_VARIABLE_LAYERS` alongside support, raft, spiral mode or several filaments |
+
+Boolean, Cut and engraving replace the objects involved, so painting on them is dropped, and a notice says so.
 
 ## Theming
 

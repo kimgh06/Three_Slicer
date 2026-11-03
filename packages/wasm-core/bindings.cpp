@@ -1,5 +1,6 @@
 // bindings.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 //  The embind block plus the small wrappers it binds (heap/config probes + the stage-20 painting selector wiring).
+#include "mesh_boolean.h"
 #include "arachne_bridge.h"
 #include "config_bridge.h"
 #include "contour_phase.h"
@@ -265,7 +266,20 @@ static em::val contour_assemble() {
   return out;
 }
 
+// Two soups in, one soup out, or a typed refusal. The result is copied: the view would die with the vector.
+static em::val mesh_boolean(em::val first, em::val second, int operation) {
+  const std::vector<float> firstPositions = em::convertJSArrayToNumberVector<float>(first);
+  const std::vector<float> secondPositions = em::convertJSArrayToNumberVector<float>(second);
+  std::vector<float> positions;
+  const std::string error = mesh_boolean_run(firstPositions.data(), firstPositions.size(), secondPositions.data(), secondPositions.size(), operation, positions);
+  em::val out = em::val::object();
+  if (!error.empty()) { out.set("error", error); return out; }
+  out.set("positions", em::val::global("Float32Array").new_(em::val(em::typed_memory_view(positions.size(), positions.data()))));
+  return out;
+}
+
 EMSCRIPTEN_BINDINGS(slicer) {
+  em::function("mesh_boolean", &mesh_boolean);               // Boolean, Cut and negative parts: CGAL corefinement
   em::function("contour_phase_mode", &contour_phase_mode);         // 0 off, 1 capture (contour_phase.h)
   em::function("contour_gpu_input", &contour_gpu_input);
   em::function("contour_result_buffer", &contour_result_buffer);

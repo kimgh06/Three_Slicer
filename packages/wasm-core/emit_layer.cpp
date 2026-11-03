@@ -1,7 +1,10 @@
 // emit_layer.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 //  emit_layer_full stays `static` (called only by emit_layer_any); emit_layer_any lost it because slice() calls it.
+#include "seam_paint.h"
 #include "emit_layer.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 // support_filament / support_interface_filament are upstream coInt filament indices: 0 = "Default" (keep the tool
@@ -16,6 +19,33 @@
 static void use_tool(GcodeWriter& writer, int tool) {
   writer.set_tool(tool);
   if (tool >= 0) g_segment_tool = tool;
+}
+
+// Painted seams on Arachne walls. A closed wall starts at the enforcer's point, which takes a junction of its own with the
+//  width interpolated along its edge. A wall no enforcer reaches keeps its start unless a blocker covers it.
+static std::vector<arachne_bridge::WallLine> seamed_walls(const std::vector<arachne_bridge::WallLine>& walls, const SeamMarks& marks) {
+  std::vector<arachne_bridge::WallLine> seamed = walls;
+  for (auto& wall : seamed) {
+    auto& junctions = wall.junctions;
+    if (!wall.closed || junctions.size() < 3) continue;
+    Path path;
+    for (const auto& junction : junctions) path.emplace_back((cInt)std::llround(junction.x * SCALE), (cInt)std::llround(junction.y * SCALE));
+    size_t edge = 0;
+    double x = 0, y = 0;
+    if (seam_nearest_enforcer(path, marks, edge, x, y)) {
+      const auto& from = junctions[edge];
+      const auto& to = junctions[(edge + 1) % junctions.size()];
+      const double length = std::hypot(to.x - from.x, to.y - from.y);
+      double along = 0;
+      if (length > 0) along = std::hypot(x - from.x, y - from.y) / length;
+      const double width = from.width + (to.width - from.width) * along;
+      junctions.insert(junctions.begin() + edge + 1, { x, y, width });
+      std::rotate(junctions.begin(), junctions.begin() + edge + 1, junctions.end());
+    } else {
+      std::rotate(junctions.begin(), junctions.begin() + seam_off_blockers(path, 0, marks), junctions.end());
+    }
+  }
+  return seamed;
 }
 
 // G003 step 1: the normal layer emission body extracted — a single implementation shared by the serial path and (in step 2) the parallel writer.
@@ -105,7 +135,8 @@ static void emit_layer_full(GcodeWriter& writer, std::vector<float>& toolpath, s
     }
     if (params.wall_generator=="arachne" && !layerData.arachneWalls.empty()) {
       writer.raw("; walls (Arachne — real ported WallToolPaths, variable width)");
-      emit_arachne_walls(writer, toolpath, layerData.arachneWalls, layerZ, layerData.thickness, params, feeds, travelFeed);
+      if (seamContext.marks) emit_arachne_walls(writer, toolpath, seamed_walls(layerData.arachneWalls, *seamContext.marks), layerZ, layerData.thickness, params, feeds, travelFeed);
+      else emit_arachne_walls(writer, toolpath, layerData.arachneWalls, layerZ, layerData.thickness, params, feeds, travelFeed);
       writer.role_flow = 1.0;
       writer.set_e_per_mm(layerData.thickness, params);   // restore the default width/flow (for the infill that follows)
       g_current_segment_width=(float)defaultWidth;
@@ -237,6 +268,7 @@ void emit_layer_any(GcodeWriter& writer, std::vector<float>& toolpath, std::vect
     writer.internal_area = std::move(precompute.internalArea);
   }
   seamContext.randomState = 2654435761u * (uint32_t)(layerIndex+1);
+  seamContext.marks = seam_marks_of(layerIndex);
   std::vector<float>* segmentWidths = &widths;
   if (writer.dry_run) segmentWidths = nullptr;
   g_segment_widths = segmentWidths;

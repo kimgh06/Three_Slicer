@@ -2,7 +2,7 @@ import React from 'react'
 import { UNKNOWN_COLOR } from '../core/viewer_defaults.js'
 import { contourEngineText } from '../core/gpu_acceleration.js'
 
-const hms = (seconds) => {
+export const hms = (seconds) => {
   const s = Math.round(seconds)
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m ${String(s % 60).padStart(2, '0')}s`
 }

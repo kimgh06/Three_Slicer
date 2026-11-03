@@ -2,6 +2,7 @@ import React from 'react'
 import { VIEW_TYPES } from 'three-slicer-viewer'
 import { DEFAULT_RANGES_COLORS, TOOL_COLOR } from 'three-slicer-viewer'
 import MoveBar from './MoveBar.jsx'
+import { rangeFill } from '../core/range_fill.js'
 
 const rgb = (c) => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`
 
@@ -17,6 +18,8 @@ export default function PreviewControls({
   //  At least one entry, because a host that passes no filament list is still slicing with one extruder.
   const filamentView = viewType === 'filament'
   const extruderCount = Math.max(1, Array.isArray(extruderColors) ? extruderColors.length : 0)
+  let singleClass = 'ctl-btn'
+  if (singleLayer) singleClass = 'ctl-btn on'
   return (
     <div className="slice-layer" data-testid="preview-controls">
       <label className="view-type-row">View type
@@ -26,7 +29,7 @@ export default function PreviewControls({
       </label>
       <label>Layer <b data-testid="layer-range">{singleLayer ? (layerHi + 1) : `${layerLo + 1}..${layerHi + 1}`}</b> / {layerCount}
         <span className="muted"> ({segCount.toLocaleString()} segments)</span></label>
-      <div className="dual-slider">
+      <div className="range-slider" style={rangeFill(layerLo, layerHi, layerCount - 1)}>
         <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerLo} onChange={onLayerLo} data-testid="layer-lo" title="Lowest layer to show (also adjustable with ↓/↑)" />
         <input type="range" min="0" max={Math.max(0, layerCount - 1)} value={layerHi} onChange={onLayerHi} data-testid="layer-hi" title="Highest layer to show (↓/↑, hold Shift for steps of 10)" />
       </div>
@@ -36,7 +39,7 @@ export default function PreviewControls({
         <MoveBar value={moveScrub.at} max={moveScrub.max} point={moveScrub.point} onScrub={moveScrub.onScrub} />
       )}
       <div className="layer-ctl">
-        <button className={singleLayer ? 'on' : ''} onClick={onToggleSingle} data-testid="single-layer-btn" title="Show only the selected layer (L)">Single layer</button>
+        <button className={singleClass} onClick={onToggleSingle} data-testid="single-layer-btn" title="Show only the selected layer (L)">Single layer</button>
         <label className="slice-travel"><input type="checkbox" checked={showTravel} onChange={onToggleTravel} data-testid="travel-toggle" title="Show non-extruding moves as gray lines (T)" /> Travel</label>
       </div>
       {filamentView ? (

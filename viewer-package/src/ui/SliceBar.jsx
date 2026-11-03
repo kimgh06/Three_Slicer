@@ -1,27 +1,80 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { GPU_ACCELERATION_MODES, gpuAccelerationMode } from '../core/gpu_acceleration.js'
 
-// The sidebar's fixed bottom bar: auto-slice toggle, the slice button (with the per-plate dropdown)
-// and the G-code export link. While a slice runs the button cancels it.
+// The sidebar's fixed bottom bar: the slice button, split as upstream's is, so the current plate is one click and the
+// ▾ holds the all-plates run; the export; and the slice options on a line of their own. While a slice runs the button
+// cancels it.
 export default function SliceBar({
   autoSlice, onAutoSlice, slicing, progress, sliceRate = 0, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
-  slicedPlateCount, canSlice, onSlice, onCancel, onExportAll, gcodeReady = false, onExportGcode, bedWarning,
+  slicedPlateCount, canSlice, onSlice, onCancel, gcodeReady = false, onExportGcode, bedWarning,
   // Plate-parallel slicing: the run map (core/slice_pool.js) while an all-plates run is on, the worker-count knob
-  //  and what Auto resolves to, and which kernel loaded — mt and st are a measured 9.8x apart, so it is said.
-  plateRun = null, kernelKind = null, workers = 0, autoWorkers = 1, maxWorkers = 1, memoryWorkers = Infinity,
+  //  and what Auto resolves to.
+  plateRun = null, workers = 0, autoWorkers = 1, maxWorkers = 1, memoryWorkers = Infinity,
   slaResult = false, slaTech = false, onExportSl1 = null, exporting = null, sl1Ready = null, onExportGcode3mf = null, onExportPlateGcode3mf = null,
   // GPU acceleration of the polygon booleans (core/gpu_acceleration.js): the settings map's raw `gpu_acceleration` value.
   //  onSetting(key, value) writes a viewer knob (`slice_workers`, `gpu_acceleration`) into the host's settings map.
   gpuSetting = null, onSetting,
 }) {
-  const title = slicing ? 'Click to cancel the slice'
-    : plateCount > 1 ? 'Choose what to slice (Ctrl+R = current plate)' : 'Slice the current plate (Ctrl+R)'
+  const plates = plateCount > 1
+  let sliceTitle = 'Slice the current plate (Ctrl+R)'
+  let sliceLabel = 'Slice'
+  if (plates) sliceLabel = `Slice plate ${selectedPlate + 1}`
+  if (slicing) {
+    sliceTitle = 'Click to cancel the slice'
+    sliceLabel = `Slicing… ${Math.round(progress * 100)}%`
+  }
+  const runSlice = () => {
+    if (slicing) onCancel()
+    else onSlice('current')
+  }
+  // One menu at a time: `sliceMenuOpen` is Viewport's because a slice start closes it, the export one is this bar's.
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const closeMenus = () => {
+    setExportMenuOpen(false)
+    if (sliceMenuOpen) onSliceMenu()
+  }
+  const toggleSliceMenu = () => {
+    setExportMenuOpen(false)
+    onSliceMenu()
+  }
+  const toggleExportMenu = () => {
+    if (sliceMenuOpen) onSliceMenu()
+    setExportMenuOpen(open => !open)
+  }
   const gpuMode = gpuAccelerationMode({ gpu_acceleration: gpuSetting })
   let workersValue = 0
   if (workers > 0) workersValue = Math.min(workers, maxWorkers, memoryWorkers)
   return (
-    <div className="side-bottom">
-      {/* The two slice options stack in one column so the bar keeps the export button on one line. */}
+    <div className="side-bottom" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); closeMenus() } }}>
+      {(exportMenuOpen || sliceMenuOpen) && <div className="slice-scrim" onPointerDown={closeMenus} data-testid="slice-scrim" />}
+      <div className="slice-dd">
+        <button className="slice-btn" title={sliceTitle} onClick={runSlice} disabled={!canSlice} data-testid="slice-btn">{sliceLabel}</button>
+        {plates && !slicing && (
+          <button className="slice-more" onClick={toggleSliceMenu} disabled={!canSlice} aria-label="More slice options" aria-expanded={!!sliceMenuOpen}
+            title="More ways to slice" data-testid="slice-more">▾</button>
+        )}
+        {sliceMenuOpen && plates && !slicing && (
+          <div className="slice-menu" data-testid="slice-menu">
+            <button onClick={() => onSlice('all')} data-testid="slice-all" title="Slice every plate, several at a time — switch tabs to inspect the results">Slice all plates ({plateCount})</button>
+          </div>
+        )}
+      </div>
+      <ExportButton menuOpen={exportMenuOpen} onToggleMenu={toggleExportMenu} onCloseMenu={closeMenus} plateCount={plateCount} slaResult={slaResult} slaTech={slaTech} bedWarning={bedWarning} exporting={exporting} sl1Ready={sl1Ready}
+        onExportSl1={onExportSl1} gcodeReady={gcodeReady} onExportGcode={onExportGcode} onExportGcode3mf={onExportGcode3mf}
+        onExportPlateGcode3mf={onExportPlateGcode3mf} slicedPlateCount={slicedPlateCount} selectedPlate={selectedPlate} />
+      {/* Throughput, on its own row (the bar wraps) rather than inside the button label: the button is flex-sized
+          in a narrow sidebar, and "Slicing… 62% · 21 layers/s" does not fit it at any useful font size. Rendered
+          only while a rate exists, so the bar keeps its idle height between slices. Tabular figures — without them
+          the digits change width as the number moves and the line jitters several times a second. */}
+      {slicing && (sliceRate > 0 || plateRun) && (
+        <div className="slice-rate" data-testid="slice-rate"
+          title="Layers finished per second, over the last 250ms. A resin slice reports it throughout; a filament slice reports it once the emission pass starts streaming layers, since the earlier passes publish no per-layer progress.">
+          {sliceRate > 0 ? `${sliceRate >= 10 ? Math.round(sliceRate) : sliceRate.toFixed(1)} layers/s` : ''}
+          {plateRun ? `${sliceRate > 0 ? ' · ' : ''}${plateRun.workers.active} of ${plateRun.workers.pool} worker${plateRun.workers.pool === 1 ? '' : 's'}` : ''}
+        </div>
+      )}
+      {/* The settings of the slice, on one line under the buttons they apply to. Workers only mean something with
+          several plates. */}
       <div className="slice-options">
         <label className="auto-slice" data-testid="auto-slice" title="Re-slice automatically 0.8s after a settings change (the first slice is manual; a running slice is canceled and restarted)">
           <input type="checkbox" checked={autoSlice} onChange={e => onAutoSlice(e.target.checked)} /> Auto slice
@@ -32,17 +85,8 @@ export default function SliceBar({
             {GPU_ACCELERATION_MODES.map(mode => <option key={mode} value={mode}>{GPU_LABEL[mode]}</option>)}
           </select>
         </label>
-      </div>
-      <div className="slice-dd">
-        <button className="slice-btn" title={title}
-          onClick={() => (slicing ? onCancel() : (plateCount > 1 ? onSliceMenu() : onSlice('current')))}
-          disabled={!canSlice} data-testid="slice-btn">
-          {slicing ? `Slicing… ${Math.round(progress * 100)}%` : (plateCount > 1 ? 'Slice ▾' : 'Slice')}
-        </button>
-        {sliceMenuOpen && plateCount > 1 && (
-          <div className="slice-menu" data-testid="slice-menu">
-            <button onClick={() => onSlice('current')} data-testid="slice-current" title="Slice only the selected plate (Ctrl+R)">Current plate (P{selectedPlate + 1})</button>
-            <button onClick={() => onSlice('all')} data-testid="slice-all" title="Slice every plate, several at a time — switch tabs to inspect the results">All plates ({plateCount})</button>
+        {plates && (
+          <>
             {/* How many plates slice at once. Auto is half the cores on the threaded kernel (most of the measured
                 gain for half the memory) and one per core on the single-threaded one; each worker holds its own
                 copy of the model, which is the only reason to go lower. Not a plain button row: this is a value. */}
@@ -56,45 +100,10 @@ export default function SliceBar({
                 {Array.from({ length: Math.max(1, Math.min(maxWorkers, memoryWorkers)) }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
                 {memoryWorkers < maxWorkers && <option value="" disabled>more would exceed the memory budget for this model</option>}
               </select>
-              {kernelKind && (
-                <span className={'kernel-badge ' + kernelKind} data-testid="kernel-badge"
-                  title={kernelKind === 'mt' ? 'Threaded kernel (the page is cross-origin isolated)'
-                    : 'Single-threaded kernel — serve the page with COOP/COEP headers to enable threads (about 10x faster)'}>
-                  {kernelKind}
-                </span>
-              )}
             </label>
-            {slicedPlateCount > 0 && (
-              <button onClick={onExportAll} data-testid="export-all" title="Save every sliced plate in one .gcode.3mf — reopenable here and in OrcaSlicer (a resin plate saves as its own .sl1)">Export all .gcode.3mf ({slicedPlateCount})</button>
-            )}
-          </div>
+          </>
         )}
       </div>
-      <ExportButton slaResult={slaResult} slaTech={slaTech} bedWarning={bedWarning} exporting={exporting} sl1Ready={sl1Ready}
-        onExportSl1={onExportSl1} gcodeReady={gcodeReady} onExportGcode={onExportGcode} onExportGcode3mf={onExportGcode3mf}
-        onExportPlateGcode3mf={onExportPlateGcode3mf} slicedPlateCount={slicedPlateCount} selectedPlate={selectedPlate} />
-      {/* Throughput, on its own row (the bar wraps) rather than inside the button label: the button is flex-sized
-          in a narrow sidebar, and "Slicing… 62% · 21 layers/s" does not fit it at any useful font size. Rendered
-          only while a rate exists, so the bar keeps its idle height between slices. Tabular figures — without them
-          the digits change width as the number moves and the line jitters several times a second. */}
-      {/* An all-plates run shows every plate on one row — done, busy with its own percentage, queued, failed —
-          because the button's one number is the mean over them and says nothing about which plate is where. */}
-      {slicing && plateRun && (
-        <div className="slice-plates" data-testid="slice-plates">
-          {Object.entries(plateRun.plates).map(([i, p]) => (
-            <span key={i} className={'slice-plate ' + p.state} title={`Plate ${Number(i) + 1} — ${p.state}${p.error ? ': ' + p.error : ''}`}>
-              P{Number(i) + 1} {p.state === 'done' ? '✓' : p.state === 'failed' ? '✗' : p.state === 'busy' ? `${Math.round(p.progress * 100)}%` : '·'}
-            </span>
-          ))}
-        </div>
-      )}
-      {slicing && (sliceRate > 0 || plateRun) && (
-        <div className="slice-rate" data-testid="slice-rate"
-          title="Layers finished per second, over the last 250ms. A resin slice reports it throughout; a filament slice reports it once the emission pass starts streaming layers, since the earlier passes publish no per-layer progress.">
-          {sliceRate > 0 ? `${sliceRate >= 10 ? Math.round(sliceRate) : sliceRate.toFixed(1)} layers/s` : ''}
-          {plateRun ? `${sliceRate > 0 ? ' · ' : ''}${plateRun.workers.active} of ${plateRun.workers.pool} worker${plateRun.workers.pool === 1 ? '' : 's'}` : ''}
-        </div>
-      )}
     </div>
   )
 }
@@ -104,7 +113,7 @@ export default function SliceBar({
 //  .sl1 archive instead of G-code, and it is BUILT on click (a click handler, not a prefilled href) — rasterizing
 //  hundreds of layer PNGs eagerly on every plate focus would freeze the tab for a file the user may never save.
 function ExportButton({
-  slaResult, slaTech, bedWarning, exporting, sl1Ready, onExportSl1, gcodeReady, onExportGcode, onExportGcode3mf,
+  menuOpen, onToggleMenu, onCloseMenu, plateCount, slaResult, slaTech, bedWarning, exporting, sl1Ready, onExportSl1, gcodeReady, onExportGcode, onExportGcode3mf,
   onExportPlateGcode3mf, slicedPlateCount, selectedPlate,
 }) {
   const blockedTitle = `Export blocked — ${bedWarning}. Move or rescale the model to fit the bed.`
@@ -123,26 +132,36 @@ function ExportButton({
     )
   }
   if (gcodeReady && !bedWarning && onExportGcode3mf) {
-    // The button saves EVERY sliced plate in one .gcode.3mf (upstream's "Export all sliced file"); the viewed plate
-    //  alone, and the plain .gcode a non-Bambu printer needs, sit in its ▾ menu — a native <details>, so the menu
-    //  needs no state of its own.
+    // The button saves EVERY sliced plate in one .gcode.3mf (upstream's "Export all sliced file") and says how many; the
+    //  viewed plate alone, and the plain .gcode a non-Bambu printer needs, sit in its ▾ menu. Entries read "what, format".
+    const plateName = `Plate ${selectedPlate + 1}`
+    const severalSliced = slicedPlateCount > 1
     let plates = 'the sliced plate'
-    if (slicedPlateCount > 1) plates = `all ${slicedPlateCount} sliced plates`
+    let exportLabel = 'Export G-code'
+    if (plateCount > 1) exportLabel = `Export plate ${selectedPlate + 1}`
+    if (severalSliced) {
+      plates = `all ${slicedPlateCount} sliced plates`
+      exportLabel = `Export ${slicedPlateCount} plates`
+    }
+    const pick = (run) => () => { onCloseMenu(); run() }
     return (
       <div className="export-dd">
         <button className="export-btn" onClick={onExportGcode3mf} disabled={!!exporting} data-testid="gcode3mf-dl"
           title={`Save ${plates} as one .gcode.3mf — reopenable here and in OrcaSlicer/Bambu Studio`}>
-          {exporting || 'Export G-code'}
+          {exporting || exportLabel}
         </button>
-        <details className="export-more">
-          <summary title="Other formats" data-testid="gcode-dl-more">▾</summary>
-          <div className="slice-menu export-menu">
-            {onExportPlateGcode3mf && slicedPlateCount > 1 && (
-              <button onClick={onExportPlateGcode3mf} title="Save only the plate you are viewing as a .gcode.3mf" data-testid="gcode3mf-plate-dl">This plate only (P{selectedPlate + 1})</button>
+        <button className="export-more" onClick={onToggleMenu} aria-label="Other exports" aria-expanded={menuOpen} title="Other exports" data-testid="gcode-dl-more">▾</button>
+        {menuOpen && (
+          <div className="slice-menu export-menu" data-testid="export-menu">
+            {severalSliced && (
+              <button onClick={pick(onExportGcode3mf)} title="Save every sliced plate in one .gcode.3mf (a resin plate saves as its own .sl1)" data-testid="export-all">All plates, .gcode.3mf ({slicedPlateCount})</button>
             )}
-            <button onClick={onExportGcode} title="Save the plain G-code of the plate you are viewing" data-testid="gcode-dl">Plain .gcode (P{selectedPlate + 1})</button>
+            {onExportPlateGcode3mf && (
+              <button onClick={pick(onExportPlateGcode3mf)} title="Save only the plate you are viewing as a .gcode.3mf" data-testid="gcode3mf-plate-dl">{plateName}, .gcode.3mf</button>
+            )}
+            <button onClick={pick(onExportGcode)} title="Save the plain G-code of the plate you are viewing" data-testid="gcode-dl">{plateName}, plain .gcode</button>
           </div>
-        </details>
+        )}
       </div>
     )
   }

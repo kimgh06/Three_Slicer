@@ -3,6 +3,7 @@ import { uiTreeKeys } from 'three-slicer-viewer/data'
 import { paintedFacetCount } from './MaterialPaintPanel.jsx'
 import { cardScope } from '../core/plate_settings.js'
 import ScopeToggle from './ScopeToggle.jsx'
+import { Section, Field } from './Section.jsx'
 import { resolveCatalog } from '../core/catalog.js'
 import { MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 
@@ -255,21 +256,25 @@ export default function FilamentCard({
   //  stays absent until the host wires material painting, and then the button simply never lights up.
   const materialPainting = paintMode === 'material'
   const startPainting = (index) => onPaintExtruder?.(index)
+  const paintClass = (index) => {
+    if (materialPainting && index === active) return 'ctl-icon on'
+    return 'ctl-icon'
+  }
+  let materialLabel = 'Material'
+  if (count > 1) materialLabel = `T${active + 1} material`
 
   return (
-    <section className="side-card" data-testid="filament-section">
-      <div className="sc-head">🧵 Filament <span className="sc-count">{count}</span>
-        {plateCount > 1 && setSettingsScope && (
-          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
-            testid="filament-scope-toggle" plateTestid="filament-scope-plate" />
-        )}
-        <span className="sc-head-btns">
-          {/* MAX_PAINT_EXTRUDERS is the painting selector's own ceiling (upstream's EnforcerBlockerType stops at Extruder16), so it is
-              the honest limit here too — the kernel takes per-extruder vectors of any length. */}
-          <button onClick={onAdd} disabled={count >= MAX_PAINT_EXTRUDERS} title={`Add a filament (extruder) — up to ${MAX_PAINT_EXTRUDERS}, assignable per object or by painting`} data-testid="filament-add">+</button>
-          <button onClick={removeExtruder} disabled={count <= 1} title="Remove the selected filament — objects using it move to T1, later tools shift down" data-testid="filament-del">−</button>
-        </span>
-      </div>
+    <Section title="Filament" count={count} testId="filament-section"
+      scope={plateCount > 1 && setSettingsScope && (
+        <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
+          testid="filament-scope-toggle" plateTestid="filament-scope-plate" />
+      )}
+      // MAX_PAINT_EXTRUDERS is the painting selector's own ceiling (upstream's EnforcerBlockerType stops at Extruder16), so
+      //  it is the honest limit here too: the kernel takes per-extruder vectors of any length.
+      actions={(<>
+        <button className="ctl-icon" onClick={onAdd} disabled={count >= MAX_PAINT_EXTRUDERS} title={`Add a filament (extruder) — up to ${MAX_PAINT_EXTRUDERS}, assignable per object or by painting`} data-testid="filament-add">+</button>
+        <button className="ctl-icon" onClick={removeExtruder} disabled={count <= 1} title="Remove the selected filament — objects using it move to T1, later tools shift down" data-testid="filament-del">−</button>
+      </>)}>
       {colors.map((c, i) => (
         <div className={`filament-row${i === active ? ' fil-active' : ''}`} key={i}
              onClick={() => onActive?.(i)} data-testid={`filament-row-${i}`}
@@ -291,7 +296,7 @@ export default function FilamentCard({
             </span>
           )}
           {onPaintExtruder && (
-            <button className={materialPainting && i === active ? 'fil-paint on' : 'fil-paint'}
+            <button className={paintClass(i)}
                     onClick={e => { e.stopPropagation(); startPainting(i) }}
                     data-testid={`filament-paint-${i}`}
                     title={`Brush parts of a model to print with T${i + 1}`}>🖌</button>
@@ -299,30 +304,30 @@ export default function FilamentCard({
         </div>
       ))}
       {catalog.types.length > 0 && (<>
-        <div className="sc-info"><span>{count > 1 ? `T${active + 1} material` : 'Material'}</span>
-          <select className="sc-model" value={activeType} onChange={e => pickType(e.target.value)}
+        <Field label={materialLabel}>
+          <select value={activeType} onChange={e => pickType(e.target.value)}
             data-testid="filament-type" title="Material type — narrows the presets below to the ones made of it">
             {catalog.types.map(type => (
               <option key={type} value={type}>{type} ({catalog.byType.get(type).length})</option>
             ))}
           </select>
-        </div>
-        <div className="sc-info"><span>Preset</span>
+        </Field>
+        <Field label="Preset">
           {/* Native selects on purpose: type-ahead over a long list is free here and hand-written in any custom dropdown. */}
-          <select className="sc-model" value={picked} onChange={e => setSettings?.(prev => applyAt(active, e.target.value, prev), forceFilament())}
+          <select value={picked} onChange={e => setSettings?.(prev => applyAt(active, e.target.value, prev), forceFilament())}
             data-testid="filament-preset" title="Material preset from the upstream vendor profiles — temperatures, flow ratio, cooling and retraction">
             <option value="">Custom (defaults)</option>
             {presets.map(m => <option key={m.name} value={m.name}>{label(m.name)}</option>)}
           </select>
-        </div>
-        <div className="sc-info"><span className="sc-dirty">{dirty ? '● Modified' : ''}</span>
-          <span className="sc-head-btns sc-preset-btns">
-            <button onClick={saveAs} data-testid="filament-save"
+        </Field>
+        <Field label={dirty && <span className="sc-dirty">● Modified</span>}>
+          <span className="field-actions">
+            <button className="ctl-btn" onClick={saveAs} data-testid="filament-save"
               title="Save this extruder's filament values as your own material — system presets are vendor data and stay read-only">Save as template</button>
-            <button onClick={remove} disabled={!custom[picked]} data-testid="filament-delete"
+            <button className="ctl-btn" onClick={remove} disabled={!custom[picked]} data-testid="filament-delete"
               title="Delete this saved material">Delete</button>
           </span>
-        </div>
+        </Field>
       </>)}
       {/* The editor itself is injected by the host (same slot pattern as the printer card's motion panel), so the
           viewer keeps no second copy of the settings form. Editing here is what makes a preset "Modified". */}
@@ -332,6 +337,6 @@ export default function FilamentCard({
           <div className="sc-fold-body">{panel}</div>
         </details>
       )}
-    </section>
+    </Section>
   )
 }

@@ -145,7 +145,7 @@ bool pass1_run(SliceContext& context) {
   const int total = context.total;
   const double height = context.height;
   const double lineWidth = context.lineWidth;
-  { const LayerPlan layerPlan = plan_layers(params.first_layer_height, params.layer_height, height);
+  { const LayerPlan layerPlan = plan_layers(params.first_layer_height, params.layer_height, height, params.variable_layer_heights);
     const std::vector<double>& planes = layerPlan.plane;   // the cutting planes; a layer's print z is layerPlan.top
     // [facet-major segment collection — matching upstream] Like the upstream slice_facet_at_zs (TriangleMeshSlicer.cpp:476),
     //  each triangle binary-searches and visits "only the layers it spans" (work = the number of real intersections). The old layer x full-scan was 657 x 775k
@@ -215,6 +215,7 @@ bool pass1_run(SliceContext& context) {
       layer.z=z;
       layer.index=i;
       if (i==0) layer.thickness=params.first_layer_height;
+      else if (!params.variable_layer_heights.empty()) layer.thickness=layerPlan.top[i]-layerPlan.top[i-1];
       else layer.thickness=params.layer_height;
       std::vector<SliceSegment> segments;
       segments.swap(layerSegments[i]);

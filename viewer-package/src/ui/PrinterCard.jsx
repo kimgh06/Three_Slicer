@@ -5,6 +5,7 @@ import { cardScope } from '../core/plate_settings.js'
 import { applyPrinterPick, applyProcessPreset } from '../core/printer_pick.js'
 import { bedRectangle } from '../core/bed_bounds.js'
 import ScopeToggle from './ScopeToggle.jsx'
+import { Section, Field } from './Section.jsx'
 
 // Printer card: the printer profile picker, bed width x depth (rectangular, edited inline) and the nozzle diameter.
 // Origin, circular and custom shapes belong to the process panel's printable_area editor.
@@ -131,35 +132,32 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
   }
   const w = Math.round((scopedBed?.w ?? bedWidth) * 100) / 100, d = Math.round((scopedBed?.d ?? bedDepth) * 100) / 100
   const blurOnEnter = (e) => { if (e.key === 'Enter') e.target.blur() }
+  let sizeLabel = 'Bed'
+  if (tech === 'SLA') sizeLabel = 'Print area'
   return (
-    <section className="side-card">
-      <div className="sc-head">
-        🖨 Printer
-        {plateCount > 1 && setSettings && setSettingsScope && (
-          <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
-            testid="printer-scope-toggle" plateTestid="printer-scope-plate" />
+    <Section title="Printer"
+      scope={plateCount > 1 && setSettings && setSettingsScope && (
+        <ScopeToggle plateScope={plateScope} selectedPlate={selectedPlate} onScope={setSettingsScope} onReset={onResetPlate}
+          testid="printer-scope-toggle" plateTestid="printer-scope-plate" />
+      )}
+      // Preset files read/write the GLOBAL map (preset_actions settingsRef): offered under a "Plate N" heading they
+      //  would save the wrong thing, so they step back until the scope does.
+      actions={!plateScope && (<>
+        {onImportPreset && (
+          <button className="ctl-btn" onClick={onImportPreset} data-testid="printer-import"
+            title="Load a printer profile from a .json preset or an .orca_printer bundle">Load</button>
         )}
-        {/* Preset files read/write the GLOBAL map (preset_actions settingsRef) — offering them under a
-            "Plate N" heading would save the wrong thing, so they step back until the scope does. */}
-        {!plateScope && (onExportPreset || onImportPreset) && (
-          <span className="sc-head-actions">
-            {onImportPreset && (
-              <button className="sc-mini" onClick={onImportPreset} data-testid="printer-import"
-                title="Load a printer profile from a .json preset or an .orca_printer bundle">Load</button>
-            )}
-            {onExportPreset && (
-              <button className="sc-mini" onClick={onExportPreset} data-testid="printer-export"
-                title="Save this printer's settings as an OrcaSlicer preset file">Save</button>
-            )}
-          </span>
+        {onExportPreset && (
+          <button className="ctl-btn" onClick={onExportPreset} data-testid="printer-export"
+            title="Save this printer's settings as an OrcaSlicer preset file">Save</button>
         )}
-      </div>
+      </>)}>
       {setSettings && (<>
         {/* The FFF/SLA switch — one settings key, and everything routes off it: which sidebar cards render,
             which slicer runs, what the export button writes. The vendor catalog below is FFF-only (it comes from
             Orca's profiles), so a resin setup starts from this switch rather than from a model pick. */}
-        <div className="sc-info"><span>Technology</span>
-          <select className="sc-model" value={printerTechnology(settings)}
+        <Field label="Technology">
+          <select value={printerTechnology(settings)}
             onChange={e => setSettings(s => ({ ...s, printer_technology: e.target.value }))}
             data-testid="printer-tech"
             title={'FFF extrudes filament and exports G-code; SLA cures resin layer by layer and exports an SL1 archive of per-layer masks'
@@ -167,9 +165,9 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
             <option value="FFF">FFF (filament)</option>
             <option value="SLA">SLA (resin)</option>
           </select>
-        </div>
-        <div className="sc-info"><span>Model</span>
-          <select className="sc-model" value={currentModel?.[0] ?? ''} onChange={e => pickModel(e.target.value)}
+        </Field>
+        <Field label="Model">
+          <select value={currentModel?.[0] ?? ''} onChange={e => pickModel(e.target.value)}
             data-testid="printer-model" title="Loads this printer's profile (motion limits, bed, nozzle) from the upstream vendor data">
             <option value="">{!pickMatchesTech && currentModel ? `Inherited: ${currentModel[1].model} (${vendorTech(currentModel[1].vendor)})` : 'Custom (defaults)'}</option>
             {shownVendors.map(([vendor]) => (
@@ -179,32 +177,32 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
               </optgroup>
             ))}
           </select>
-        </div>
+        </Field>
         {variants.length > 1 && (
-          <div className="sc-info"><span>Nozzle</span>
-            <select className="sc-model" value={picked} onChange={e => apply(e.target.value)} data-testid="printer-nozzle">
+          <Field label="Nozzle">
+            <select value={picked} onChange={e => apply(e.target.value)} data-testid="printer-nozzle">
               {variants.map(v => <option key={v.name} value={v.name}>{v.nozzle} mm</option>)}
             </select>
-          </div>
+          </Field>
         )}
         {/* FFF only: the process-preset artifact is FFF machinery, and on an SLA plate `picked` can still be
             the GLOBAL map's FFF printer leaking through the effective merge — offering its speed presets on a
             resin plate was the visible symptom. Resin quality lives on the Resin card (material presets). */}
         {tech !== 'SLA' && presetNames.length > 0 && (
-          <div className="sc-info"><span>Quality</span>
-            <select className="sc-model" value={settings?.print_settings_id ?? ''} onChange={e => applyPreset(e.target.value)}
+          <Field label="Quality">
+            <select value={settings?.print_settings_id ?? ''} onChange={e => applyPreset(e.target.value)}
               data-testid="process-preset" title="Print preset from the vendor profile — the speeds and accelerations the printer is actually driven at">
               <option value="">Custom (defaults)</option>
               {presetNames.map(n => <option key={n} value={n}>{n.replace(/\s*@.*$/, '')}</option>)}
             </select>
-          </div>
+          </Field>
         )}
       </>)}
       {/* One editable size row for both technologies, but the value it EDITS differs: under SLA the print area
           is the resin display's physical size, so onBedSize (Viewport) writes display_width/display_height —
           the keys slice_sla and the SL1 raster actually read — while printable_area (which never reaches the
           SLA kernel) is what it writes under FFF. */}
-      <div className="sc-info"><span>{tech === 'SLA' ? 'Print area' : 'Bed'}</span>
+      <Field label={sizeLabel}>
         <span className="sc-bed" title={tech === 'SLA'
           ? "The resin display's physical size (display_width / display_height) — the area the SLA kernel prints in and the mm the SL1 masks map onto. Applied on Enter or blur."
           : 'Plate size — applied on Enter or blur. Circular/custom shapes come from the printable_area option'}>
@@ -217,8 +215,8 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
             onKeyDown={blurOnEnter} data-testid="bed-d-card" />
           mm
         </span>
-      </div>
-      {tech !== 'SLA' && <div className="sc-info"><span>Nozzle Ø</span><b>{(plateScope && plateFrame?.nozzle) || nozzleDia} mm</b></div>}
+      </Field>
+      {tech !== 'SLA' && <Field label="Nozzle Ø"><b>{(plateScope && plateFrame?.nozzle) || nozzleDia} mm</b></Field>}
       {/* The editor itself is injected by the host (same slot pattern as processPanel) so the viewer keeps no
           second copy of the settings form. Without it the card still reports which limits are in play.
           FFF only, like the nozzle row: kinematic limits drive the G-code estimate, and a resin plate showing
@@ -233,13 +231,13 @@ export default function PrinterCard({ catalog, bedWidth, bedDepth, nozzleDia, pl
           <div className="sc-fold-body">{motionPanel}</div>
         </details>
       ) : (
-        <div className="sc-info"><span>Motion</span>
+        <Field label="Motion">
           <b data-testid="motion-source"
              title={edited.length ? `Edited: ${edited.join(', ')}` : 'Machine limits are at their defaults'}>
             {edited.length ? `Custom (${edited.length})` : 'Default'}
           </b>
-        </div>
+        </Field>
       )}
-    </section>
+    </Section>
   )
 }

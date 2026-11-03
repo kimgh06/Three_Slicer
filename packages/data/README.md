@@ -6,7 +6,7 @@ OrcaSlicer configuration metadata extracted from the original C++ sources, shipp
 |---|---|
 | `config-schema.json` | 976 print options: type, label, category, tooltip, min/max, mode, enum values/labels, defaults, source line numbers |
 | `config-schema-builddump.json` | Build-verified cross-check: the real `print_config_def` (817 options) dumped from a WASM compile of the original `PrintConfig.cpp` — repo-only, excluded from the npm tarball |
-| `ui-tree.json` | Tab → page → group → option tree from `Tab.cpp` (34 pages, 618 option references — the SLA tabs included) |
+| `ui-tree.json` | Tab → page → group → option tree from `Tab.cpp` (34 pages, 674 option references — the SLA tabs included) |
 | `toggle-rules.json` | 231 enable/disable rules with original C++ `enable_if` condition source |
 | `invalidation-map.json` | Option-change → re-slice step mapping (Print/PrintObject invalidation branches) |
 | `preset-keys.json` | The option keys belonging to each preset type (`machine`/`process`/`filament`) — what `presetOptionKeys(type)` reads |

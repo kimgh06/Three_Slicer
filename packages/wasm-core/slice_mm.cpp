@@ -1,5 +1,6 @@
 // slice_mm.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 //  slice_group stays `static` (used only here); slice_multimaterial is declared in layer_data.h.
+#include "seam_paint.h"
 #include "layer_data.h"
 
 #include "config_bridge.h"
@@ -65,6 +66,7 @@ em::val slice_multimaterial(std::vector<Triangle>& triangles, const Params& para
   };
   const LayerPlan layerPlan = plan_layers(params.first_layer_height, params.layer_height, height);
   int layerCount=(int)layerPlan.top.size();
+  seam_marks_prepare(params, layerPlan.plane);
 
   // =========================================================================================================
   // Painted multi-material regions.
@@ -571,14 +573,19 @@ em::val slice_multimaterial(std::vector<Triangle>& triangles, const Params& para
       writer.set_feature((int)role);
     };
     auto emitFeature=[&](const FeatureGeometry& geometry, int feature){
+      // The marks are this path's walls' alone: the prime tower's rings share the context.
       if (feature==FEATURE_OUTER) {
         featureFlow(FlowRole::OuterWall);
+        seamContext.marks=seam_marks_of(i);
         if (!geometry.outer.empty()) emit_loops(writer,toolpath,geometry.outer,printZ,1.0f,feeds.of(FlowRole::OuterWall),travelFeed,-1,seamContext);
+        seamContext.marks=nullptr;
         return;
       }
       if (feature==FEATURE_INNER) {
         featureFlow(FlowRole::InnerWall);
+        seamContext.marks=seam_marks_of(i);
         for (const auto& loops : geometry.inner) emit_loops(writer,toolpath,loops,printZ,1.0f,feeds.of(FlowRole::InnerWall),travelFeed,-1,seamContext);
+        seamContext.marks=nullptr;
         return;
       }
       // Solid before sparse, the order emit_layer.cpp uses — the skin is what the sparse fill anchors against.

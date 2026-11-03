@@ -18,7 +18,7 @@ export { DEFAULT_FILAMENT_COLORS }
 // was just set rather than threading it through by hand.
 export function makeFilamentColors(deps) {
   const {
-    extruderColorsRef, setExtruderColors, setSettings, apiRef, objectsRef, refreshObjects, applyViewColors, selectFilament,
+    extruderColorsRef, setExtruderColors, setSettings, apiRef, objectsRef, clipboardRef, refreshObjects, applyViewColors, selectFilament,
   } = deps
 
   const mirrorToSettings = () => setSettings?.(prev => ({ ...prev, filament_colour: [...extruderColorsRef.current] }))
@@ -45,11 +45,17 @@ export function makeFilamentColors(deps) {
     const removed = Number.isInteger(index) ? Math.min(Math.max(index, 0), colors.length - 1) : colors.length - 1
     setExtruderColors(colors.filter((_color, i) => i !== removed))
     mirrorToSettings()
+    const extruderAfterRemoval = (extruder) => {
+      if (extruder === removed + 1) return 1                 // its filament is gone -> back to T1
+      if (extruder > removed + 1) return extruder - 1        // later tools shift down one slot
+      return extruder
+    }
     for (const object of objectsRef.current) {
       const extruder = object.extruder || 1
-      if (extruder === removed + 1) apiRef.current?.setObjectExtruder(object.id, 1)          // its filament is gone -> back to T1
-      else if (extruder > removed + 1) apiRef.current?.setObjectExtruder(object.id, extruder - 1)   // later tools shift down one slot
+      if (extruderAfterRemoval(extruder) !== extruder) apiRef.current?.setObjectExtruder(object.id, extruderAfterRemoval(extruder))
     }
+    // The clipboard holds an object outside the scene, and a paste would otherwise bring back the old slot number.
+    if (clipboardRef?.current) clipboardRef.current.extruder = extruderAfterRemoval(clipboardRef.current.extruder || 1)
     apiRef.current?.recolorObjects()
     refreshObjects()
     // The slot the selection pointed at may be gone, or may now be past the end. selectFilament moves the card and

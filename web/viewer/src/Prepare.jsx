@@ -4,7 +4,7 @@ import SettingsPanel from './settings_panel.jsx'
 import { takeHandedOffFiles } from './handoff.js'
 import './step_loader.js'   // registers the .step/.stp loader (the OCCT WASM only loads when such a file is actually opened)
 
-// The slicer screen. Viewport owns the desktop-style shell (top bar + left gizmo rail + center viewport
+// The slicer screen. Viewport owns the desktop-style shell (title row + ribbon + center viewport
 // + right sidebar) and the process section embeds SettingsPanel through processPanel, so both sides
 // share one settings map.
 // It lives in its own module so App.jsx can reach it through React.lazy: three.js and the settings panel

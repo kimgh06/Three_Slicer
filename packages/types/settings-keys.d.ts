@@ -163,9 +163,9 @@ export interface SlicerSettings {
   calib_flowrate_topinfill_special_order?: boolean
   /** Center surface pattern on — Chooses where the centering point of centered top/bottom surface patterns (Archimedean Chords, Octagram Spiral) is placed. - Each Surface: centers the pattern on every individual surface region, so each island is symmetric on its own. - Each Model: centers the pattern on each connected body. Parts that touch or overlap share one center; parts detached from the rest each get their own. - Each Assembly: uses a single shared center for the whole object or assembly. */
   center_of_surface_pattern?: 'each_surface' | 'each_model' | 'each_assembly'
-  /** Minimal — (\u2103) — This is the chamber temperature at which printing should start, while the chamber continues heating toward the "Target" chamber temperature. For example, set the Target to 60 and the Minimal to 50 to begin printing once the chamber reaches 50℃, without waiting for the full 60℃. It sets a G-code variable named chamber_minimal_temperature, which can be passed to your print start macro or a heat soak macro, like this: PRINT_START (other variables) CHAMBER_MIN_TEMP=[chamber_minimal_temperature]. Unlike the "Target" chamber temperature, this option does not emit any M141/M191 commands; it only exposes the value to your custom G-code. It should not exceed the "Target" chamber temperature. */
+  /** Minimal — (℃) — This is the chamber temperature at which printing should start, while the chamber continues heating toward the "Target" chamber temperature. For example, set the Target to 60 and the Minimal to 50 to begin printing once the chamber reaches 50℃, without waiting for the full 60℃. It sets a G-code variable named chamber_minimal_temperature, which can be passed to your print start macro or a heat soak macro, like this: PRINT_START (other variables) CHAMBER_MIN_TEMP=[chamber_minimal_temperature]. Unlike the "Target" chamber temperature, this option does not emit any M141/M191 commands; it only exposes the value to your custom G-code. It should not exceed the "Target" chamber temperature. */
   chamber_minimal_temperature?: number[] | number
-  /** Chamber temperature — (\u2103) — For high-temperature materials like ABS, ASA, PC, and PA, a higher chamber temperature can help suppress or reduce warping and potentially lead to higher interlayer bonding strength. However, at the same time, a higher chamber temperature will reduce the efficiency of air filtration for ABS and ASA. For PLA, PETG, TPU, PVA, and other low-temperature materials, this option should be disabled (set to 0) as the chamber temperature should be low to avoid extruder clogging caused by material softening at the heat break. If enabled, this parameter also sets a G-code variable named chamber_temperature, which can be used to pass the desired chamber temperature to your print start macro, or a heat soak macro like this: PRINT_START (other variables) CHAMBER_TEMP=[chamber_temperature]. This may be useful if your printer does not support M141/M191 commands, or if you desire to handle heat soaking in the print start macro if no active chamber heater is installed. */
+  /** Chamber temperature — (℃) — For high-temperature materials like ABS, ASA, PC, and PA, a higher chamber temperature can help suppress or reduce warping and potentially lead to higher interlayer bonding strength. However, at the same time, a higher chamber temperature will reduce the efficiency of air filtration for ABS and ASA. For PLA, PETG, TPU, PVA, and other low-temperature materials, this option should be disabled (set to 0) as the chamber temperature should be low to avoid extruder clogging caused by material softening at the heat break. If enabled, this parameter also sets a G-code variable named chamber_temperature, which can be used to pass the desired chamber temperature to your print start macro, or a heat soak macro like this: PRINT_START (other variables) CHAMBER_TEMP=[chamber_temperature]. This may be useful if your printer does not support M141/M191 commands, or if you desire to handle heat soaking in the print start macro if no active chamber heater is installed. */
   chamber_temperature?: number[] | number
   /** Change extrusion role G-code — This G-code is inserted when the extrusion role is changed. */
   change_extrusion_role_gcode?: string
@@ -193,9 +193,9 @@ export interface SlicerSettings {
   complete_print_exhaust_fan_speed?: number[] | number
   /** Convert Unit — Convert the units of model. */
   convert_unit?: boolean
-  /** Other layers — (\u2103) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Cool Plate. */
+  /** Other layers — (℃) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Cool Plate. */
   cool_plate_temp?: number[] | number
-  /** First layer — (\u2103) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Cool Plate. */
+  /** First layer — (℃) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Cool Plate. */
   cool_plate_temp_initial_layer?: number[] | number
   /** Use cooling filter — Enable this if printer support cooling filter */
   cooling_filter_enabled?: boolean
@@ -249,7 +249,7 @@ export interface SlicerSettings {
   detect_narrow_internal_solid_infill?: boolean
   /** Detect overhang walls — This detects the overhang percentage relative to line width and uses a different speed to print. For 100%% overhang, bridging speed is used. */
   detect_overhang_wall?: boolean
-  /** Detect thin walls — This detects thin walls which can\u2019t contain two lines and uses a single line to print. It may not print as well because it\u2019s not a closed loop. */
+  /** Detect thin walls — This detects thin walls which can’t contain two lines and uses a single line to print. It may not print as well because it’s not a closed loop. */
   detect_thin_wall?: boolean
   different_settings_to_system?: string[] | string
   /** Disable set remaining print time — Disable generating of the M73: Set remaining print time in the final G-code. */
@@ -330,9 +330,9 @@ export interface SlicerSettings {
   enable_wrapping_detection?: boolean
   /** (layers) */
   enforce_support_layers?: number
-  /** Other layers — (\u2103) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Engineering Plate. */
+  /** Other layers — (℃) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Engineering Plate. */
   eng_plate_temp?: number[] | number
-  /** First layer — (\u2103) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Engineering Plate. */
+  /** First layer — (℃) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Engineering Plate. */
   eng_plate_temp_initial_layer?: number[] | number
   /** Ensure on bed — Lift the object above the bed when it is partially below. Disabled by default. */
   ensure_on_bed?: boolean
@@ -427,7 +427,7 @@ export interface SlicerSettings {
   /** Color — Only used as a visual help on UI. */
   filament_colour?: string[] | string
   filament_colour_type?: string[] | string
-  /** Wipe tower cooling — (\u2103) — Temperature drop before entering filament tower */
+  /** Wipe tower cooling — (℃) — Temperature drop before entering filament tower */
   filament_cooling_before_tower?: number[] | number
   /** Speed of the last cooling move — (mm/s) — Cooling moves are gradually accelerating towards this speed. */
   filament_cooling_final_speed?: number[] | number
@@ -462,9 +462,9 @@ export interface SlicerSettings {
   filament_extruder_variant?: string[] | string
   /** Flow ratio — The material may have volumetric change after switching between molten and crystalline states. This setting changes all extrusion flow of this filament in G-code proportionally. The recommended value range is between 0.95 and 1.05. You may be able to tune this value to get a nice flat surface if there is slight overflow or underflow. */
   filament_flow_ratio?: number[] | number
-  /** Flush temperature — (\u2103) — Temperature when flushing filament. 0 indicates the upper bound of the recommended nozzle temperature range. */
+  /** Flush temperature — (℃) — Temperature when flushing filament. 0 indicates the upper bound of the recommended nozzle temperature range. */
   filament_flush_temp?: number[] | number
-  /** Flush temperature — (\u2103) — Flush temperature used in fast purge mode. */
+  /** Flush temperature — (℃) — Flush temperature used in fast purge mode. */
   filament_flush_temp_fast?: number[] | number
   /** Flush volumetric speed — (mm³/s) — Volumetric speed when flushing filament. 0 indicates the max volumetric speed. */
   filament_flush_volumetric_speed?: number[] | number
@@ -506,11 +506,11 @@ export interface SlicerSettings {
   /** Filament notes — You can put your notes regarding the filament here. */
   filament_notes?: string[] | string
   filament_nozzle_map?: number[] | number
-  /** Extruder change — (\u2103) — To prevent oozing, the nozzle temperature will be cooled during ramming. Therefore, the ramming time must be greater than the cooldown time. 0 means disabled. */
+  /** Extruder change — (℃) — To prevent oozing, the nozzle temperature will be cooled during ramming. Therefore, the ramming time must be greater than the cooldown time. 0 means disabled. */
   filament_pre_cooling_temperature?: number[] | number
-  /** Hotend change — (\u2103) — To prevent oozing, the nozzle temperature will be cooled during ramming. Note: only a cooldown command and fan activation are triggered, reaching the target temperature is not guaranteed. 0 means disabled. */
+  /** Hotend change — (℃) — To prevent oozing, the nozzle temperature will be cooled during ramming. Note: only a cooldown command and fan activation are triggered, reaching the target temperature is not guaranteed. 0 means disabled. */
   filament_pre_cooling_temperature_nc?: number[] | number
-  /** Preheat temperature delta — (\u2103) — Temperature delta applied during pre-heating before tool change. */
+  /** Preheat temperature delta — (℃) — Temperature delta applied during pre-heating before tool change. */
   filament_preheat_temperature_delta?: number[] | number
   /** Filament preset name — Names of the filament presets used for slicing. The variable is a vector containing one name for each extruder. */
   filament_preset?: string
@@ -575,7 +575,7 @@ export interface SlicerSettings {
   filament_tower_interface_pre_extrusion_dist?: number[] | number
   /** Interface layer pre-extrusion length — (mm) — Pre-extrusion length for prime tower interface layer (where different materials meet). */
   filament_tower_interface_pre_extrusion_length?: number[] | number
-  /** Interface layer print temperature — (\u2103) — Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature. */
+  /** Interface layer print temperature — (℃) — Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature. */
   filament_tower_interface_print_temp?: number[] | number
   /** Interface layer purge length — (mm) — Purge length for prime tower interface layer (where different materials meet). */
   filament_tower_interface_purge_volume?: number[] | number
@@ -624,11 +624,11 @@ export interface SlicerSettings {
   first_x_layer_fan_speed?: number[] | number
   /** Serial Number — Flashforge local API requires the printer serial number. */
   flashforge_serial_number?: string
-  /** Flush into objects' infill — Purging after filament change will be done inside objects\' infills. This may lower the amount of waste and decrease the print time. If the walls are printed with transparent filament, the mixed color infill will be visible. It will not take effect unless the prime tower is enabled. */
+  /** Flush into objects' infill — Purging after filament change will be done inside objects' infills. This may lower the amount of waste and decrease the print time. If the walls are printed with transparent filament, the mixed color infill will be visible. It will not take effect unless the prime tower is enabled. */
   flush_into_infill?: boolean
   /** Flush into this object — This object will be used to purge the nozzle after a filament change to save filament and decrease the print time. Colors of the objects will be mixed as a result. It will not take effect unless the prime tower is enabled. */
   flush_into_objects?: boolean
-  /** Flush into objects' support — Purging after filament change will be done inside objects\' support. This may lower the amount of waste and decrease the print time. It will not take effect unless a prime tower is enabled. */
+  /** Flush into objects' support — Purging after filament change will be done inside objects' support. This may lower the amount of waste and decrease the print time. It will not take effect unless a prime tower is enabled. */
   flush_into_support?: boolean
   /** Flush multiplier — The actual flushing volumes is equal to the flush multiplier value multiplied by the flushing volumes in the table. */
   flush_multiplier?: number[] | number
@@ -662,7 +662,7 @@ export interface SlicerSettings {
   fuzzy_skin_ripples_per_layer?: number
   /** Fuzzy skin feature size — (mm) — The base size of the coherent noise features, in mm. Higher values will result in larger features. */
   fuzzy_skin_scale?: number
-  /** Fuzzy skin thickness — (mm) — The width of jittering: it\u2019s recommended to keep this lower than the outer wall line width. */
+  /** Fuzzy skin thickness — (mm) — The width of jittering: it’s recommended to keep this lower than the outer wall line width. */
   fuzzy_skin_thickness?: number
   gamma_correction?: number
   /** Gap fill flow ratio — This factor affects the amount of material for filling the gaps. The actual gap filling flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio. */
@@ -716,15 +716,15 @@ export interface SlicerSettings {
   hollowing_quality?: number
   /** Host Type — Orca Slicer can upload G-code files to a printer host. This field must contain the kind of the host. */
   host_type?: 'prusalink' | 'prusaconnect' | 'octoprint' | 'duet' | 'flashair' | 'astrobox' | 'repetier' | 'mks' | 'esp3d' | 'crealityprint' | 'obico' | 'flashforge' | 'simplyprint' | 'elegoolink' | '3dprinteros' | 'moonraker'
-  /** Other layers — (\u2103) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the High Temp Plate. */
+  /** Other layers — (℃) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the High Temp Plate. */
   hot_plate_temp?: number[] | number
-  /** First layer — (\u2103) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the High Temp Plate. */
+  /** First layer — (℃) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the High Temp Plate. */
   hot_plate_temp_initial_layer?: number[] | number
   hotend_cooling_rate?: number[] | number
   hotend_heating_rate?: number[] | number
   /** Hour */
   hour?: number
-  /** Idle temperature — (\u2103) — Nozzle temperature when the tool is currently not used in multi-tool setups. This is only used when 'Ooze prevention' is active in Print Settings. Set to 0 to disable. */
+  /** Idle temperature — (℃) — Nozzle temperature when the tool is currently not used in multi-tool setups. This is only used when 'Ooze prevention' is active in Print Settings. Set to 0 to disable. */
   idle_temperature?: number[] | number
   /** Independent support layer height — Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. This option will be invalid when the prime tower is enabled. */
   independent_support_layer_height?: boolean
@@ -748,7 +748,7 @@ export interface SlicerSettings {
   infill_shift_step?: number
   /** Infill/wall overlap — (%) — This allows the infill area to be enlarged slightly to overlap with walls for better bonding. The percentage value is relative to line width of sparse infill. Set this value to ~10-15% to minimize potential over extrusion and accumulation of material resulting in rough top surfaces. */
   infill_wall_overlap?: number
-  /** Output Model Info — This outputs the model\u2019s information. */
+  /** Output Model Info — This outputs the model’s information. */
   info?: boolean
   /** Inherits profile — Name of parent profile. */
   inherits?: string
@@ -991,7 +991,7 @@ export interface SlicerSettings {
   /** Material UUID (FOR DEBUGGING ONLY) */
   material_uuid?: string
   material_vendor?: string
-  /** Max bridge length — (mm) — This is the maximum length of bridges that don\'t need support. Set it to 0 if you want all bridges to be supported, and set it to a very large value if you don\'t want any bridges to be supported. */
+  /** Max bridge length — (mm) — This is the maximum length of bridges that don't need support. Set it to 0 if you want all bridges to be supported, and set it to a very large value if you don't want any bridges to be supported. */
   max_bridge_length?: number
   max_exposure_time?: number
   max_initial_exposure_time?: number
@@ -1001,7 +1001,7 @@ export interface SlicerSettings {
   max_layer_z?: number
   /** Max — (mm/s) — Maximum speed of resonance avoidance. */
   max_resonance_avoidance_speed?: number
-  /** Avoid crossing walls - Max detour length — (mm or %) — Maximum detour distance for avoiding crossing wall: The printer won\'t detour if the detour distance is larger than this value. Detour length could be specified either as an absolute value or as percentage (for example 50%) of a direct travel path. A value of 0 will disable this. */
+  /** Avoid crossing walls - Max detour length — (mm or %) — Maximum detour distance for avoiding crossing wall: The printer won't detour if the detour distance is larger than this value. Detour length could be specified either as an absolute value or as percentage (for example 50%) of a direct travel path. A value of 0 will disable this. */
   max_travel_detour_distance?: number | string
   /** Extrusion rate smoothing — (mm³/s²) — This parameter smooths out sudden extrusion rate changes that happen when the printer transitions from printing a high flow (high speed/larger width) extrusion to a lower flow (lower speed/smaller width) extrusion and vice versa. It defines the maximum rate by which the extruded volumetric flow in mm³/s can change over time. Higher values mean higher extrusion rate changes are allowed, resulting in faster speed transitions. A value of 0 disables the feature. For a high speed, high flow direct drive printer (like the Bambu lab or Voron) this value is usually not needed. However it can provide some marginal benefit in certain cases where feature speeds vary greatly. For example, when there are aggressive slowdowns due to overhangs. In these cases a high value of around 300-350 mm³/s² is recommended as this allows for just enough smoothing to assist pressure advance achieve a smoother flow transition. For slower printers without pressure advance, the value should be set much lower. A value of 10-15 mm³/s² is a good starting point for direct drive extruders and 5-10 mm³/s² for Bowden style. This feature is known as Pressure Equalizer in Prusa slicer. Note: this parameter disables arc fitting. */
   max_volumetric_extrusion_rate_slope?: number
@@ -1056,15 +1056,15 @@ export interface SlicerSettings {
   nozzle_flush_dataset?: number[] | number
   /** Nozzle height — (mm) — The height of nozzle tip. */
   nozzle_height?: number
-  /** Nozzle HRC — (HRC) — The nozzle\'s hardness. Zero means no checking for nozzle hardness during slicing. */
+  /** Nozzle HRC — (HRC) — The nozzle's hardness. Zero means no checking for nozzle hardness during slicing. */
   nozzle_hrc?: number
-  /** Other layers — (\u2103) — Nozzle temperature after the first layer */
+  /** Other layers — (℃) — Nozzle temperature after the first layer */
   nozzle_temperature?: number[] | number
-  /** First layer — (\u2103) — Nozzle temperature for printing the first layer with this filament */
+  /** First layer — (℃) — Nozzle temperature for printing the first layer with this filament */
   nozzle_temperature_initial_layer?: number[] | number
-  /** Max — (\u2103) */
+  /** Max — (℃) */
   nozzle_temperature_range_high?: number[] | number
-  /** Min — (\u2103) */
+  /** Min — (℃) */
   nozzle_temperature_range_low?: number[] | number
   /** Nozzle type — The metallic material of the nozzle: This determines the abrasive resistance of the nozzle and what kind of filament can be printed. */
   nozzle_type?: ('undefine' | 'hardened_steel' | 'stainless_steel' | 'tungsten_carbide' | 'brass')[] | ('undefine' | 'hardened_steel' | 'stainless_steel' | 'tungsten_carbide' | 'brass')
@@ -1280,7 +1280,7 @@ export interface SlicerSettings {
   reduce_crossing_wall?: boolean
   /** Keep fan always on — Enabling this setting means that part cooling fan will never stop entirely and will instead run at least at minimum speed to reduce the frequency of starting and stopping. */
   reduce_fan_stop_start_freq?: boolean[] | boolean
-  /** Reduce infill retraction — Don\'t retract when the travel is entirely within an infill area. That means the oozing can\'t been seen. This can reduce times of retraction for complex model and save printing time, but make slicing and G-code generating slower. Note that z-hop is also not performed in areas where retraction is skipped. */
+  /** Reduce infill retraction — Don't retract when the travel is entirely within an infill area. That means the oozing can't been seen. This can reduce times of retraction for complex model and save printing time, but make slicing and G-code generating slower. Note that z-hop is also not performed in areas where retraction is skipped. */
   reduce_infill_retraction?: boolean
   /** Relative bridge angle — When enabled, the bridge angle values are added to the automatically calculated bridge direction instead of overriding it. */
   relative_bridge_angle?: boolean
@@ -1290,7 +1290,7 @@ export interface SlicerSettings {
   relative_correction_z?: number
   /** Repetition count — Repetition count of the whole model. */
   repetitions?: number
-  /** Required nozzle HRC — Minimum HRC of nozzle required to print the filament. A value of 0 means no checking of the nozzle\'s HRC. */
+  /** Required nozzle HRC — Minimum HRC of nozzle required to print the filament. A value of 0 means no checking of the nozzle's HRC. */
   required_nozzle_HRC?: number[] | number
   /** Resolution — (mm) — The G-code path is generated after simplifying the contour of models to avoid too many points and G-code lines. Smaller values mean higher resolution and more time required to slice. */
   resolution?: number
@@ -1473,13 +1473,13 @@ export interface SlicerSettings {
   spiral_starting_flow_ratio?: number
   /** Staggered inner seams — This option causes the inner seams to be shifted backwards based on their depth, forming a zigzag pattern. */
   staggered_inner_seams?: boolean
-  /** Temperature variation — (\u2206\u2103) — Temperature difference to be applied when an extruder is not active. The value is not used when 'idle_temperature' in filament settings is set to non-zero value. */
+  /** Temperature variation — (∆℃) — Temperature difference to be applied when an extruder is not active. The value is not used when 'idle_temperature' in filament settings is set to non-zero value. */
   standby_temperature_delta?: number
   /** Start end points — The start and end points which are from the cutter area to the excess chute. */
   start_end_points?: Point[]
-  /** Other layers — (\u2103) — Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Plate SuperTack. */
+  /** Other layers — (℃) — Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Plate SuperTack. */
   supertack_plate_temp?: number[] | number
-  /** First layer — (\u2103) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Cool Plate SuperTack. */
+  /** First layer — (℃) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Cool Plate SuperTack. */
   supertack_plate_temp_initial_layer?: number[] | number
   support_air_filtration?: boolean
   /** Pattern angle — (°) — Use this setting to rotate the support pattern on the horizontal plane. */
@@ -1578,7 +1578,7 @@ export interface SlicerSettings {
   support_threshold_angle?: number
   /** Threshold overlap — (mm or %) — If threshold angle is zero, support will be generated for overhangs whose overlap is below the threshold. The smaller this value is, the steeper the overhang that can be printed without support. */
   support_threshold_overlap?: number | string
-  /** Top Z distance — (mm) — Z gap between the support\'s top and object. */
+  /** Top Z distance — (mm) — Z gap between the support's top and object. */
   support_top_z_distance?: number
   /** Support tree type — Support tree building strategy */
   support_tree_type?: string
@@ -1587,17 +1587,17 @@ export interface SlicerSettings {
   supports_enable?: boolean
   /** Symmetric infill Y axis — If the model has two parts that are symmetric about the Y axis, and you want these parts to have symmetric textures, please click this option on one of the parts. */
   symmetric_infill_y_axis?: boolean
-  /** Softening temperature — (\u2103) — The material softens at this temperature, so when the bed temperature is equal to or greater than this, it\'s highly recommended to open the front door and/or remove the upper glass to avoid clogs. */
+  /** Softening temperature — (℃) — The material softens at this temperature, so when the bed temperature is equal to or greater than this, it's highly recommended to open the front door and/or remove the upper glass to avoid clogs. */
   temperature_vitrification?: number[] | number
   /** Custom G-code — This G-code will be used as a custom code. */
   template_custom_gcode?: string
-  /** Other layers — (\u2103) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Textured Cool Plate. */
+  /** Other layers — (℃) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Textured Cool Plate. */
   textured_cool_plate_temp?: number[] | number
-  /** First layer — (\u2103) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Textured Cool Plate. */
+  /** First layer — (℃) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Textured Cool Plate. */
   textured_cool_plate_temp_initial_layer?: number[] | number
-  /** Other layers — (\u2103) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Textured PEI Plate. */
+  /** Other layers — (℃) — This is the bed temperature for layers except for the first one. A value of 0 means the filament does not support printing on the Textured PEI Plate. */
   textured_plate_temp?: number[] | number
-  /** First layer — (\u2103) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Textured PEI Plate. */
+  /** First layer — (℃) — This is the bed temperature of the first layer. A value of 0 means the filament does not support printing on the Textured PEI Plate. */
   textured_plate_temp_initial_layer?: number[] | number
   /** Thick external bridges — If enabled, bridge extrusion uses a line height equal to the nozzle diameter. This increases bridge strength and reliability, allowing longer spans, but may worsen appearance. If disabled, bridges may look better but are generally reliable only for shorter spans. */
   thick_bridges?: boolean
@@ -1777,7 +1777,7 @@ export interface SlicerSettings {
   wall_transition_angle?: number
   /** Wall transitioning filter margin — (%) — Prevent transitioning back and forth between one extra wall and one less. This margin extends the range of extrusion widths which follow to [Minimum wall width - margin, 2 * Minimum wall width + margin]. Increasing this margin reduces the number of transitions, which reduces the number of extrusion starts/stops and travel time. However, large extrusion width variation can lead to under- or overextrusion problems. It's expressed as a percentage over nozzle diameter. */
   wall_transition_filter_deviation?: number
-  /** Wall transition length — (%) — When transitioning between different numbers of walls as the part becomes thinner, a certain amount of space is allotted to split or join the wall segments. It\'s expressed as a percentage over nozzle diameter. */
+  /** Wall transition length — (%) — When transitioning between different numbers of walls as the part becomes thinner, a certain amount of space is allotted to split or join the wall segments. It's expressed as a percentage over nozzle diameter. */
   wall_transition_length?: number
   /** Wipe while retracting — This moves the nozzle along the last extrusion path when retracting to clean any leaked material on the nozzle. This can minimize blobs when printing a new part after traveling. */
   wipe?: boolean[] | boolean

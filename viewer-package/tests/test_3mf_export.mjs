@@ -159,6 +159,15 @@ function viewerPlateOriginOf(plate, plateCount = 1) {
     paintExport: { facets: [0], hex: '4' }, paintKind: 'supports' })
   const { objects: readSupports } = await parse3MFProject(supports, 'supports')
   eq('support paint lands in paint_supports', [...(readSupports[0].paint?.supports ?? new Map()).entries()], [[0, '4']])
+
+  // Seam paint rides the same way, under its own attribute, from the store.
+  const seamObjects = objects.map((object, index) => {
+    if (index === 0) return { ...object, paint: { seam: new Map([[1, '8']]) } }
+    return object
+  })
+  const seamSaved = await write3MFProject(seamObjects, {}, { bedWidth: BED_W, bedDepth: BED_D, plateCount: 1 })
+  const { objects: readSeam } = await parse3MFProject(seamSaved, 'seam')
+  eq('seam paint lands in paint_seam', [...(readSeam[0].paint?.seam ?? new Map()).entries()], [[1, '8']])
   eq('...and not in paint_color', readSupports[0].paint?.color.size, 0)
 }
 
