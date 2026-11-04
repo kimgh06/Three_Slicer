@@ -90,6 +90,17 @@ console.log('\n[lod: the mesh switches only for a whole print, and recolours eve
   handle.setLayerRange(0, layerCount - 1); handle.updateLod(camera, 1000)
   check('the whole range again -> coarse', handle.lodLevel() === far)
 
+  // A plate off screen is skipped by three's frustum test, which needs the plate's real bounds: an instanced
+  //  geometry's own would be its bead template's, and the meshes used to opt out of the test for that reason.
+  const sphere = handle.mesh.geometry.boundingSphere
+  check('every drawn mesh carries the plate bounds and takes the frustum test',
+    [handle.mesh, ...handle.mesh.children].every(m => m.frustumCulled && m.geometry.boundingSphere === sphere) && sphere.radius > 7)
+  const frustum = new THREE.Frustum()
+  const aim = (from, to) => { camera.position.set(...from); camera.lookAt(...to); camera.updateMatrixWorld(); camera.updateProjectionMatrix(); frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)) }
+  aim([5, 5, 50], [5, 5, 0]); check('in view -> drawn', frustum.intersectsObject(handle.mesh))
+  aim([5, 5, 50], [500, 5, 50]); check('looking away -> skipped', !frustum.intersectsObject(handle.mesh))
+  camera.up.set(0, 1, 0); lookFrom(1e5); camera.lookAt(0, 0, 0); camera.updateMatrixWorld()   // back where the checks below expect it
+
   // The move scrub: the top layer drawn up to a move, the rest of it hidden; null gives the whole range back.
   //  The renderer that replaced the ported one had left setMoveRange and `data` out, and the bar read 0 / 0.
   check('the handle carries its data', handle.data === data)
