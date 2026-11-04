@@ -8,7 +8,7 @@ import { createSceneTools, applyNegativeLook } from './scene_tools.js'
 import { platePosition, plateIndexAtXZ, plateLayoutHetero, nextPlacement } from '../core/plate_layout.js'; import { uniformPlateDims } from '../core/plate_settings.js'; import { makeSlaRaster } from './sla_raster.js'
 import { buildMergedSTL, exportObjects } from '../core/model_geometry.js'; import { towerSelectionRule } from '../core/tower_layout.js'
 import { buildOverhangGeometry } from './overhang_view.js'; import { makeNozzleMarker } from './nozzle_marker.js'; import { rebuildPlates, followPlateLayout, refitCameraToPlates, fitCameraDepth } from './plate_scene.js'; import { DEPTH_NEAR, DEPTH_FAR } from '../core/camera_depth.js'
-import { createScaleBox, clampMeshScale } from './scale_box.js'; import { fitGizmoToSelection } from './gizmo_fit.js'; import { createBodyDrag } from './body_drag.js'; import { createFineTransform } from './fine_transform.js'
+import { createScaleBox, clampMeshScale } from './scale_box.js'; import { fitGizmoToSelection } from './gizmo_fit.js'; import { createBodyDrag } from './body_drag.js'; import { gridRaycast } from './grid_raycast.js'; import { createFineTransform } from './fine_transform.js'
 import { createBoxSelect } from './box_select.js'
 import { createPaintInput } from './paint_input.js'
 import { createSectionPlane } from './section_plane.js'
@@ -181,7 +181,7 @@ export function useThreeScene(deps) {
     // The selection bounding box + its uniform-scale corner handles. It is fed the current selection once per
     //  rendered frame instead of being attached and detached, so the eight places that change `selected` do not
     //  each need a second call to keep in step. The prime tower is excluded: its size is a setting, not a drag.
-    let gizmoMode = 'translate', overScaleHandle = false
+    let gizmoMode = 'translate', overScaleHandle = false, hoverFrame = 0
     const scaleBox = createScaleBox({ scene, camera, domElement: renderer.domElement })
     // The scale box is single-object by construction (it reads one mesh's box and writes one mesh's scale), so a
     //  multi-selection simply does not offer it — the move/rotate gizmo still drives the whole set through pivot.
@@ -332,7 +332,7 @@ export function useThreeScene(deps) {
         return
       }
       if (updateHandleHover(ev)) return                 // over a corner handle: no hover change under it either
-      if (transform.dragging || transform.axis || sceneTools.picking()) return; toPointer(ev); const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }
+      if (transform.dragging || transform.axis || sceneTools.picking() || ev.buttons) return; toPointer(ev); if (hoverFrame) return; hoverFrame = requestAnimationFrame(() => { hoverFrame = 0; const hit = pick(); if (hit !== hovered) { hovered = hit; paint(); applyCursor(); setStatus(statusText()) } }) }   // hover raycasts every face (18 ms at 450k faces in Firefox): once a frame, never mid-drag
     // Which plate the pointer is over: a clicked object belongs to its own plate, otherwise it is wherever the ray
     //  meets the bed plane. A camera looking exactly along the plane never meets it — then there is no answer.
     const _bedPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), _bedHit = new THREE.Vector3()
@@ -499,7 +499,7 @@ export function useThreeScene(deps) {
       geo.boundingBox = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max))
       if (opts?.sphere) geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(...opts.sphere.center), opts.sphere.radius)
       const col0 = extruderColorsRef.current[0] || DEFAULT_FILAMENT_COLORS[0]   // apply the T1 filament color
-      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(col0), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide, flatShading: true }))
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(col0), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide, flatShading: true })); mesh.raycast = gridRaycast
       // The first frame after a load is when the user sees the model: its GPU upload happens there, after the
       //  [vp-prof] load line, and on a large model it is a visible gap (measured: 50ms for 3.79M facets). One line per
       //  load, from whichever of its meshes draws first.
@@ -879,7 +879,7 @@ export function useThreeScene(deps) {
     loop()
 
     return () => {
-      cancelAnimationFrame(raf); sceneTools.dispose()
+      cancelAnimationFrame(raf); cancelAnimationFrame(hoverFrame); sceneTools.dispose()
       ro.disconnect(); window.removeEventListener('keydown', onKey)
       renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('pointerdown', onDown)
       renderer.domElement.removeEventListener('pointerdown', onRmbDown); renderer.domElement.removeEventListener('pointerup', onRmbUp); renderer.domElement.removeEventListener('contextmenu', onCtxMenu)
