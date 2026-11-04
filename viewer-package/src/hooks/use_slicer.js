@@ -10,6 +10,7 @@ import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_lay
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
 import { isTypedRefusal } from '../core/slice_errors.js'
 import { gpuAccelerationMode, resolveGpuAcceleration } from '../core/gpu_acceleration.js'
+import { frameCoalesce } from '../core/frame_coalesce.js'
 import { poolPaintAction, paintedExtruderCount, paintBeyondFilaments } from '../core/paint_store.js'
 
 // Every paint state a pool worker's import reply should count (1 = T1 .. MAX): the extruder count reads the highest.
@@ -49,7 +50,11 @@ export function useSlicer(deps) {
   // Where the selector worker's progress goes. Normally the component's own state; during an all-plates run the
   //  pool re-routes it to that run's plate entry, so the one worker that also paints reports like the others do.
   const progressSinkRef = useRef(null)
-  const emitProgress = (v) => { const sink = progressSinkRef.current; if (sink) sink.progress(v); else setProgress(v) }
+  // One progress render per frame (core/frame_coalesce.js); the all-plates sink coalesces its own.
+  const progressValueRef = useRef(0)
+  const progressFrameRef = useRef(null)
+  progressFrameRef.current ??= frameCoalesce(() => setProgress(progressValueRef.current), (run) => requestAnimationFrame(run), (frame) => cancelAnimationFrame(frame))
+  const emitProgress = (v) => { const sink = progressSinkRef.current; if (sink) { sink.progress(v); return } progressValueRef.current = v; progressFrameRef.current.request() }
   const emitRate = (v) => { const sink = progressSinkRef.current; if (sink) sink.rate(v); else setSliceRate(v) }
 
   // ---- Live throughput: layers per second, while the slice runs ----

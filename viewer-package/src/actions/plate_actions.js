@@ -2,6 +2,7 @@ import { log } from '../core/log.js'
 import { deriveKernelParams, deriveSlaParams, settingRaw } from 'three-slicer-viewer/settings'
 import { roleRatios } from 'three-slicer-viewer'
 import { MAX_PLATES } from '../core/plate_layout.js'
+import { frameCoalesce } from '../core/frame_coalesce.js'
 import { effectiveSettings, truncatePlateSettings } from '../core/plate_settings.js'
 import { slaPreviewPayload } from '../core/sla_preview.js'
 import { resolveWorkerCount, makePlateRun, patchPlate, runSummary, PLATE_STATES } from '../core/slice_pool.js'
@@ -502,9 +503,9 @@ export function makePlateActions(deps) {
       const pool = resolveWorkerCount({ setting: settings?.slice_workers, kernel: kernelKindRef.current, cores, plates: plates.length, largestBytes })
       let run = makePlateRun(plates, pool, kernelKindRef.current)
       // The one button and the rate line show the run as a whole; the tabs and the per-plate row read the map.
-      const publish = () => { setPlateRun(run); const sum = runSummary(run); setProgress(sum.progress); setSliceRate(sum.rate) }
-      const patch = (i, p) => { run = patchPlate(run, i, p); publish() }
-      setSlicing(true); publish()
+      const published = frameCoalesce(() => { setPlateRun(run); const sum = runSummary(run); setProgress(sum.progress); setSliceRate(sum.rate) }, requestAnimationFrame, cancelAnimationFrame)
+      const patch = (i, p) => { run = patchPlate(run, i, p); published.request() }
+      setSlicing(true); published.flush()
       const started = performance.now()
       let sliced = 0, anyEconomy = false, anyClassic = false, canceled = false; const failed = []
       // Plates whose pool worker died (memory, most likely): re-run alone on the selector worker after the pool
@@ -556,7 +557,7 @@ export function makePlateActions(deps) {
         // A dead pool worker can leave plates in the queue too (it stopped draining); everything left runs alone.
         for (const job of [...deferred, ...queue.splice(0)]) { if (canceled) break; await slicePlate(job, null) }
       }
-      finally { progressSinkRef.current = null; for (const ctx of extras) ctx.terminate(); setSliceRate(0) }
+      finally { progressSinkRef.current = null; for (const ctx of extras) ctx.terminate(); published.flush(); setSliceRate(0) }
       setSlicing(false)
       if (canceled) { setSliceNotice('Slice canceled' + (sliced ? ` — ${sliced} finished result(s) are kept` : '')); clearError(); }
       else if (!sliced) { setDowngradeOffer({ scope: 'all' }); setError('All plates failed to slice (economy mode included) — try the simplified retry'); return }
