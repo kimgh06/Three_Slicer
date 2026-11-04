@@ -14,6 +14,7 @@ npx playwright install chromium         # once, for the tests and the screenshot
 cd web/extension
 npm run build                           # dist/ — load it unpacked (chrome://extensions, Developer mode)
 npm run build -- --target=firefox       # dist-firefox/ — about:debugging, Load Temporary Add-on
+npm run pack:firefox                    # three-slicer-extension-<version>-firefox.zip for the AMO upload
 npm test                                # unit checks, the build, then the built extension in Chromium
 npm run pack                            # three-slicer-extension-<version>.zip for the store upload
 npm run screenshots                     # store/screenshot-*.png
