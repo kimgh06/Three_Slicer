@@ -1,7 +1,7 @@
 {
   "name": "three-slicer-extension",
   "private": true,
-  "version": "0.4.2",
+  "version": "0.4.3",
   "type": "module",
   "description": "The browser extension: the demo app's slicer screen as an extension page, plus link and download hand-off.",
   "scripts": {
