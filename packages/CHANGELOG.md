@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.3 — 2026-11-07
+
+Performance work measured in Firefox and Chromium, and the changes that let the browser extension be listed on
+Firefox Add-ons (AMO).
+
+### Changed
+
+- The single-threaded kernel ships its wasm as a file, `engine/src/slicer_core.wasm`, as the threaded one already did.
+  Inlined, the glue was a 7.2MB script, and AMO's validator refuses any JS file over 5MB; it is 85KB now. Vite and
+  webpack emit the wasm as an asset. A host that serves the package files itself has to serve this file as
+  `application/wasm` too, and from another origin with `Cross-Origin-Resource-Policy: cross-origin`. G-code is
+  byte-identical to the inlined build.
+- A plate's toolpaths are skipped when the plate is off screen. Zoomed onto one of 28 sliced plates (Hylian Shield,
+  M5 Pro, DPR 2), GPU time per frame went from 16.0 to 1.4 ms in Chromium and from 17.8 to 2.1 ms in Firefox. The
+  whole-bed view is unchanged at about 14 ms.
+- Hover, the paint brush and Measure pick through a per-mesh grid instead of testing every facet. Hover picks at most
+  once per frame and not while a button is held, so an orbit or a drag no longer raycasts the scene.
+- Slice progress and the plate tabs' run state re-render once per frame, however many pool workers report.
+
+### Added
+
+- `npm run pack:firefox` in `web/extension` builds the zip for an AMO upload.
+
 ## 0.4.2 — 2026-11-03
 
 ### Added
