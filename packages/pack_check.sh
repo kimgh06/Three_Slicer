@@ -30,11 +30,14 @@ for tgz in "${T[@]}"; do
   fi
 done
 
-echo "== the mt kernel's wasm ships beside its glue"
-# The threaded glue loads slicer_core.mt.wasm from beside itself (build.sh: SINGLE_FILE is off for mt, because every
-#  pthread isolate parses the glue). `files` lists `engine` whole today, so this only fails when someone narrows it.
-tar -tzf "$TMP"/tarballs/three-slicer-[0-9]*.tgz | grep -q '^package/engine/src/slicer_core\.mt\.wasm$' \
-  || { echo "FAIL: three-slicer's tarball has no engine/src/slicer_core.mt.wasm"; exit 1; }
+echo "== each kernel's wasm ships beside its glue"
+# Both glues load their wasm from beside themselves (build.sh: SINGLE_FILE is off — mt because every pthread isolate
+#  parses the glue, st because AMO refuses a JS file over 5MB). `files` lists `engine` whole today, so this only fails
+#  when someone narrows it.
+for wasm in slicer_core.wasm slicer_core.mt.wasm; do
+  tar -tzf "$TMP"/tarballs/three-slicer-[0-9]*.tgz | grep -qx "package/engine/src/$wasm" \
+    || { echo "FAIL: three-slicer's tarball has no engine/src/$wasm"; exit 1; }
+done
 
 echo "== permissive consumer (three-slicer-viewer alone)"
 # The whole point of the split: this package installs and works with NO AGPL anywhere in the tree. If that
@@ -307,6 +310,7 @@ for (const chunk of assets.filter(f => f.endsWith('.js'))) {
     if (!assets.includes(path.split('/').pop())) missing.push(`${chunk} -> ${path}`)
 }
 if (!assets.some(f => /^slicer_core\.mt.*\.wasm$/.test(f))) missing.push('no slicer_core.mt*.wasm emitted')
+if (!assets.some(f => /^slicer_core-.*\.wasm$/.test(f))) missing.push('no slicer_core*.wasm emitted')
 if (missing.length) { console.log('FAIL: the worker chunk imports files dist does not contain:\n  ' + missing.join('\n  ')); process.exit(1) }
 console.log(`  worker chunk ${workers[0]} resolves every import it makes, and the mt wasm was emitted`)
 EOF

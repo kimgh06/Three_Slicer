@@ -612,7 +612,9 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   isolate ~1MB, and 3-8 workers peaked at 1.2-1.9GB. The glue reaches the file through the literal
   `new URL("slicer_core.mt.wasm", import.meta.url)`, the shape Vite and webpack emit as an asset; the bare name
   beside it is the `locateFile()` branch. `test_mt_glue.mjs` fails on an inlined wasm and `pack_check.sh` on a
-  tarball, Vite dist or Next build without the file. The st kernel keeps `SINGLE_FILE`: it has one isolate.
+  tarball, Vite dist or Next build without the file. The st kernel's wasm is a file too (`slicer_core.wasm`): inlined,
+  its glue was a 7.2MB script, and Firefox's add-on validator refuses any JS file over 5MB (`FILE_TOO_LARGE`), so the
+  extension could not be listed on AMO. `test_mt_glue.mjs` checks both glues.
 - **Every resin plate keeps a preview in the scene, not just the focused one.** The focused resin plate is the
   clipped `setSlaPreview` slot the layer slider cuts; every other resin plate with a result gets a static,
   unclipped group through `setSlaStatic` (`scene/sla_preview_mesh.js` builds both), the resin counterpart of the
