@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict'
 import { measureBetween, worldToModel } from '../src/core/measure.js'
 import { edgeGrid, snapPoint } from '../src/core/edge_snap.js'
+import { gridRaycast } from '../src/scene/grid_raycast.js'
+import * as THREE_ from 'three'
 import { arrangeOnBed } from '../src/core/arrange.js'
 import { bestOrientation } from '../src/core/orient.js'
 import { scriptOf, fallbackFor, textRuns } from '../src/core/text_runs.js'
@@ -214,6 +216,28 @@ const close = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) <= tolerance
   assert.deepEqual(snapPoint(grid, [5, 0.6, 0], 1), { point: [5, 0, 0], kind: 'edge' })
   assert.deepEqual(snapPoint(grid, [5, 5, 0], 1), { point: [5, 5, 0], kind: null })
   assert.deepEqual(snapPoint(grid, [5, 10.5, 2], 1), { point: [5, 10.5, 2], kind: null })   // out of reach in 3D
+}
+
+// ---- the grid raycast gives three's own hits, every one along the ray, in order ----
+{
+  const knot = new THREE_.TorusKnotGeometry(20, 6, 200, 32).toNonIndexed()
+  const material = new THREE_.MeshBasicMaterial({ side: THREE_.DoubleSide })
+  const plain = new THREE_.Mesh(knot, material), fast = new THREE_.Mesh(knot, material)
+  fast.raycast = gridRaycast
+  for (const mesh of [plain, fast]) { mesh.position.set(5, -3, 2); mesh.rotation.set(0.3, 1.1, -0.4); mesh.scale.set(1.5, 0.8, 1.2); mesh.updateMatrixWorld(true) }
+  const raycaster = new THREE_.Raycaster()
+  let seed = 7
+  const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5 }
+  let rays = 0, hitRays = 0
+  for (; rays < 300; rays++) {
+    raycaster.set(new THREE_.Vector3(random() * 120, random() * 120, random() * 120), new THREE_.Vector3(random(), random(), random()).normalize())
+    if (rays % 3 === 0) raycaster.ray.direction.copy(new THREE_.Vector3(5, -3, 2).sub(raycaster.ray.origin).normalize())   // through the middle
+    const expected = raycaster.intersectObject(plain, false), got = raycaster.intersectObject(fast, false)
+    assert.equal(got.length, expected.length, `ray ${rays}`)
+    got.forEach((hit, at) => { assert.equal(hit.faceIndex, expected[at].faceIndex); close(hit.distance, expected[at].distance, 1e-6); close(hit.face.normal.dot(expected[at].face.normal), 1, 1e-9) })
+    if (expected.length) hitRays++
+  }
+  assert.ok(hitRays > 80, `${hitRays} rays hit the knot`)
 }
 
 // ---- arrange ----

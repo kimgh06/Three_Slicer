@@ -14,6 +14,7 @@ npx playwright install chromium         # once, for the tests and the screenshot
 cd web/extension
 npm run build                           # dist/ — load it unpacked (chrome://extensions, Developer mode)
 npm run build -- --target=firefox       # dist-firefox/ — about:debugging, Load Temporary Add-on
+npm run pack:firefox                    # three-slicer-extension-<version>-firefox.zip for the AMO upload
 npm test                                # unit checks, the build, then the built extension in Chromium
 npm run pack                            # three-slicer-extension-<version>.zip for the store upload
 npm run screenshots                     # store/screenshot-*.png
@@ -105,8 +106,9 @@ disk is not opened and the Thingiverse badge is left out. Web downloads and link
 address.
 
 Not run in a real Firefox: none was installed where this was built. `npx web-ext lint --source-dir dist-firefox`
-reports one error that blocks an AMO listing: `FILE_TOO_LARGE` on the single-threaded kernel glue
-(`slicer_core.js`, 7.2MB, the wasm inlined by `SINGLE_FILE`). The remaining warnings are React DOM's `innerHTML`.
+reported one error that blocked an AMO listing: `FILE_TOO_LARGE` on the single-threaded kernel glue
+(`slicer_core.js`, 7.2MB, the wasm inlined by `SINGLE_FILE`). The kernel now ships that wasm as a file (85KB glue). The
+remaining warnings are React DOM's `innerHTML`.
 Whether Firefox makes the page cross-origin isolated from the manifest keys, and so loads the threaded kernel, is
 also unmeasured; without it the page slices on the single-threaded kernel.
 

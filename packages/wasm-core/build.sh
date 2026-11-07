@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Build of the browser-only slicing mini kernel (track C)
-# Output: ../engine/src/slicer_core.js  (SINGLE_FILE=1 -> the wasm is inlined into the glue,
-#         no external .wasm fetch -> self-contained on any static server or vite preview)
+# Output: ../engine/src/slicer_core.js + slicer_core.wasm  (the wasm is a file beside its glue, see the st link step)
 #         ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm  (the threaded kernel ships its wasm as a file,
 #         see the mt link step below for why)
 #
@@ -228,12 +227,14 @@ MAIN_SRC="mesh_boolean.cpp seam_paint.cpp contour_phase.cpp slicer_core.cpp cust
 #  no 'unsafe-eval' refuses — the browser extension's pages (script-src 'self' 'wasm-unsafe-eval') failed to load either
 #  kernel, and the slice hung with no error. The kernel's output is unchanged (golden cmp).
 MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 -DCGAL_ALWAYS_ROUND_TO_NEAREST $ARACHNE_INC"
+# No SINGLE_FILE: inlined, the wasm made the glue a 7.2MB script, and Firefox's add-on validator (addons-linter) refuses
+#  any JS file over 5MB ("File is too large to parse"), so the browser extension could not be submitted to AMO.
+#  The glue reaches the wasm through new URL("slicer_core.wasm", import.meta.url), as the mt glue does.
 echo "compiling main sources (st, parallel x$NCPU)"
 pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
 em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
-  -s SINGLE_FILE=1 \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s MAXIMUM_MEMORY=4GB \
   -s STACK_SIZE=2MB \
@@ -247,8 +248,8 @@ em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
 # and fails (node: scheme) -> excluded with a webpackIgnore magic comment. Runtime behavior is unchanged (no effect on Vite/Node).
 sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.js
 
-echo "built -> ../engine/src/slicer_core.js"
-ls -la ../engine/src/slicer_core.js
+echo "built -> ../engine/src/slicer_core.js + slicer_core.wasm"
+ls -la ../engine/src/slicer_core.js ../engine/src/slicer_core.wasm
 
 # ---- Multithreaded (mt) build: PASS 1 layers in parallel (__EMSCRIPTEN_PTHREADS__) ----
 #  A separate artifact — the default (st) stays zero-config, while mt needs COOP/COEP (crossOriginIsolated) in the browser.
