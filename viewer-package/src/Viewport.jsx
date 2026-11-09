@@ -236,12 +236,6 @@ export default function Viewport({
   const [sliceNotice, setSliceNotice] = useState('')       // e.g. "Memory pressure — finished in economy mode (no preview)"
   const [downgradeOffer, setDowngradeOffer] = useState(null) // {scope} — even economy mode failed -> offer a simplified retry
 
-  // ---- Host change notifications (onEvent) — the effects live in use_host_events.js ----
-  useHostEvents(onEventRef, {
-    canvasMode, objects, selectedPlate, plateCount, extruderColors, autoSlice, slicing, progress, sliceRate,
-    viewType, paintMode, layerCount, error, notice: sliceNotice, layerLo, layerHi,
-  })
-
   // ---- The shared wiring: every ref and setter that more than one module needs, written down ONCE ----
   //  Measured before this existed: 13 factory calls listing 124 names across 137 lines, of which 43 names were
   //  being spelled out again in a second, third or seventh call (`setError` and `apiRef` seven times each). The
@@ -399,6 +393,12 @@ export default function Viewport({
     // Deferred through a lambda: makeSupportPaint is built below and cannot be in `wiring` yet.
     rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
     warmup: feature('warmup'), quiet: !feature('logs'),
+  })
+
+  // ---- Host change notifications (onEvent) — the effects live in use_host_events.js; after useSlicer, which owns kernelLoad ----
+  useHostEvents(onEventRef, {
+    canvasMode, objects, selectedPlate, plateCount, extruderColors, autoSlice, slicing, progress, sliceRate, kernelLoad,
+    viewType, paintMode, layerCount, error, notice: sliceNotice, layerLo, layerHi,
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----

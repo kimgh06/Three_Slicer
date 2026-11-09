@@ -224,6 +224,8 @@ export type ViewportEvent =
    * use `throughput` from `onSliced`.
    */
   | { type: 'sliceRate'; value: number }
+  /** The slicing engine's download, 0..1 at each whole percent; null once the engine has loaded. */
+  | { type: 'kernelLoad'; value: number | null }
   | { type: 'viewType'; value: 'feature' | 'speed' | 'height' | 'width' | 'fan' | 'temp' | 'filament' }
   | { type: 'paintMode'; value: 'off' | 'enforcer' | 'blocker' | 'material' }
   | { type: 'layerCount'; value: number }
