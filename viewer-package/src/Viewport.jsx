@@ -394,7 +394,7 @@ export default function Viewport({
   } = makeToolpathView({ ...wiring, three })
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
-  const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef } = useSlicer({
+  const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef, kernelLoad } = useSlicer({
     ...wiring, paintStateCountsRef, setKernelKind, rebuildToolpaths,
     // Deferred through a lambda: makeSupportPaint is built below and cannot be in `wiring` yet.
     rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
@@ -873,7 +873,7 @@ export default function Viewport({
             {showPanel('plateBar') && platesInSidebar && plateBar(true)}
             {showPanel('sliceBar') && (
               <Panel panels={panels} name="sliceBar">
-              <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate}
+              <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate} kernelLoad={kernelLoad}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 plateRun={plateRun} workers={Number(settings?.slice_workers) || 0} autoWorkers={autoWorkers} maxWorkers={cores} memoryWorkers={memoryWorkers}
                 onSetting={(key, value) => setSettings?.(prev => ({ ...prev, [key]: value }))} gpuSetting={settings?.gpu_acceleration}

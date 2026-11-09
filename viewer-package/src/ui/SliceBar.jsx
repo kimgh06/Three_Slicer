@@ -5,7 +5,7 @@ import { GPU_ACCELERATION_MODES, gpuAccelerationMode } from '../core/gpu_acceler
 // ▾ holds the all-plates run; the export; and the slice options on a line of their own. While a slice runs the button
 // cancels it.
 export default function SliceBar({
-  autoSlice, onAutoSlice, slicing, progress, sliceRate = 0, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
+  autoSlice, onAutoSlice, slicing, progress, sliceRate = 0, kernelLoad = null, plateCount, selectedPlate, sliceMenuOpen, onSliceMenu,
   slicedPlateCount, canSlice, onSlice, onCancel, gcodeReady = false, onExportGcode, bedWarning,
   // Plate-parallel slicing: the run map (core/slice_pool.js) while an all-plates run is on, the worker-count knob
   //  and what Auto resolves to.
@@ -19,6 +19,11 @@ export default function SliceBar({
   let sliceTitle = 'Slice the current plate (Ctrl+R)'
   let sliceLabel = 'Slice'
   if (plates) sliceLabel = `Slice plate ${selectedPlate + 1}`
+  // The kernel is still downloading (the worker's 'kernelLoad'): a slice clicked now waits for it, so the button says how far.
+  if (kernelLoad !== null && kernelLoad < 1) {
+    sliceTitle = 'The slicing engine is still downloading; a slice started now begins once it has loaded'
+    sliceLabel = `Loading engine… ${Math.floor(kernelLoad * 100)}%`
+  }
   if (slicing) {
     sliceTitle = 'Click to cancel the slice'
     sliceLabel = `Slicing… ${Math.round(progress * 100)}%`
