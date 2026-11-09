@@ -39,7 +39,7 @@ const say = (level, ...args) => { if (!quiet) console[level](...args) }
 // Which variant loaded is also REPORTED (the 'warm' reply carries `kernel`), not just logged: mt vs st is a
 //  measured 9.8x on a 3M-facet model, and the viewer sizes its plate-parallel worker pool by it.
 let kernelKind = null
-// The kernel wasm is 6.5-6.8MB, a download of seconds to minutes on a slow link (measured: 7.1s for the 2MB br stream
+// The kernel wasm is 5.7-6.0MB, a download of seconds to minutes on a slow link (measured: 7.1s for the 2MB br stream
 //  from a Cloudflare edge in LAX to Korea). The worker fetches it itself, counting the bytes on their way into
 //  WebAssembly.compileStreaming (so the compile still overlaps the download), and posts 'kernelLoad' {loaded, total}
 //  at each whole percent, unprompted like 'supsab'. The body stream counts DECODED bytes, so the total is the file size

@@ -615,6 +615,24 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   tarball, Vite dist or Next build without the file. The st kernel's wasm is a file too (`slicer_core.wasm`): inlined,
   its glue was a 7.2MB script, and Firefox's add-on validator refuses any JS file over 5MB (`FILE_TOO_LARGE`), so the
   extension could not be listed on AMO. `test_mt_glue.mjs` checks both glues.
+- **The kernel is sized by measurement, and three build choices hold it** (`build.sh` "Size"). A link with
+  `--profiling-funcs` gives every function its name, and summing the code section per namespace is how the big
+  contributors were found (st, 6.0 MB of code: the config subsystem 925 KB, CGAL corefinement 668 KB, libc++ 518 KB,
+  nlopt 443 KB, tree support 427 KB, SLA 392 KB, boost rtree 387 KB, three Clipper copies 355 KB). What that bought,
+  each G-code byte-identical: **(1)** nlopt links only the algorithms the SLA port selects (ESCH, SBPLX, NELDERMEAD,
+  COBYLA, MLSL); `nlopt_unused_algorithms.c` answers `NLOPT_INVALID_ARGS` for the rest, because `nlopt_optimize`'s
+  switch names them all and wasm-ld could not drop them (-187 KB). **(2)** `PrintConfig.cpp` is compiled from a copy
+  that `arachne_port/config/strip_ui_strings.pl` writes to `/tmp/ws_obj/gen/` without tooltip, label, sidetext,
+  category and enum-label strings — the kernel reads names, types, defaults and enum values, and the labels reached
+  only Config.cpp's error text (-236 KB; the upstream file stays verbatim). **(3)** The TUs that run once per slice
+  (config, GCodeProcessor, WipeTower, PressureEqualizer, the PlaceholderParser group) are compiled at -Os through
+  `compile_main` / `compile_ts`, the per-layer geometry at -O2 (-355 KB); no floating-point flag differs between the
+  two. Together st went 6,506,892 -> 5,741,239 bytes (brotli q11 1,457,481 -> 1,305,653). Measured and rejected:
+  `wasm-opt -Oz` over the -O2 binary (-1.5% raw, -0.1% brotli). Still open, each a separately loaded module rather
+  than a build flag: `mesh_boolean.cpp` (CGAL corefinement, -707 KB raw / -140 KB brotli, self-contained behind the
+  worker's `meshBoolean` command) and the SLA group (-1.1 MB raw with `slice_sla.cpp`). Shipping a q11-precompressed
+  `.wasm.br` instead of the CDN's on-the-fly brotli is worth 23% of the wire size on its own. `test_kernel_size.mjs`
+  holds each wasm under a byte budget and fails when a stripped string is back in the bytes.
 - **Every resin plate keeps a preview in the scene, not just the focused one.** The focused resin plate is the
   clipped `setSlaPreview` slot the layer slider cuts; every other resin plate with a result gets a static,
   unclipped group through `setSlaStatic` (`scene/sla_preview_mesh.js` builds both), the resin counterpart of the
