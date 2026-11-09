@@ -1,7 +1,7 @@
 import { log } from '../core/log.js'
 import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { deriveKernelParams, deriveSlaParams, settingRaw, bedCenter, bedOrigin, partialSupport } from 'three-slicer-viewer/settings'
 import { finalizeGcode } from '../core/finalize_gcode.js'
 import { previewFromGcode } from '../core/gcode_parse.js'
@@ -43,6 +43,8 @@ export function useSlicer(deps) {
   const streamAccumRef = useRef(null)   // stage 30: streamed layer accumulator {layers:[{z,paths,widths}], gcode:[chunk]}
   const downgradeRef = useRef(false)    // stage 30: a downgrade (simplified) retry is in progress — buildParams simplifies infill + economy
   const lastGeomRef = useRef(null)      // G003 incremental: geometry digest of the last successful slice (plate-agnostic — a different plate yields a different digest)
+  // The kernel download's fraction (the worker's 'kernelLoad'), null once the kernel answered 'warm' or before anything.
+  const [kernelLoad, setKernelLoad] = useState(null)
   const kernelKindRef = useRef(null)    // 'mt' | 'st' | null — what the selector worker's 'warm' reply said
   const gpuSliceRef = useRef(false)     // the slice being posted to the selector worker asks for the GPU contour union
   const cachedGpuSliceRef = useRef(false)   // ...and whether the slice the worker's stage cache came from did
@@ -166,7 +168,8 @@ export function useSlicer(deps) {
         //  never the slice's: read here too, it showed "Slice failed" and killed a running slice over a paint load.
         else if (d.type === 'error' && d.requestId !== undefined) { /* answered by request() */ }
         else if (d.type === 'error') { stopSupPoll(); if (pnd) { pendingSliceRef.current = null; pnd.stop?.(); pnd.reject(new Error(d.error)) } else { setError('Slice failed: ' + d.error); setSlicing(false) } }
-        else if (d.type === 'warm') { kernelKindRef.current = d.kernel ?? null; setKernelKind?.(kernelKindRef.current) }
+        else if (d.type === 'warm') { kernelKindRef.current = d.kernel ?? null; setKernelKind?.(kernelKindRef.current); setKernelLoad(null) }
+        else if (d.type === 'kernelLoad') setKernelLoad(d.loaded / d.total)
         else if (d.type === 'prepared') { /* selector mesh registered */ }
         // The overlay request that follows a stroke is issued by support_paint.js, which is the one place that knows
         //  which states actually changed — asking for all of them on every sample is what made painting slow down as
@@ -625,5 +628,5 @@ export function useSlicer(deps) {
     } finally { releaseSelector() }
   }
 
-  return { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef }
+  return { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef, kernelLoad }
 }

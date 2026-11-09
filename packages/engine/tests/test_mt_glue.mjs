@@ -6,6 +6,7 @@
 //  script, and Firefox's add-on validator refuses any JS file over 5MB ("File is too large to parse"). The wasm is
 //  reached through the literal new URL("…", import.meta.url) shape, which is what Vite and webpack emit as an asset.
 import { readFileSync } from 'node:fs'
+import { KERNEL_WASM_BYTES } from '../src/kernel_wasm_bytes.js'
 
 const GLUE_LIMIT_BYTES = 1024 * 1024
 const failures = []
@@ -20,6 +21,8 @@ for (const name of ['slicer_core', 'slicer_core.mt']) {
 
   const wasm = readFileSync(new URL(`../src/${name}.wasm`, import.meta.url))
   if (!WebAssembly.validate(wasm)) failures.push(`${name}.wasm does not validate`)
+  // The worker's download percentage divides by this; a stale entry stops the bar short of 100 or past it.
+  if (KERNEL_WASM_BYTES[`${name}.wasm`] !== wasm.length) failures.push(`kernel_wasm_bytes.js says ${KERNEL_WASM_BYTES[`${name}.wasm`]} for ${name}.wasm, the file is ${wasm.length} bytes (rerun build.sh)`)
 
   // And it still loads from beside the glue under node, which is how every kernel test reaches it.
   const { default: createSlicer } = await import(glueUrl.href)

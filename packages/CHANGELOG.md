@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The kernel wasm is 12% smaller: `slicer_core.wasm` 6,506,892 -> 5,741,239 bytes (brotli 1,457,481 -> 1,305,653),
+  `slicer_core.mt.wasm` 6,750,898 -> 5,988,970. Three build changes, G-code byte-identical on every path the golden
+  and wide dumps cover (st and mt): the nlopt algorithms the SLA support chain never selects are stubbed instead of
+  linked (-187 KB), `PrintConfig.cpp` is compiled without its tooltip, label, sidetext and category strings (-236 KB),
+  and the TUs that run once per slice (the config subsystem, GCodeProcessor, WipeTower, PressureEqualizer, the
+  PlaceholderParser group) are compiled at -Os (-355 KB). `test_kernel_size.mjs` keeps each wasm under a byte budget
+  and fails when a stripped string comes back.
+
 ## 0.4.3 — 2026-11-07
 
 Performance work measured in Firefox and Chromium, and the changes that let the browser extension be listed on

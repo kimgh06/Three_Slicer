@@ -236,12 +236,6 @@ export default function Viewport({
   const [sliceNotice, setSliceNotice] = useState('')       // e.g. "Memory pressure — finished in economy mode (no preview)"
   const [downgradeOffer, setDowngradeOffer] = useState(null) // {scope} — even economy mode failed -> offer a simplified retry
 
-  // ---- Host change notifications (onEvent) — the effects live in use_host_events.js ----
-  useHostEvents(onEventRef, {
-    canvasMode, objects, selectedPlate, plateCount, extruderColors, autoSlice, slicing, progress, sliceRate,
-    viewType, paintMode, layerCount, error, notice: sliceNotice, layerLo, layerHi,
-  })
-
   // ---- The shared wiring: every ref and setter that more than one module needs, written down ONCE ----
   //  Measured before this existed: 13 factory calls listing 124 names across 137 lines, of which 43 names were
   //  being spelled out again in a second, third or seventh call (`setError` and `apiRef` seven times each). The
@@ -394,11 +388,17 @@ export default function Viewport({
   } = makeToolpathView({ ...wiring, three })
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
-  const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef } = useSlicer({
+  const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef, kernelLoad } = useSlicer({
     ...wiring, paintStateCountsRef, setKernelKind, rebuildToolpaths,
     // Deferred through a lambda: makeSupportPaint is built below and cannot be in `wiring` yet.
     rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
     warmup: feature('warmup'), quiet: !feature('logs'),
+  })
+
+  // ---- Host change notifications (onEvent) — the effects live in use_host_events.js; after useSlicer, which owns kernelLoad ----
+  useHostEvents(onEventRef, {
+    canvasMode, objects, selectedPlate, plateCount, extruderColors, autoSlice, slicing, progress, sliceRate, kernelLoad,
+    viewType, paintMode, layerCount, error, notice: sliceNotice, layerLo, layerHi,
   })
 
   // ---- Stage 20: manual painting — the support brush (enforcer/blocker) and the material brush ----
@@ -873,7 +873,7 @@ export default function Viewport({
             {showPanel('plateBar') && platesInSidebar && plateBar(true)}
             {showPanel('sliceBar') && (
               <Panel panels={panels} name="sliceBar">
-              <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate}
+              <SliceBar autoSlice={autoSlice} onAutoSlice={setAutoSlice} slicing={slicing} progress={progress} sliceRate={sliceRate} kernelLoad={kernelLoad}
                 plateCount={plateCount} selectedPlate={selectedPlate} sliceMenuOpen={sliceMenu}
                 plateRun={plateRun} workers={Number(settings?.slice_workers) || 0} autoWorkers={autoWorkers} maxWorkers={cores} memoryWorkers={memoryWorkers}
                 onSetting={(key, value) => setSettings?.(prev => ({ ...prev, [key]: value }))} gpuSetting={settings?.gpu_acceleration}

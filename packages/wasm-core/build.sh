@@ -70,7 +70,13 @@ TIME_SRC="gcode_time.cpp"
 #  (the enums are verbatim identical -> ODR-safe). No main TU includes boost/thread, so the empty boost/thread stubs under config/stubs
 #  affect PrintConfig.cpp only.
 CP=arachne_port/config/libslic3r
-CONFIG_SRC="config_bridge.cpp $CP/Config.cpp $CP/PrintConfig.cpp $CP/MaterialType.cpp"
+# PrintConfig.cpp is compiled from a generated copy with its UI-only strings removed (arachne_port/config/strip_ui_strings.pl:
+#  tooltip/label/sidetext/category/full_label and enum_labels; measured -236 KB raw, -45 KB brotli on the st kernel). The
+#  upstream file stays verbatim; the copy gets -iquote $CP so its "" includes resolve as they do from its own directory.
+GEN=/tmp/ws_obj/gen; mkdir -p $GEN
+perl arachne_port/config/strip_ui_strings.pl < $CP/PrintConfig.cpp > $GEN/PrintConfig.cpp
+CONFIG_GEN_SRC="$GEN/PrintConfig.cpp"
+CONFIG_SRC="config_bridge.cpp $CP/Config.cpp $CONFIG_GEN_SRC $CP/MaterialType.cpp"
 CONFIG_INC="-Iarachne_port/config/stubs"
 # --- Stage 12 item 2: link the real WipeTower into the main build (wipe_tower_real). WipeTower.cpp uses the
 #  GCodeProcessor stub in its own directory (-> real PrintConfig) and the TriangleMesh/Triangulation stubs in wipetower/inc.
@@ -103,6 +109,9 @@ TS=treesupport_port; TL=$TS/libslic3r
 # Issue 63: PlaceholderParser.cpp (upstream verbatim), the two UTF-8 helpers it calls (utils_utf8.cpp) and the custom G-code
 #  bridge live in this group because it is the one with the real Flow (Flow::extrusion_width, which the parser calls for
 #  *_line_width variables). custom_gcode.cpp in MAIN_SRC is the kernel side.
+# The G-code text side of the group — template expansion and the cooling filter — runs once per slice, not per layer
+#  loop, so it is compiled at -Os (cold_flags below); the geometry stays at -O2.
+COLD_TS_SRC="$TL/PlaceholderParser.cpp $TL/utils_utf8.cpp $TL/custom_gcode_bridge_impl.cpp $TL/settings_json_impl.cpp $TL/GCode/CoolingBuffer.cpp $TL/cooling_bridge_impl.cpp"
 TS_UNIQUE_SRC="
   $TL/treesupport_bridge_impl.cpp $TL/selector_bridge_impl.cpp $TL/TriangleSelector.cpp
   $TL/MultiMaterialSegmentation.cpp
@@ -114,7 +123,7 @@ TS_UNIQUE_SRC="
   $TL/Geometry/ConvexHull.cpp $TL/Geometry/Circle.cpp
   $TL/Geometry/VoronoiOffset.cpp $TL/ExPolygonsIndex.cpp
   $TL/Fill/Lightning/DistanceField.cpp $TL/Fill/Lightning/Generator.cpp $TL/Fill/Lightning/Layer.cpp $TL/Fill/Lightning/TreeNode.cpp
-  $TL/PlaceholderParser.cpp $TL/utils_utf8.cpp $TL/custom_gcode_bridge_impl.cpp $TL/settings_json_impl.cpp $TL/GCode/CoolingBuffer.cpp $TL/cooling_bridge_impl.cpp
+  $COLD_TS_SRC
 "
 TS_INC="-Iarachne_port/cgal_stubs -I$TS -I$TL -I$TL/Support -Ithird_party/deps_src -Ithird_party/deps_src/libnest2d/include -Ithird_party/deps_src/libigl -Ithird_party/deps_src/clipper2/Clipper2Lib/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
 # ---- Parallel compile helper: compile one .o per source, as many at a time as there are cores (previously: a single em++ call = sequential compilation) ----
@@ -139,10 +148,21 @@ objs() {  # $1=objdir  rest=source list -> prints .o paths in source order
   for s in "$@"; do printf '%s/%s.o ' "$objdir" "$(printf '%s' "$s" | tr '/' '_')"; done
 }
 
+# Size: the TUs that run once per slice (the config subsystem, GCodeProcessor, WipeTower, PressureEqualizer, the
+#  PlaceholderParser group) are compiled at -Os, the per-layer geometry at -O2. No floating-point flag changes between
+#  the two, so the output is byte-identical (golden + the wide dump cmp'd); measured -355 KB raw, -49 KB brotli (st).
+cold_flags() { printf '%s' "${1/-O2/-Os}"; }
+without() {  # $1=list  $2=list to leave out -> the first list minus the second, order kept
+  printf '%s\n' $1 | grep -vxF -f <(printf '%s\n' $2)
+}
+compile_ts() {  # $1=objdir  $2=extra flags
+  pcompile "$1" "$2 $TS_CFLAGS" $(without "$TS_UNIQUE_SRC" "$COLD_TS_SRC")
+  pcompile "$1" "$2 $(cold_flags "$TS_CFLAGS")" $COLD_TS_SRC
+}
 TS_GROUP_OBJ=/tmp/ts_group.o
 TS_CFLAGS="-O2 $EXCEPTION_FLAGS -std=c++17 -DNDEBUG -DTS_BRIDGE_EXCLUDE_ROLE_FNS -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $TS_INC"
 echo "compiling treesupport group (isolated, parallel x$NCPU) -> $TS_GROUP_OBJ"
-pcompile /tmp/ws_obj/ts_st "$TS_CFLAGS" $TS_UNIQUE_SRC
+compile_ts /tmp/ws_obj/ts_st ""
 em++ -O2 $EXCEPTION_FLAGS -r $(objs /tmp/ws_obj/ts_st $TS_UNIQUE_SRC) -o $TS_GROUP_OBJ
 
 # ---- SLA support chain (PrusaSlicer port, its own include universe — see slasupport_port/PORT_NOTES.md) ----
@@ -159,16 +179,13 @@ SLA_INC="-Islasupport_port -Islasupport_port/libslic3r -Islasupport_port/libslic
 SLA_CFLAGS="-O2 $EXCEPTION_FLAGS -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 $SLA_INC"
 SLA_GROUP_OBJ=/tmp/sla_group.o
 # NLopt 2.5.0 (the exact version PrusaSlicer's deps pin, SHA-verified) — the REAL optimizer behind
-#  Optimize/NLoptOptimizer.hpp (ESCH pose/route searches). C sources, canonical list from its CMakeLists,
-#  minus the C++-gated stogo/ags and the fortran API. Config is hand-written (nlopt_config.h).
+#  Optimize/NLoptOptimizer.hpp (ESCH pose/route searches). C sources; only the algorithms the port selects (ESCH,
+#  SBPLX, NELDERMEAD, COBYLA, MLSL) plus the api/util files, with nlopt_unused_algorithms.c answering for the rest —
+#  nlopt_optimize()'s switch names every algorithm, so wasm-ld could not drop them (measured -187 KB raw, -60 KB
+#  brotli). Config is hand-written (nlopt_config.h); NLOPT_INC keeps the left-out headers for the stub.
 NL=third_party/deps_src/nlopt
-NLOPT_SRC="$NL/algs/direct/DIRect.c $NL/algs/direct/direct_wrap.c $NL/algs/direct/DIRserial.c $NL/algs/direct/DIRsubrout.c
-  $NL/algs/cdirect/cdirect.c $NL/algs/cdirect/hybrid.c $NL/algs/praxis/praxis.c
-  $NL/algs/luksan/plis.c $NL/algs/luksan/plip.c $NL/algs/luksan/pnet.c $NL/algs/luksan/mssubs.c $NL/algs/luksan/pssubs.c
-  $NL/algs/crs/crs.c $NL/algs/mlsl/mlsl.c $NL/algs/mma/mma.c $NL/algs/mma/ccsa_quadratic.c
-  $NL/algs/cobyla/cobyla.c $NL/algs/newuoa/newuoa.c $NL/algs/neldermead/nldrmd.c $NL/algs/neldermead/sbplx.c
-  $NL/algs/auglag/auglag.c $NL/algs/bobyqa/bobyqa.c $NL/algs/isres/isres.c $NL/algs/slsqp/slsqp.c
-  $NL/algs/esch/esch.c
+NLOPT_SRC="$NL/algs/mlsl/mlsl.c $NL/algs/cobyla/cobyla.c $NL/algs/neldermead/nldrmd.c $NL/algs/neldermead/sbplx.c $NL/algs/esch/esch.c
+  nlopt_unused_algorithms.c
   $NL/api/general.c $NL/api/options.c $NL/api/optimize.c $NL/api/deprecated.c
   $NL/util/mt19937ar.c $NL/util/sobolseq.c $NL/util/timer.c $NL/util/stop.c $NL/util/redblack.c $NL/util/qsort_r.c $NL/util/rescale.c"
 NLOPT_INC="-I$NL -I$NL/api -I$NL/util -I$NL/algs/direct -I$NL/algs/cdirect -I$NL/algs/praxis -I$NL/algs/luksan -I$NL/algs/crs -I$NL/algs/mlsl -I$NL/algs/mma -I$NL/algs/cobyla -I$NL/algs/newuoa -I$NL/algs/neldermead -I$NL/algs/auglag -I$NL/algs/bobyqa -I$NL/algs/isres -I$NL/algs/slsqp -I$NL/algs/esch"
@@ -227,11 +244,17 @@ MAIN_SRC="mesh_boolean.cpp seam_paint.cpp contour_phase.cpp slicer_core.cpp cust
 #  no 'unsafe-eval' refuses — the browser extension's pages (script-src 'self' 'wasm-unsafe-eval') failed to load either
 #  kernel, and the slice hung with no error. The kernel's output is unchanged (golden cmp).
 MAIN_CFLAGS="-O2 $EXCEPTION_FLAGS --bind -std=c++17 -DNDEBUG -DCGAL_DISABLE_ROUNDING_MATH_CHECK -DCGAL_DISABLE_GMP=1 -DCGAL_ALWAYS_ROUND_TO_NEAREST $ARACHNE_INC"
+COLD_MAIN_SRC="$PE_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
+compile_main() {  # $1=objdir  $2=extra flags — one objdir, so the link keeps MAIN_SRC's order
+  pcompile "$1" "$2 $MAIN_CFLAGS" $(without "$MAIN_SRC" "$COLD_MAIN_SRC")
+  pcompile "$1" "$2 $(cold_flags "$MAIN_CFLAGS")" $(without "$COLD_MAIN_SRC" "$CONFIG_GEN_SRC")
+  pcompile "$1" "$2 $(cold_flags "$MAIN_CFLAGS") -iquote $CP" $CONFIG_GEN_SRC
+}
 # No SINGLE_FILE: inlined, the wasm made the glue a 7.2MB script, and Firefox's add-on validator (addons-linter) refuses
 #  any JS file over 5MB ("File is too large to parse"), so the browser extension could not be submitted to AMO.
 #  The glue reaches the wasm through new URL("slicer_core.wasm", import.meta.url), as the mt glue does.
 echo "compiling main sources (st, parallel x$NCPU)"
-pcompile /tmp/ws_obj/st "$MAIN_CFLAGS" $MAIN_SRC
+compile_main /tmp/ws_obj/st ""
 em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
@@ -261,7 +284,7 @@ ls -la ../engine/src/slicer_core.js ../engine/src/slicer_core.wasm
 #  the tab died with "V8 javascript OOM" (haaland.3mf, 6 plates, 4 of 6 runs; renderer RSS only 4.5-5.2GB at the time).
 #  With the wasm as a file the glue is ~106KB, a pthread isolate ~1MB, and three to five workers peaked at 1.3-1.8GB.
 echo "compiling treesupport group (mt, parallel x$NCPU) -> /tmp/ts_group_mt.o"
-pcompile /tmp/ws_obj/ts_mt "-pthread $TS_CFLAGS" $TS_UNIQUE_SRC
+compile_ts /tmp/ws_obj/ts_mt "-pthread"
 em++ -O2 $EXCEPTION_FLAGS -pthread -r $(objs /tmp/ws_obj/ts_mt $TS_UNIQUE_SRC) -o /tmp/ts_group_mt.o
 
 echo "compiling glu-libtess (mt, parallel x$NCPU)"
@@ -274,7 +297,7 @@ pcompile /tmp/ws_obj/sla_mt "-pthread $SLA_CFLAGS" $SLA_SRC
 em++ -O2 $EXCEPTION_FLAGS -pthread -r $(objs /tmp/ws_obj/sla_mt $SLA_SRC) $LIBTESS_OBJ_MT $NLOPT_OBJ_MT -o /tmp/sla_group_mt.o
 
 echo "compiling main sources (mt, parallel x$NCPU)"
-pcompile /tmp/ws_obj/mt "-pthread $MAIN_CFLAGS" $MAIN_SRC
+compile_main /tmp/ws_obj/mt "-pthread"
 em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
@@ -297,3 +320,8 @@ sed -i '' 's|await import("node:worker_threads")|await import(/* webpackIgnore: 
 
 echo "built -> ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm"
 ls -la ../engine/src/slicer_core.mt.js ../engine/src/slicer_core.mt.wasm
+
+# The worker shows the kernel download as a percentage (slicer.worker.js fetchKernel). A CDN that compresses on the fly
+#  sends no Content-Length, so the total comes from here; test_mt_glue.mjs fails when it no longer matches the files.
+printf '// Generated by packages/wasm-core/build.sh: the size of each kernel wasm, the total of its download progress.\nexport const KERNEL_WASM_BYTES = { "slicer_core.wasm": %s, "slicer_core.mt.wasm": %s }\n' \
+  "$(stat -f%z ../engine/src/slicer_core.wasm)" "$(stat -f%z ../engine/src/slicer_core.mt.wasm)" > ../engine/src/kernel_wasm_bytes.js

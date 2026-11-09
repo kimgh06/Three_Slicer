@@ -59,6 +59,7 @@ export function createSlicerClient(worker = new Worker(new URL('./slicer.worker.
       try { if (data.cancelPtr) cancelFlag = new Uint32Array(data.buf, data.cancelPtr, 1) } catch { /* not shared */ }
       return
     }
+    if (data.type === 'kernelLoad') return   // the kernel download's progress, unprompted; makeSlicerWorker's host reads it
     const head = pending[0]
     if (!head) return
     if (data.type === 'progress') { head.onProgress?.(data.done, data.total); return }
