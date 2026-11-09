@@ -68,6 +68,14 @@ const FAQ = [
    'Yes, as two npm packages. three-slicer (AGPL-3.0-or-later) is the slicing kernel for Node or the browser. three-slicer-viewer (MIT) is the React viewer and settings panel on their own — model and G-code preview with no slicing and no AGPL code, usable in closed-source products. Installing three-slicer gives you both.'],
 ]
 
+// While the engine downloads, the veil counts it, also once the slice has begun: with the model already in the scene
+//  the slice starts at the click and waits inside the worker for the engine (measured: 22 s at 300 KB/s).
+const engineLoading = (engineLoad) => engineLoad !== null && engineLoad < 1
+function veilText(engineLoad) {
+  if (!engineLoading(engineLoad)) return 'Starting the slice…'
+  return `Loading the slicing engine… ${Math.floor(engineLoad * 100)}%`
+}
+
 function Screenshot() {
   return (
     <picture>
@@ -112,6 +120,8 @@ function LiveSlicer() {
   const [phase, setPhase] = useState('idle')     // idle | preparing | slicing | done
   // Wall clock from the click to the viewer's slicing event, on the visitor's own machine.
   const [sliceSeconds, setSliceSeconds] = useState(null)
+  // The engine download's fraction (the viewer's kernelLoad event), null once loaded: the veil says how far it is.
+  const [engineLoad, setEngineLoad] = useState(null)
   const sliceStartedAt = useRef(0)
   const boxRef = useRef(null)
 
@@ -169,13 +179,14 @@ function LiveSlicer() {
                 panels={{ sidebar: false, topBar: false, gizmoRail: false, objectToolbar: false, plateBar: false, sliceBar: false, paintPanel: false, emptyHint: false, status: false }}
                 features={{ shortcuts: false }}
                 onEvent={event => {
+                  if (event.type === 'kernelLoad') setEngineLoad(event.value)
                   if (event.type !== 'slicing') return
                   if (event.value) setPhase('slicing')
                   else finishSlice()
                 }}
               />
             </Suspense>
-            {phase === 'preparing' && <div className="lp-live-veil">Starting the slice…</div>}
+            {(phase === 'preparing' || (busy && engineLoading(engineLoad))) && <div className="lp-live-veil">{veilText(engineLoad)}</div>}
           </div>
           <div className="lp-live-bar">
             <button className="lp-btn primary" disabled={phase !== 'idle'} onClick={startSlice}>{sliceLabel}</button>
