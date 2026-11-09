@@ -22,6 +22,7 @@ import { withSliceThroughput } from './throughput.js'
 import { acquireContourDevice, makeContourGpu } from './contour_gpu.js'
 import { kernelHasContourPhase, sliceWithContourGpu } from './contour_slice.js'
 import { FILL_TOOLS } from 'three-slicer-viewer/paint'
+import { KERNEL_WASM_BYTES } from './kernel_wasm_bytes.js'
 
 // The kernel parses `params` as JSON text, so the raw protocol used to require a string — while the direct handle
 //  and createSlicerClient both take an object and stringify it for you. One object, two shapes, and the difference
@@ -38,17 +39,62 @@ const say = (level, ...args) => { if (!quiet) console[level](...args) }
 // Which variant loaded is also REPORTED (the 'warm' reply carries `kernel`), not just logged: mt vs st is a
 //  measured 9.8x on a 3M-facet model, and the viewer sizes its plate-parallel worker pool by it.
 let kernelKind = null
+// The kernel wasm is 6.5-6.8MB, a download of seconds to minutes on a slow link (measured: 7.1s for the 2MB br stream
+//  from a Cloudflare edge in LAX to Korea). The worker fetches it itself, counting the bytes on their way into
+//  WebAssembly.compileStreaming (so the compile still overlaps the download), and posts 'kernelLoad' {loaded, total}
+//  at each whole percent, unprompted like 'supsab'. The body stream counts DECODED bytes, so the total is the file size
+//  (kernel_wasm_bytes.js), not Content-Length, which a compressing CDN leaves out. The compiled module reaches the glue
+//  through its instantiateWasm hook; pthread workers do not see that hook and take the module the glue posts them.
+//  A failure here (node's fetch refuses file: URLs, a blocked request) leaves the glue to fetch the wasm as before.
+const compileKernel = async (url, total) => {
+  if (url.protocol === 'file:' || typeof fetch !== 'function' || !WebAssembly.compileStreaming) return undefined
+  try {
+    const started = performance.now()
+    const response = await fetch(url)
+    if (!response.ok || !response.body) return undefined
+    let loaded = 0, percent = -1, firstByte = 0
+    const counted = response.body.pipeThrough(new TransformStream({
+      transform(chunk, controller) {
+        if (!firstByte) firstByte = performance.now()
+        loaded += chunk.length
+        const now = Math.min(100, Math.floor((loaded * 100) / total))
+        if (now !== percent) { percent = now; self.postMessage({ type: 'kernelLoad', loaded: Math.min(loaded, total), total }) }
+        controller.enqueue(chunk)
+      },
+    }))
+    const module = await WebAssembly.compileStreaming(new Response(counted, { headers: { 'Content-Type': 'application/wasm' } }))
+    say('info', `[slicer.worker] wasm ${loaded} bytes: first byte ${(firstByte - started).toFixed(3)}ms, downloaded and compiled ${(performance.now() - started).toFixed(3)}ms`)
+    return module
+  } catch (error) {
+    say('warn', '[slicer.worker] wasm prefetch failed, the glue loads it:', error)
+    return undefined
+  }
+}
+// The glue's options for a module compiled here: the hook instantiates it, and an instantiate failure rejects the load
+//  instead of leaving the glue waiting on a callback that never comes.
+const startKernel = async (createModule, module) => {
+  if (!module) return createModule()
+  let fail
+  const failed = new Promise((resolve, reject) => { fail = reject })
+  const instantiateWasm = (imports, receive) => {
+    WebAssembly.instantiate(module, imports).then(instance => receive(instance, module), fail)
+    return {}
+  }
+  return Promise.race([createModule({ instantiateWasm }), failed])
+}
 const loadCore = async () => {
   const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
   if (isolated) {
     try {
-      const M = await (await import('./slicer_core.mt.js')).default()
+      const module = await compileKernel(new URL('./slicer_core.mt.wasm', import.meta.url), KERNEL_WASM_BYTES['slicer_core.mt.wasm'])
+      const M = await startKernel((await import('./slicer_core.mt.js')).default, module)
       say('info', '[slicer.worker] core: mt (threads)')
       kernelKind = 'mt'
       return M
     } catch (e) { say('warn', '[slicer.worker] mt load failed — falling back to st:', e) }
   }
-  const M = await (await import('./slicer_core.js')).default()
+  const module = await compileKernel(new URL('./slicer_core.wasm', import.meta.url), KERNEL_WASM_BYTES['slicer_core.wasm'])
+  const M = await startKernel((await import('./slicer_core.js')).default, module)
   say('info', '[slicer.worker] core: st')
   kernelKind = 'st'
   return M
