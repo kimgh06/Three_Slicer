@@ -15,6 +15,8 @@ import { ROLE, STRIDE, encodeRole } from './toolpath_encoding.js'
 import { TOOL_COLOR } from './toolpath_palette.js'
 // The placeholders the kernel leaves for the finished estimate (M73 progress, file_start_gcode's totals).
 export { finalizeGcode } from './finalize_gcode.js'
+// A finished slice made what the viewer shows (finalized, read back), for the slicer worker to run beside the kernel.
+export { asExported, finalizedExport, hasReadBack, readBack } from './exported_preview.js'
 
 const EPS = 1e-6
 // Upstream's highest real tool id (GCodeProcessor::process_T). Bambu start/end G-code carries T255, T1000, T1001,
@@ -125,13 +127,44 @@ export function previewFromGcode(gcode, { center = { x: 0, y: 0 }, filamentDiame
   return parsed
 }
 
+// A layer's segments are written into Float32Arrays that double as they fill, and the text is walked line by line.
+//  The parser used to keep every number in plain arrays and every line in one array, all of it on the JS heap, and
+//  every JS heap of a tab (the page's and each worker's) shares one 4 GB region in Chrome. With the read-back running
+//  in the slicer workers, several large plates parsed at once and the tab died with "V8 javascript OOM" (measured on a
+//  28-plate project, 224 MB of G-code: 4 crashes in 23 slice-all runs; one 21.5 MB plate held 2.9M segments, 188 MB
+//  as doubles). A typed array's numbers live outside that region.
+const INITIAL_SEGMENTS = 256
+// code.split(/\s+/) for a trimmed command, without the regex: G-code separates words with ASCII blanks. A line with
+//  any other character class goes to the regex itself.
+const ASCII_LIMIT = 127, SPACE = 32, TAB = 9, CARRIAGE_RETURN = 13
+const isBlank = (character) => character === SPACE || (character >= TAB && character <= CARRIAGE_RETURN)
+// Character codes fastMove reads, and its limits: "G1 " is three characters; 15 decimal digits fit a double exactly.
+const UPPER_G = 71, SEMICOLON = 59, MINUS = 45, PLUS = 43, POINT = 46, DIGIT_0 = 48, DIGIT_9 = 57
+const LOWER_CASE_BIT = 32, LOWER_A = 97, LOWER_Z = 122, LOWER_X = 120, LOWER_Y = 121, LOWER_E = 101, LOWER_I = 105, LOWER_J = 106
+const FAST_PREFIX = 3, EXACT_DIGITS = 15
+const POWER_OF_TEN = Array.from({ length: EXACT_DIGITS + 1 }, (_unused, exponent) => 10 ** exponent)
+const ARC_OF = { G2: 2, G3: 3 }
+function wordsOf(code) {
+  const words = []
+  let wordStart = -1
+  for (let index = 0; index < code.length; index++) {
+    const character = code.charCodeAt(index)
+    if (character > ASCII_LIMIT) return code.split(/\s+/)
+    const blank = isBlank(character)
+    if (blank && wordStart >= 0) { words.push(code.slice(wordStart, index)); wordStart = -1 }
+    if (!blank && wordStart < 0) wordStart = index
+  }
+  if (wordStart >= 0) words.push(code.slice(wordStart))
+  return words
+}
+
 export function parseGcode(text, opts = {}) {
   const filArea = Math.PI / 4 * (opts.filamentDiameter > 0 ? opts.filamentDiameter : DEFAULT_FILAMENT_DIAMETER) ** 2
   const defH = opts.defaultLayerHeight > 0 ? opts.defaultLayerHeight : DEFAULT_LAYER_HEIGHT
 
   let x = 0, y = 0, z = 0, e = 0, absXYZ = true, absE = true   // RepRap defaults: G90 + M82
   let tool = 0, role = ROLE.WALL, width = 0                            // width 0 -> derive from E per segment
-  let cur = null                                               // open layer {z, p:[], w:[]}
+  let cur = null                                               // open layer {z, p, w, segments}: see appendSegment
   const layers = []
   let markerMode = false                                       // a layer-change comment was seen -> trust markers only
   let pendingLayer = true                                      // next extrusion (or ;Z:) opens a layer
@@ -151,35 +184,144 @@ export function parseGcode(text, opts = {}) {
   let tagged = false
   const unstate = () => { role = ROLE.WALL; width = 0 }
   const openLayer = (lz, fromMarker = false) => {
-    cur = { z: lz, p: [], w: [] }; layers.push(cur)
+    cur = { z: lz, p: new Float32Array(INITIAL_SEGMENTS * STRIDE), w: new Float32Array(INITIAL_SEGMENTS), segments: 0 }; layers.push(cur)
     pendingLayer = false; pendingZ = NaN
     if (fromMarker || !tagged) unstate()
   }
   const prevLayerZ = () => (layers.length > 1 ? layers[layers.length - 2].z : 0)
 
+  // One segment appended to the open layer: stride-8 path floats and its width.
+  const appendSegment = (x0, y0, z0, x1, y1, z1, enc, segmentWidth) => {
+    if (cur.segments === cur.w.length) {
+      const paths = new Float32Array(cur.p.length * 2), widths = new Float32Array(cur.w.length * 2)
+      paths.set(cur.p); widths.set(cur.w)
+      cur.p = paths; cur.w = widths
+    }
+    const at = cur.segments * STRIDE, paths = cur.p
+    paths[at] = x0; paths[at + 1] = y0; paths[at + 2] = z0; paths[at + 3] = enc
+    paths[at + 4] = x1; paths[at + 5] = y1; paths[at + 6] = z1; paths[at + 7] = enc
+    cur.w[cur.segments] = segmentWidth
+    cur.segments++
+  }
   const pushSeg = (x0, y0, z0, x1, y1, z1, dE) => {
     const dist = Math.hypot(x1 - x0, y1 - y0, z1 - z0)
     if (dist < EPS) return
     if (dE > EPS) {                                            // extrusion
       filament += dE
       filamentByTool[tool] = (filamentByTool[tool] ?? 0) + dE
-      if (pendingLayer) openLayer(Number.isNaN(pendingZ) ? z1 : pendingZ)
+      if (pendingLayer && Number.isNaN(pendingZ)) openLayer(z1)
+      else if (pendingLayer) openLayer(pendingZ)
       else if (!markerMode && z1 > cur.z + 1e-3) openLayer(z1) // comment-less fallback: new layer on z rise
-      const enc = encodeRole(role, tool)
-      cur.p.push(x0, y0, z0, enc, x1, y1, z1, enc)
       const h = Math.max(0.02, cur.z - prevLayerZ() || defH)
       // Inverse of the upstream rounded-rectangle bead: cross-section = h·(w − h·(1−π/4))  ->  w = A/h + h·(1−π/4)
-      const w = width > 0 ? width : dE * filArea / (dist * h) + h * (1 - Math.PI / 4)
-      cur.w.push(Math.min(3, Math.max(0.05, w)))
+      let w = width
+      if (!(width > 0)) w = dE * filArea / (dist * h) + h * (1 - Math.PI / 4)
+      appendSegment(x0, y0, z0, x1, y1, z1, encodeRole(role, tool), Math.min(3, Math.max(0.05, w)))
       nSeg++
     } else if (cur) {                                          // travel (drop pre-first-layer homing moves)
-      cur.p.push(x0, y0, z0, encodeRole(ROLE.TRAVEL, tool), x1, y1, z1, encodeRole(ROLE.TRAVEL, tool))
-      cur.w.push(0)
+      appendSegment(x0, y0, z0, x1, y1, z1, encodeRole(ROLE.TRAVEL, tool), 0)
       nTravel++
     }
   }
 
-  for (const rawLine of text.split('\n')) {
+  // A G0-G3 move with the words its line gave (NaN: not given). `arc` is 0 for a straight move, 2 or 3 for G2 / G3.
+  const move = (arc, nx, ny, nz, ne, ai, aj) => {
+    let x1 = x, y1 = y, z1 = z, dE = 0
+    if (!Number.isNaN(nx)) { x1 = nx; if (!absXYZ) x1 = x + nx }
+    if (!Number.isNaN(ny)) { y1 = ny; if (!absXYZ) y1 = y + ny }
+    if (!Number.isNaN(nz)) { z1 = nz; if (!absXYZ) z1 = z + nz }
+    if (!Number.isNaN(ne)) { dE = ne; if (absE) dE = ne - e }
+    if (arc) {                                                 // I/J arc -> chords (≈0.3mm, capped)
+      const cx = x + ai, cy = y + aj
+      const r = Math.hypot(x - cx, y - cy)
+      const a0 = Math.atan2(y - cy, x - cx)
+      let a1 = Math.atan2(y1 - cy, x1 - cx)
+      const ccw = arc === 3
+      if (ccw && a1 <= a0 + EPS) a1 += 2 * Math.PI
+      if (!ccw && a1 >= a0 - EPS) a1 -= 2 * Math.PI
+      const n = Math.max(1, Math.min(360, Math.ceil(Math.abs(a1 - a0) * r / 0.3)))
+      let px = x, py = y, pz = z
+      for (let s = 1; s <= n; s++) {
+        const a = a0 + (a1 - a0) * s / n
+        let qx = cx + r * Math.cos(a), qy = cy + r * Math.sin(a)
+        if (s === n) { qx = x1; qy = y1 }
+        const qz = z + (z1 - z) * s / n
+        pushSeg(px, py, pz, qx, qy, qz, dE / n)
+        px = qx; py = qy; pz = qz
+      }
+    } else {
+      pushSeg(x, y, z, x1, y1, z1, dE)
+    }
+    x = x1; y = y1; z = z1
+    if (!Number.isNaN(ne) && absE) e = ne
+    else if (!Number.isNaN(ne)) e = e + ne
+  }
+
+  // The common line, read in place: "G0".."G3", a space, then words of one letter and a plain decimal (sign, digits,
+  //  point), up to a comment. Most of a file is such lines, and reading one through a line string, a trimmed copy, a
+  //  word array and a slice per number was most of the parse (measured: a 21.5 MB plate 410 -> 280 ms). A plain
+  //  decimal of up to 15 digits is its digits as an exact integer over an exact power of ten, and that one division
+  //  rounds as parseFloat does. Anything else on the line (an exponent, a checksum, a second sign, lower case)
+  //  returns false before any state changes, and the line goes the general way below.
+  const fastMove = (from, to) => {
+    let nx = NaN, ny = NaN, nz = NaN, ne = NaN, ai = 0, aj = 0
+    let at = from + FAST_PREFIX
+    while (at < to) {
+      let character = text.charCodeAt(at)
+      if (isBlank(character)) { at++; continue }
+      if (character === SEMICOLON) break
+      const letter = character | LOWER_CASE_BIT
+      if (letter < LOWER_A || letter > LOWER_Z) return false
+      at++
+      let negative = false
+      if (at < to) {
+        character = text.charCodeAt(at)
+        if (character === MINUS) { negative = true; at++ }
+        else if (character === PLUS) at++
+      }
+      let mantissa = 0, digits = 0, decimals = 0, pointSeen = false
+      for (; at < to; at++) {
+        character = text.charCodeAt(at)
+        if (character >= DIGIT_0 && character <= DIGIT_9) {
+          mantissa = mantissa * 10 + (character - DIGIT_0)
+          digits++
+          if (pointSeen) decimals++
+        }
+        else if (character === POINT && !pointSeen) pointSeen = true
+        else break
+      }
+      if (at < to && !isBlank(character) && character !== SEMICOLON) return false
+      if (digits > EXACT_DIGITS) return false
+      if (digits === 0) continue                               // parseFloat of no digits is NaN: the word is skipped
+      let value = mantissa / POWER_OF_TEN[decimals]
+      if (negative) value = -value
+      if (letter === LOWER_X) nx = value
+      else if (letter === LOWER_Y) ny = value
+      else if (letter === LOWER_Z) nz = value
+      else if (letter === LOWER_E) ne = value
+      else if (letter === LOWER_I) ai = value
+      else if (letter === LOWER_J) aj = value
+    }
+    const kind = text.charCodeAt(from + 1) - DIGIT_0
+    let arc = 0
+    if (kind >= 2) arc = kind
+    move(arc, nx, ny, nz, ne, ai, aj)
+    return true
+  }
+
+  // Line by line, never as one array of lines: that array held every line of the file at once (see INITIAL_SEGMENTS).
+  const textLength = text.length
+  let lineStart = 0
+  while (lineStart <= textLength) {
+    let lineEnd = text.indexOf('\n', lineStart)
+    if (lineEnd < 0) lineEnd = textLength
+    const from = lineStart
+    lineStart = lineEnd + 1
+    if (lineEnd - from > FAST_PREFIX && text.charCodeAt(from) === UPPER_G && text.charCodeAt(from + 2) === SPACE) {
+      const kind = text.charCodeAt(from + 1) - DIGIT_0
+      if (kind >= 0 && kind <= 3 && fastMove(from, lineEnd)) continue
+    }
+    const rawLine = text.slice(from, lineEnd)
     const ci = rawLine.indexOf(';')
     const code = (ci < 0 ? rawLine : rawLine.slice(0, ci)).trim()
     const comment = ci < 0 ? '' : rawLine.slice(ci + 1).trim()
@@ -218,7 +360,7 @@ export function parseGcode(text, opts = {}) {
     }
     if (!code) continue
 
-    const words = code.split(/\s+/)
+    const words = wordsOf(code)
     const cmd = words[0].toUpperCase()
     if (cmd === 'G90') { absXYZ = true; continue }
     if (cmd === 'G91') { absXYZ = false; continue }
@@ -244,31 +386,7 @@ export function parseGcode(text, opts = {}) {
         if (!Number.isNaN(nz)) z = nz; if (!Number.isNaN(ne)) e = ne
         continue
       }
-      const x1 = Number.isNaN(nx) ? x : (absXYZ ? nx : x + nx)
-      const y1 = Number.isNaN(ny) ? y : (absXYZ ? ny : y + ny)
-      const z1 = Number.isNaN(nz) ? z : (absXYZ ? nz : z + nz)
-      const dE = Number.isNaN(ne) ? 0 : (absE ? ne - e : ne)
-      if (cmd === 'G2' || cmd === 'G3') {                      // I/J arc -> chords (≈0.3mm, capped)
-        const cx = x + ai, cy = y + aj
-        const r = Math.hypot(x - cx, y - cy)
-        const a0 = Math.atan2(y - cy, x - cx)
-        let a1 = Math.atan2(y1 - cy, x1 - cx)
-        const ccw = cmd === 'G3'
-        if (ccw && a1 <= a0 + EPS) a1 += 2 * Math.PI
-        if (!ccw && a1 >= a0 - EPS) a1 -= 2 * Math.PI
-        const n = Math.max(1, Math.min(360, Math.ceil(Math.abs(a1 - a0) * r / 0.3)))
-        let px = x, py = y, pz = z
-        for (let s = 1; s <= n; s++) {
-          const a = a0 + (a1 - a0) * s / n
-          const qx = s === n ? x1 : cx + r * Math.cos(a), qy = s === n ? y1 : cy + r * Math.sin(a)
-          const qz = z + (z1 - z) * s / n
-          pushSeg(px, py, pz, qx, qy, qz, dE / n)
-          px = qx; py = qy; pz = qz
-        }
-      } else {
-        pushSeg(x, y, z, x1, y1, z1, dE)
-      }
-      x = x1; y = y1; z = z1; if (!Number.isNaN(ne)) e = absE ? ne : e + ne
+      move(ARC_OF[cmd] ?? 0, nx, ny, nz, ne, ai, aj)
     }
   }
 
@@ -283,7 +401,7 @@ export function parseGcode(text, opts = {}) {
   const colors = Array.from({ length: colourCount }, (_unused, index) => extruderColours[index] || filamentColours[index] || null)
   const byTool = Array.from({ length: Math.max(...tools) + 1 }, (_unused, index) => filamentByTool[index] || 0)
   return {
-    layers: layers.map(L => ({ z: L.z, paths: Float32Array.from(L.p), widths: Float32Array.from(L.w) })),
+    layers: layers.map(L => ({ z: L.z, paths: L.p.slice(0, L.segments * STRIDE), widths: L.w.slice(0, L.segments) })),
     stats: {
       layers: layers.length, path_segments: nSeg, travel_segments: nTravel,
       filament_mm: filament, tools: [...tools].sort((a, b) => a - b),

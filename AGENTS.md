@@ -498,6 +498,31 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   first layer with more than 100 overhangs, which under threads depends on the order the layers are reached; the first
   pass finds that layer, the second checks the layers as the serial loop would (same plate: 18.6-18.9 -> 17.6-17.7 s
   mt, G-code unchanged).
+- **Organic tree support runs threaded on mt too, from the main thread only.** A tree(auto) type left on the 'default'
+  style is organic (`TreeSupport3D.cpp`), and it ran entirely serial: 73% of a 28-plate shield project's kernel time
+  (Bambu Lab P1S), support 10.6 s st and 10.3 s mt on its longest plate. `generate_tree_support_3D` now opens one
+  `ParallelSection` over the whole path, since upstream wrote its loops for real TBB (per-index writes, locked caches).
+  Two things that made it neither faster nor safe until they were changed. **(1)** `organic_draw_branches` threads the
+  trees, and that plate has one tree of 6987 branches: every branch of every tree is computed threaded (tube, slices,
+  bottom contacts) and committed in tree and branch order, because the commit appends roofs to the interface layers
+  under a lock, in thread order otherwise. A branch's `slice_mesh` runs under a per-thread `SerialSection`: its loops
+  cost a thread each on a small tube, and `slice_make_lines` appends under a lock in thread order. **(2)**
+  `threaded_here` starts threads from the runtime's main thread only. A nested start from a pthread goes through the
+  main thread, and a pthread joined by a pthread returns to the pool by a message the main thread only reads after the
+  slice: four kernels slicing at once in one browser tab hung or aborted one slice in two of three runs (baseline: none
+  in three), node never did, and the main-thread rule ran 24 of 24. Measured (8 cores): that plate 11.2 -> 4.1 s,
+  support 9.7 -> 2.6 s; slice-all of the project 32.4 -> 25.2 s (Auto, 4 workers), G-code byte-identical to st on
+  three plates, slim and hybrid speed and bytes unchanged. Both worker counts then use about 190 core-seconds, so the
+  machine is saturated and more workers do not help. `test_tree_support_mt.mjs` pins organic st == mt and the
+  main-thread rule in the source. **(3)** `generate_initial_areas`' layer loop runs serial (`SerialSection`): a layer
+  adds its tips and roofs to the layers below it under a lock, so threaded, a layer's vector came out in thread order
+  and the tip de-duplication kept whichever of two near-equal tips arrived first. Measured on one plate of that
+  project: 9 of 54 mt runs gave another support polygon on one layer than st, 0 of 40 serial (the loop is ~0.3 s of
+  a 19 s support pass); all 28 plates then equalled st in four mt rounds. The test model does not reach it, so the
+  test checks the source. **(4)** A branch slice inside a rectangular bed skips its intersection with the bed
+  (`organic_draw_branches`): it comes out of the collision difference already as Clipper writes it (support
+  -4% on a support-heavy plate, G-code byte-identical on all 28 plates). Skipping the second union of an already
+  unioned layer, and unioning per bounding-box cluster, each moved support bytes for 1-3% and were not kept.
 - **PASS1's contour union can run on the GPU, between two calls of `slice()`.** The kernel is synchronous and WebGPU
   is not, so `contour_phase.h` splits the slice: CAPTURE stops after chaining every layer's raw loops, the worker
   runs `engine/src/contour_gpu.js` on them, INJECT reads the contours back (`engine/src/contour_slice.js` drives the
@@ -511,7 +536,12 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   GPU slice is not byte-identical to the CPU slice; `test_contour_gpu.mjs` compares by filament within a tolerance
   and pins that the same input gives the same G-code twice. `gpu_acceleration` is a worker option (`gpu: true`),
   never a kernel parameter, and `auto` asks for the GPU on the st kernel only: on mt the union is already spread
-  over the threads and the measured difference is inside the run-to-run spread. The shader text
+  over the threads and the measured difference is inside the run-to-run spread. The selector worker and every pool
+  worker decide it by that one rule (`resolveGpuAcceleration`). A browser hands a page one adapter per
+  `powerPreference`, never a list, so every worker of a tab shares one GPU and a second discrete GPU is out of
+  reach; `acquireContourDevice` asks for `high-performance` and refuses a software adapter (measured, Chrome 157
+  Linux: no adapter by default, SwiftShader with `#enable-unsafe-webgpu` alone, the RTX 3090 with `#enable-vulkan`
+  too), naming each case in `contour_engine_reason`. The shader text
   (`contour_gpu_shaders.js`) is the measured experiment's and is edited only with a measurement beside it.
   **The mesh route moves the cut and chain onto the GPU too.** MESH stops pass1 before the segment sweep and keeps the
   seated triangles and the layer planes; `contour_front_gpu.js` (shaders `contour_front_shaders.js`, same editing
@@ -525,16 +555,121 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   succ^(2^R)): a tail leading into a cycle once misplaced every slot after it. The worker takes this route on the st
   kernel only: st's own cut and chain measured 419-442 ms against 34-154 ms of mesh hand-over plus 64-153 ms on the
   GPU, while mt's threads do it in 64-77 ms and the mesh route was 20 ms slower there.
-- **A finished slice is shown as the G-code it exports.** `use_slicer.js` (`shownAsExported`) parses the finalized
-  G-code back (`previewFromGcode`, `core/gcode_parse.js`) into the plate's layers, taking the slice's bed centre off
+- **With the GPU on, an organic tree support's branches are made outside the kernel, and they are not upstream's.**
+  `support_phase.h` splits the slice as the contour phase does: CAPTURE stops after upstream's own overhang detection
+  and tip placement (`generate_initial_areas`) and keeps the layers, `engine/src/support_gpu.js` makes every layer's
+  support body, INJECT takes the kept layers (no PASS1) and commits those polygons where upstream would propagate
+  influence areas and draw branches (`organic_commit_layer`, the lines of `organic_draw_branches`' last loop moved
+  into a function both call). Interfaces, toolpaths and G-code stay upstream's. What replaces the three stages
+  (`TreeModelVolumes::precalculate`, `create_layer_pathing`, `organic_draw_branches`: 18 + 12 + 35 % of one 1173-layer
+  plate's st slice): **(1)** one scalar field per layer, by jump flooding, holding the largest radius that clears the
+  model by the xy distance and can still get down to the bed, in place of the collision and avoidance polygons of
+  every radius; **(2)** `support_route.js` walks each tip down that field by lookups, heading for its nearest
+  neighbour and merging on contact, between the field's own pixels (sampling a circle missed the neighbour pixel and
+  25 branches ended in mid air); **(3)** the cross-sections drawn as ellipses and capsules over the layer's
+  clearance, read back and traced into rings (`support_trace.js`). Five things it depends on. **(a)** OFF is the
+  kernel as it was (golden unchanged), and RESUME finishes a captured slice with upstream's support byte for byte
+  (`test_support_phase.mjs`), which is what a slice gets when the GPU fails after the capture. **(b)** CAPTURE
+  precalculates only the volumes placing the tips reads (`precalculate(..., tips_only)`): left to be computed on demand
+  they took 22 s on that plate. Nothing reads a captured tip's `LineStatus`, which says which avoidance a point lies
+  outside of, so a capture gives each point the weakest status that still places it from one volume
+  (`s_tips_unlabelled` in `TreeSupport3D.cpp`): the collision at the tip radius when the support may rest on the
+  model, the Fast avoidance to the bed when it may not. That leaves out every avoidance chain (a serial pass over all
+  layers per type), the hole-free collision, the placeable areas and the extra radii: the captures of the 28-plate
+  project 34.3 -> 10.9 s (st, classic walls), every one of its 19796 tips the same. The test compares the tips with a
+  capture that precalculates everything. INJECT finishes the tree support the capture kept (the facade
+  print in `treesupport_bridge_impl.cpp`, `SupportGroupLayers` in `TreeSupport3D.cpp`); run from the start again it
+  detected the overhangs and placed the tips twice (1130 of INJECT's 1600 ms of support on that plate, st). An INJECT
+  that does not follow its own capture drops what was kept and is the plain slice. **(c)** Layers are worked in batches as tiles of one atlas, nothing is
+  cleared but the stencil, each layer's draw is packed by its own rectangle, and several batches are in flight
+  before a readback is awaited: one pass per layer and step was 25,000 passes and 130 round trips for that plate, and
+  whole-target clears were 60 GB. A batch's drawn masks are packed to one bit per pixel on the GPU and read back in
+  one copy (`PACK_SHADER`, `tracePackedRings`), and a field page is its buffer's mapped range rather than a copy of
+  it: as a byte per pixel the masks were 2.45 GB over the 28-plate project (one plate 411 -> 62 MB), the G-code is
+  unchanged, and Chrome's thread pool went from 5.7 to 3.8-4.0 core-seconds in a slice-all, where it is without the
+  GPU; the run's time did not move. The field then comes back as 8x8 blocks (`makeFieldBlocks`, `fieldBlockCode`):
+  a block of one value is its value in a table, any other block a slot of a compacted list the GPU appends to, so the
+  slot order varies and the decoded field does not (445 -> 110 MB on the largest plate, 3.3 GB over the project
+  before). Read back twice, the field of a large plate was 0.7 s slower beside seven workers, so the readback was what
+  they queued for. The tracer works on the packed bits and visits boundary pixels only (`tracePackedRings`; it unpacked
+  every rectangle to a byte per pixel first). Measured in Chrome (8 workers, GPU on, classic walls), three runs each:
+  slice-all 7.8-8.3 -> 7.1-7.5 s, Chrome memory peak 9.3-9.6 -> 7.1-7.7 GB, a large plate's field 1.1-1.45 -> 0.5-0.9 s
+  and its draw 0.9-1.1 -> 0.3-0.6 s. G-code byte-identical on all 28 plates (node, Dawn). `[field]` in
+  `test_support_gpu.mjs` packs a code texture and reads every pixel back.
+  **(d)** One field layer stands for two object layers
+  (`FIELD_LAYERS_PER_STEP`); at 0.4 mm pixels 1574 of 3542 branches were routed onto the model, at three layers 27.
+  **(e)** A plate whose field passes `FIELD_BYTE_BUDGET`, a raft, any other style and multi-material keep upstream's
+  support. **(f)** The worker starts the device and the pipelines and awaits them after the capture
+  (`supportGpuOf()` in `slicer.worker.js`): awaited first, eight workers asking at once each waited ~1.2 s before
+  their kernel started. It is taken only when the mode asks for the GPU (`gpu: true`; Auto does on the st kernel
+  only), and the stats card names it. Measured (8 cores, RTX 3090): that plate st 12.3 -> 4.9 s, mt 2.75 -> 1.86 s,
+  support extrusion 0.92 of upstream's; slice-all of the 28-plate project in Chrome 19.3-19.9 -> 12.5-13.0 s with 23
+  plates on the GPU, GPU memory +5 GB, Chrome memory 8.4 -> 9.3 GB. That run is bound by the CPU (workers 75.7
+  core-seconds of the 101.6 the 8 cores have in it, the rest of Chrome 13): Arachne's walls are 30 % of two heavy
+  plates' kernel time, and the read-back of the G-code is 0.7 s of the run. Not done: bottom contacts for a branch that ends on the
+  model, the roofs upstream draws from a branch (`recover_pending_branch_roofs`), the flat foot; and no print has
+  been made from it.
+- **A finished slice is shown as the G-code it exports.** `asExported` (`core/exported_preview.js`) finalizes the
+  G-code and parses it back (`previewFromGcode`, `core/gcode_parse.js`) into the plate's layers, taking the slice's bed centre off
   so they stay plate-local, and takes the layer, segment and filament figures from the same text; the time estimate
-  and the bed verdicts stay the kernel's. The kernel's toolpath stream left the printer's start and end G-code out,
+  and the bed verdicts stay the kernel's. The slicer worker runs it beside the kernel when the slice message carries
+  `exportedPreview` (the viewer's hook always sends it) and marks its result so; its layers then post only their
+  index. The hook still runs it for a worker that did not. On the main thread it was the largest part of a slice-all
+  (28 plates: busy 33 s of a 25 s run, dev build), and every streamed layer's toolpath crossed to the page only to
+  be replaced. `test_worker_replies.mjs` pins the worker's result to the hook's. A slice-all puts the read-back off
+  until its last plate is cut (`deferPreview` on the slice message, `finalizedExport` / `readBack` in
+  `core/exported_preview.js`): the pool keeps every core busy, so each plate's read-back delayed the plates behind it.
+  The result comes back with the finalized G-code and the kernel's own layers, marked `previewPending`; the run then
+  sends each plate's G-code to a worker that is still alive (`readback` command, the focused plate first) and
+  announces the plate to the host after it, so `onSliced` still carries the read-back figures. The notice's time is
+  the time to the last plate's G-code. Measured on the 28-plate project in Chrome (8 workers, GPU on): classic walls
+  10.5 -> 9.1-9.4 s, Arachne 12.9 -> 12.0 s, the previews ready at 10.3-10.6 and 13.1 s as before. The same test
+  pins a deferred slice plus its `readback` to the inline result. The kernel's toolpath stream left the printer's start and end G-code out,
   so a sliced plate and the same file opened again differed (benchy on an A1 mini: 240 vs 241 layers, 5255.5 vs
   5279.3 mm). Economy mode (no toolpath kept) and resin results stay on the stream. Measured on the benchmark model
   (3M facets, tree slim, A1 mini): 13 MB of G-code read back in 192 ms on the main thread, 0.57x the stream's
   segments; a multi-hundred-MB G-code has not been measured. `test_gcode_parse.mjs` pins the frame and the start
   line. The toolpath handle carries `data` and `setMoveRange` for the move scrub (`TOOLPATH_SPEC.md`): the renderer
   that replaced the ported one had left both out and the bar read 0 / 0.
+  The parser writes a layer's segments into typed arrays that double and walks the text line by line
+  (`parseGcode`): plain arrays and one array of every line put a 21.5 MB plate's read-back on the JS heap (265 MB),
+  and every JS heap of a tab shares one 4 GB region (see the threaded-wasm rule). With the read-back in the workers,
+  several large plates parsed at once and slice-all of a 28-plate project (224 MB of G-code) crashed the tab with
+  `V8 javascript OOM` in 4 of 23 runs; 0 of 20 after, the layers byte-identical and the parse 30% faster.
+  A plain motion line ("G1 " and words of one letter and a decimal) is read in place (`fastMove`): its digits as an
+  exact integer over an exact power of ten round as `parseFloat` does, and any other line goes the general way
+  (the 21.5 MB plate 410 -> 280 ms, 585 ms before either change). `test_gcode_open.mjs` fails on either array
+  coming back and compares 3000 decimals with `parseFloat`.
+- **The kernel reads its own G-code back per layer, and that read is kept cheap** (cooling filter, time estimate).
+  Measured on a 28-plate project (st, all plates): emit 52.0 -> 28.4 core-seconds of 166, every G-code byte-identical.
+  Two things hold it. **(1)** `fast_atof` (`fast_atof.h`) replaces `atof` in `CoolingBuffer::parse_layer_gcode` and
+  `parse_filament_chunk`: musl's `strtod` works in long double, which wasm has only as soft-float calls (7% of an st
+  slice). fast_float is correctly rounded as `strtod` is, and what it does not read (a leading blank or `+`, hex)
+  goes to `atof`. **(2)** The estimator makes no "actual speed" moves (`PORT_ACTUAL_SPEED_MOVES`,
+  `GCodeProcessor.cpp`): they carry no time, each was inserted into the middle of the move list, and they counted
+  toward the bridge's resident move cap, so the five largest plates of that project hit it and came back without a
+  time estimate (`stream-notime`); they are `full-stream` now, and the other 23 kept their estimate and layer times
+  to the bit. `[stage10]` in `test.mjs` pins one move per motion line.
+- **Arachne's Voronoi diagram is built with `FastInt` as the big integer of boost's exact predicates**
+  (`voronoi_fast_int.h`; `construct_segment_voronoi` in both `Geometry/Voronoi.cpp` copies, a `[PORT]` edit). boost
+  computes each circle event in double and recomputes it in big integers when its error bound is too wide, and on a
+  finely tessellated outline that is almost every event, since three neighbouring segments of a smooth curve are close
+  to collinear (measured natively on a 1469-segment outline: 7214 of 7214 point-segment-segment and 1827 of 1827
+  segment-segment-segment events, 15.3 of the build's 18.6 ms). `FastInt` keeps `extended_int<64>`'s limbs, count and
+  truncation and multiplies row by row, so the predicates return the same doubles: golden and all 28 plates of the
+  shield project byte-identical, pass1 -4.5 % on four heavy plates (st). `test_voronoi_fast_int.mjs` holds the hash of
+  twelve outlines' diagrams against the one boost's own builder gives (`voronoi_fast_int_hash.cpp`, compiled natively
+  with `-DVORONOI_REFERENCE_BUILDER`). That recomputation is why Arachne is not a GPU candidate: it is exact integer
+  arithmetic inside one sequential sweep per island, 82 % of the diagram's time, and the topology it decides is what
+  the wall graph is built from. What does lower the cost is the generator itself: on the same project `wall_generator:
+  classic` (upstream's `process_classic`) took pass1 from 7.6 to 1.55 s on four plates and slice-all in Chrome with the
+  GPU on from 12.6-12.8 to 10.0-10.1 s, with other walls (filament +2.9 % on those four plates).
+- **`Polygon` and `Polyline` move, in both port copies** (`MultiPoint.hpp`, a `[PORT]` edit). Upstream's move
+  constructors are written `MultiPoint(std::move(other.points))` with no `MultiPoint(Points&&)` to take it, so they
+  copied the points, and without `noexcept` a growing `Polygons` copied every polygon again. Measured on a
+  support-heavy plate (st): support 10.03 -> 9.48 s, G-code byte-identical on all 28 plates. A `static_assert` in
+  `Polygon.hpp` and `Polyline.hpp` fails the build if they stop being nothrow-movable. Code that read a polygon after
+  moving it would now see it empty; none was found by the golden dump, `test.mjs` or the 28 plates.
 - **A layer is cut at its middle** (`slice_planes.h plan_layers`, upstream's `generate_object_layers` for a fixed
   layer height): a layer exists while its middle is below the object's top, on every path (st, mt, multi-material,
   the GPU contour route). The kernel cut each layer at its top and kept only tops below the object height, so the
@@ -580,7 +715,7 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   slice uses, which is why `followPlateLayout` moves display offsets by the origin DELTA — setting them to the new
   origin put every injected plate half a bed off (measured the first time a `.gcode.3mf` grew the grid).
 - **An all-plates run is a queue drained by K workers, and the selector worker is one of them.** `slice_pool.js`
-  sizes K (Auto: half the cores on mt, cores-1 on st, never more than plates); `use_slicer.js`'s
+  sizes K (Auto: the cores on mt, each worker with a share of the threads, cores-1 on st, never more than plates); `use_slicer.js`'s
   `createPoolContext` is a worker whose whole state — pending slice, stream accumulator, SAB view, poll, watchdog,
   the classic/economy ladder — lives in one closure, because it exists for one run and paints nothing. The
   selected plate goes FIRST and to the selector worker: it is the mesh the brush painted. A pool worker starts with
@@ -590,8 +725,29 @@ The root `package.json` is the npm workspaces root (`viewer-package`, `packages`
   worker is terminated after the run — wasm heaps do not shrink, measured 8.8GB for five on a 3M-facet model).
   The STL is COPIED to a pool worker, not transferred, because the ladder re-sends it on a retry and a transferred
   buffer is detached. Policy is measured, not designed (see the README tables): in a node harness worker count
-  never made a run slower up to the core count and memory was the only ceiling; a per-worker thread budget,
-  longest-plate-first ordering and divisor counts were each measured to change nothing — do not add them. In the
+  never made a run slower up to the core count and memory was the only ceiling; divisor counts were measured to
+  change nothing — do not add them. A per-worker thread budget changed nothing there either, when tree support ran on
+  one thread; with it threaded it does, so every pool slice carries `threads` (`threadsPerWorker`: twice the cores
+  over the workers, at least two) and the worker hands it to the kernel (`set_thread_limit`, `thread_limit.h`: every
+  core-count read and the tbb stub's `take()` stay under it; 0 takes it off, and each slice sets it, so a single
+  slice after the run has every core again). Measured in Chrome on 8 cores, the 28-plate project: 4 workers without
+  a limit 20.2-20.8 s, 8 workers at 2 threads 19.4-19.5 s. The G-code is the st G-code at every limit
+  (`test_tree_support_mt.mjs`). Longest-plate-first changed nothing there
+  but does in the browser (8 cores, a 28-plate project whose largest plates come last by index: 26.2 -> 25.3-25.7 s
+  at 4 workers), so the queue is `sliceOrder` (`core/slice_pool.js`): the selected plate, then the largest merged
+  STL first, with every worker but the selector's opening on one of the smallest plates. Started together, the largest plates
+  reach the GPU support pipeline together and wait for one another on the tab's one GPU with their threads idle
+  (measured on that project, 8 workers, GPU on, classic walls: 9.1-9.2 s all largest first, 8.7-9.0 s with half the
+  workers opening small; with the cheaper capture above, 8.0-8.4 s half and 7.7-7.9 s with seven of eight). More workers than cores did not fill that wait (10 and 12 workers: 8.9-9.1 s, the largest plates
+  9.5 s each instead of 7.3), and neither did more threads per worker (3 and 4: 8.8-8.9 s, 8: 9.3 s, against 9.0 s
+  at 2). The wait is the GPU's own work: one large plate's field is ~0.25 s of jump flooding with or without its
+  read-back (node, Dawn), six of them arrive within a second, and a worker cannot start its next plate while its
+  kernel holds a captured one. No preview is built while the pool drains: the run's end shows the focused plate and
+  `ensurePlateToolpaths` builds the others one plate per task. Built as each result landed they were ~9.5 s of
+  main-thread work in a run that keeps every core busy (slice-all 21.4 -> 20.4 s), and built in one go at the end
+  they held the main thread ~7 s; now the run reports at 19.4-19.8 s and the last toolpath is in the scene ~6 s
+  later, the page responsive between plates. The run's progress reaches React every `RUN_PROGRESS_INTERVAL_MS`
+  rather than every frame (19.9-20.1 -> 19.4-19.5 s). In the
   BROWSER, on a 143MB-STL model over nine plates, 2 workers gained 13%, 3 crashed the tab once, and Auto-by-cores (8)
   crashed it every time. That was the shared V8 heap region described in the next rule, not the STL buffers the
   renderer holds: with the threaded wasm moved out of its glue, 5 and 8 workers ran that model without a crash
@@ -856,6 +1012,11 @@ node viewer-package/tests/test_sla_3mf.mjs              # SLA 3mf records (point
 
 # Rebuild the kernel (needs emscripten + brew boost/eigen + brew cgal for the SLA group)
 bash packages/wasm-core/build.sh
+# Elsewhere than macOS Homebrew: an activated emsdk on PATH, and a directory holding only boost/ eigen3/ CGAL/ (6.x) and
+#  the png headers (never /usr/include itself, whose libc headers would shadow emscripten's). Built this way with
+#  emsdk 6.0.13, boost 1.89 and CGAL 6.0.1, the G-code matched the Homebrew build's (emsdk 7.0.0's libc++ drops
+#  transitive includes the ports rely on).
+WASM_DEPS_INCLUDE=$HOME/.local/wasm-deps/include bash packages/wasm-core/build.sh
 
 # Regenerate the extracted JSON (slicers/slicer sources -> packages/data/)
 python3 web/extract_all.py

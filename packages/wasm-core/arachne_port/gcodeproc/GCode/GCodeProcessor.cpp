@@ -41,6 +41,7 @@ static const float DEFAULT_TOOLPATH_HEIGHT = 0.2f;
 static const float INCHES_TO_MM = 25.4f;
 static const float MMMIN_TO_MMSEC = 1.0f / 60.0f;
 static const float DRAW_ARC_TOLERANCE = 0.0125f;            //0.0125mm tolerance for drawing arc
+static const bool  PORT_ACTUAL_SPEED_MOVES = false;        // [PORT] see TimeMachine::calculate_time
 
 static const float DEFAULT_ACCELERATION = 1500.0f; // Prusa Firmware 1_75mm_MK2
 static const float DEFAULT_RETRACT_ACCELERATION = 1500.0f; // Prusa Firmware 1_75mm_MK2
@@ -501,7 +502,10 @@ void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, P
             first_layer_time += block_time;
 
         // detect actual speed moves required to render toolpaths using actual speed
-        if (mode == PrintEstimatedStatistics::ETimeMode::Normal) {
+        // [PORT] Left out: the kernel takes times from this processor and nothing else (gcodeproc_bridge build_result), and
+        //  these moves carry no time. Each one was inserted into the middle of result.moves (GCodeProcessor::calculate_time),
+        //  measured 1.2 s of a 35.1 s st run in vector::__move_range, and they counted toward the bridge's resident move cap.
+        if (PORT_ACTUAL_SPEED_MOVES && mode == PrintEstimatedStatistics::ETimeMode::Normal) {
             GCodeProcessorResult::MoveVertex& curr_move = result.moves[block.move_id];
             if (curr_move.type != EMoveType::Extrude &&
                 curr_move.type != EMoveType::Travel &&

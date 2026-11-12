@@ -1,6 +1,6 @@
 // The GPU acceleration switch: the settings-map mode, the engine a slice asks for, and the stats line.
 import assert from 'node:assert/strict'
-import { GPU_ACCELERATION_MODES, gpuAccelerationMode, resolveGpuAcceleration, contourEngineText } from '../src/core/gpu_acceleration.js'
+import { GPU_ACCELERATION_MODES, gpuAccelerationMode, resolveGpuAcceleration, contourEngineText, supportEngineText } from '../src/core/gpu_acceleration.js'
 import { statsFromKernel } from '../src/core/kernel_stats.js'
 
 assert.equal(gpuAccelerationMode({}), 'auto', 'absent reads as auto')
@@ -29,5 +29,13 @@ assert.equal(contourEngineText(statsFromKernel({ contour_engine: 'reused' }).con
 assert.equal(contourEngineText(statsFromKernel({ contour_engine: 'gpu', contour_front: 'gpu', contour_fallback_layers: 0 }).contour), 'Contours cut and unioned on the GPU')
 assert.equal(contourEngineText(statsFromKernel({ contour_engine: 'gpu', contour_front: 'gpu', contour_fallback_layers: 2 }).contour), 'Contours cut and unioned on the GPU, 2 layers on the CPU')
 assert.equal(contourEngineText(statsFromKernel({ contour_engine: 'gpu', contour_front: 'cpu', contour_fallback_layers: 0 }).contour), 'Contours on the GPU')
+
+// the tree support's branches (three-slicer's support_slice.js): absent unless the slice stopped at its support tips
+assert.equal(statsFromKernel({ layers: 1 }).support, null)
+assert.equal(supportEngineText(null), null)
+const supportOnGpu = statsFromKernel({ support_engine: 'gpu', support_gpu: { totalMs: 1700 } }).support
+assert.deepEqual(supportOnGpu, { engine: 'gpu', reason: null, gpuMs: 1700 })
+assert.match(supportEngineText(supportOnGpu), /^Tree support branches on the GPU/)
+assert.equal(supportEngineText(statsFromKernel({ support_engine: 'cpu', support_engine_reason: 'canceled' }).support), 'Tree support on the CPU (canceled)')
 
 console.log('ALL GPU ACCELERATION CHECKS PASSED')

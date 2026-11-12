@@ -14,7 +14,7 @@ struct affinity_partitioner {};
 template<class I, class F> void parallel_for(const blocked_range<I>& r, const F& f) {
 #ifdef __EMSCRIPTEN_PTHREADS__
   const size_t range_size = r.size();
-  if (range_size > 1 && tbb_stub::enabled().load(std::memory_order_relaxed)) {
+  if (range_size > 1 && tbb_stub::threaded_here()) {
     int extra = tbb_stub::take((int)range_size - 1);
     if (extra > 0) {
       const size_t thread_count = (size_t)extra + 1;
@@ -59,7 +59,7 @@ template<class R, class F> void parallel_for(const R& r, const F& f){ f(r); }
 template<class R, class F, class P> void parallel_for(const R& r, const F& f, P&&){ parallel_for(r, f); }
 template<class I, class F> void parallel_for(I b, I e, const F& f){
 #ifdef __EMSCRIPTEN_PTHREADS__
-  if (e > b && tbb_stub::enabled().load(std::memory_order_relaxed)) {
+  if (e > b && tbb_stub::threaded_here()) {
     parallel_for(blocked_range<I>(b, e), [&f](const blocked_range<I>& sub){
       for (I i = sub.begin(); i < sub.end(); ++i) f(i);
     });

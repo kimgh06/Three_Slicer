@@ -1,4 +1,5 @@
 // surfaces.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
+#include "thread_limit.h"
 #include "slice_ctx.h"
 
 #include "clip_util.h"
@@ -25,7 +26,7 @@ void surfaces_run(SliceContext& context) {
     };
 #ifdef __EMSCRIPTEN_PTHREADS__
     {
-      unsigned hardwareThreads = std::thread::hardware_concurrency();
+      unsigned hardwareThreads = thread_limit::hardware_threads();
       if (hardwareThreads == 0) hardwareThreads = 4;
       unsigned threadCount = std::max(1u, std::min<unsigned>(hardwareThreads, (unsigned)std::max(1, layerCount)));
       std::atomic<int> nextLayer{0};

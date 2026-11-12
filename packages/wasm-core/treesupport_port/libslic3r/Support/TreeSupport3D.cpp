@@ -23,6 +23,7 @@
 #include "TriangleMeshSlicer.hpp"
 #include "TreeSupport.hpp"
 #include "I18N.hpp"
+#include "../../../support_phase.h"   // three_slicer: the branches made outside the kernel
 
 #include <cassert>
 #include <chrono>
@@ -329,7 +330,7 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
  * \param storage[in] Background storage to access meshes.
  * \param currently_processing_meshes[in] Indexes of all meshes that are processed in this iteration
  */
-[[nodiscard]] static LayerIndex precalculate(const Print &print, const std::vector<Polygons> &overhangs, const TreeSupportSettings &config, const std::vector<size_t> &object_ids, TreeModelVolumes &volumes, std::function<void()> throw_on_cancel)
+[[nodiscard]] static LayerIndex precalculate(const Print &print, const std::vector<Polygons> &overhangs, const TreeSupportSettings &config, const std::vector<size_t> &object_ids, TreeModelVolumes &volumes, std::function<void()> throw_on_cancel, bool precalculate_volumes = true)
 {
     // calculate top most layer that is relevant for support
     LayerIndex max_layer = 0;
@@ -343,10 +344,32 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
                 max_support_layer_id = layer_id;
         max_layer = std::max(max_support_layer_id - int(config.z_distance_top_layers), 0);
     }
+    // three_slicer: with the branches made outside the kernel (support_phase.h) only the tips read the volumes, so they
+    //  are computed for the tip's radius alone. Left to be computed on demand they took 22 s on a 1173-layer plate.
     if (max_layer > 0)
         // The actual precalculation happens in TreeModelVolumes.
-        volumes.precalculate(*print.get_object(object_ids.front()), max_layer, throw_on_cancel);
+        volumes.precalculate(*print.get_object(object_ids.front()), max_layer, throw_on_cancel, ! precalculate_volumes);
     return max_layer;
+}
+
+// three_slicer: with the branches made outside the kernel (support_phase.h) a tip hands out its position, layer and
+//  radius, and nothing reads its LineStatus. The status says which avoidance a point lies outside of, and each avoidance
+//  is a serial chain over every layer (4 chains for a support that may rest on the model). So while this is set a point
+//  gets the weakest status that still places it, from one volume: TO_MODEL outside the collision when the support may
+//  rest on the model, TO_BP outside the Fast avoidance when it may not. Set by generate_support_areas for a CAPTURE.
+static bool s_tips_unlabelled = false;
+
+static LineStatus unlabelled_status(const TreeModelVolumes &volumes, const TreeSupportSettings &config, coord_t radius, LayerIndex layer_idx, const Point &p)
+{
+    const bool min_xy_dist = config.xy_distance > config.xy_min_distance;
+    if (config.support_rests_on_model) {
+        if (! contains(volumes.getCollision(radius, layer_idx, min_xy_dist), p))
+            return LineStatus::TO_MODEL;
+        return LineStatus::INVALID;
+    }
+    if (! contains(volumes.getAvoidance(radius, layer_idx, TreeModelVolumes::AvoidanceType::Fast, false, min_xy_dist), p))
+        return LineStatus::TO_BP;
+    return LineStatus::INVALID;
 }
 
 // picked from convert_lines_to_internal()
@@ -356,6 +379,9 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
     const bool min_xy_dist = config.xy_distance > config.xy_min_distance;
 
     LineStatus type = LineStatus::INVALID;
+
+    if (s_tips_unlabelled)
+        return unlabelled_status(volumes, config, radius, layer_idx, p);
 
     if (!contains(volumes.getAvoidance(radius, layer_idx, TreeModelVolumes::AvoidanceType::FastSafe, false, min_xy_dist), p))
         type = LineStatus::TO_BP_SAFE;
@@ -390,6 +416,17 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
     for (const Polyline &line : polylines) {
         LineInformation res_line;
         for (Point p : line) {
+            if (s_tips_unlabelled) {
+                // three_slicer: see s_tips_unlabelled
+                const LineStatus status = unlabelled_status(volumes, config, config.getRadius(0), layer_idx, p);
+                if (status != LineStatus::INVALID)
+                    res_line.emplace_back(p, status);
+                else if (! res_line.empty()) {
+                    result.emplace_back(res_line);
+                    res_line.clear();
+                }
+                continue;
+            }
             if (! contains(volumes.getAvoidance(config.getRadius(0), layer_idx, TreeModelVolumes::AvoidanceType::FastSafe, false, min_xy_dist), p))
                 res_line.emplace_back(p, LineStatus::TO_BP_SAFE);
             else if (! contains(volumes.getAvoidance(config.getRadius(0), layer_idx, TreeModelVolumes::AvoidanceType::Fast, false, min_xy_dist), p))
@@ -448,6 +485,9 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
 {
     using AvoidanceType = TreeModelVolumes::AvoidanceType;
     const bool min_xy_dist = config.xy_distance > config.xy_min_distance;
+    // three_slicer: see s_tips_unlabelled
+    if (s_tips_unlabelled)
+        return unlabelled_status(volumes, config, config.getRadius(0), current_layer - 1, p.first) != LineStatus::INVALID;
     if (! contains(volumes.getAvoidance(config.getRadius(0), current_layer - 1, p.second == LineStatus::TO_BP_SAFE ? AvoidanceType::FastSafe : AvoidanceType::Fast, false, min_xy_dist), p.first))
         return true;
     if (config.support_rests_on_model && (p.second != LineStatus::TO_BP && p.second != LineStatus::TO_BP_SAFE))
@@ -1321,6 +1361,12 @@ static void generate_initial_areas(
 
     RichInterfacePlacer rich_interface_placer{ interface_placer, volumes, force_tip_to_roof, num_support_layers, move_bounds };
 
+    // three_slicer: serial. A layer adds its tips and roofs to the layers below it (move_bounds, the interface placer),
+    //  each under a lock, so with threads two layers reach one layer below in either order: its vector comes out in
+    //  thread order, and m_already_inserted keeps whichever of two near-equal tips arrived first. Measured on one plate
+    //  of a 28-plate project: 9 of 54 mt runs gave another support polygon on one layer than st. The loop is ~0.3 s of
+    //  a 19 s support pass.
+    tbb_stub::SerialSection serial_section;
     tbb::parallel_for(tbb::blocked_range<size_t>(0, raw_overhangs.size()),
         [&volumes, &config, &raw_overhangs, &mesh_group_settings,
          min_xy_dist, roof_enabled, num_support_roof_layers, extra_outset, circle_length_to_half_linewidth_change, connect_length,
@@ -3402,6 +3448,45 @@ static void organic_smooth_branches_avoid_collisions(
  * \param storage The data storage where the mesh data is gotten from and
  * where the resulting support areas are stored.
  */
+// three_slicer: support_phase.h, defined beside organic_draw_branches.
+static void support_phase_capture(const TreeSupportSettings &config, const TreeModelVolumes &volumes, const std::vector<SupportElements> &move_bounds);
+struct SupportGroupLayers;
+static void support_group_to_toolpaths(Print &print, PrintObject &print_object, SupportGroupLayers &group);
+static void organic_inject_branches(PrintObject &print_object, const TreeSupportSettings &config, size_t num_layers,
+    SupportGeneratorLayersPtr &bottom_contacts, SupportGeneratorLayersPtr &top_contacts, SupportGeneratorLayersPtr &intermediate_layers,
+    SupportGeneratorLayerStorage &layer_storage, std::function<void()> throw_on_cancel);
+
+// three_slicer: what a mesh group's support is finished from once its tips are placed: the layers generate_initial_areas
+//  wrote its roofs into, and the settings the last steps read. generate_support_areas works on one of these, and keeps it
+//  across a CAPTURE (support_phase.h) so that INJECT does not detect the overhangs, precalculate the volumes and place
+//  the tips a second time (measured on one 1086-layer plate, st: 1130 of INJECT's 1600 ms of support).
+struct SupportGroupLayers {
+    SupportGroupLayers(const TreeSupportSettings &settings, const PrintObject &print_object) : config(settings), support_params(print_object) {}
+    TreeSupportSettings          config;
+    SupportParameters            support_params;
+    SupportGeneratorLayerStorage layer_storage;
+    SupportGeneratorLayersPtr    top_contacts;
+    SupportGeneratorLayersPtr    bottom_contacts;
+    SupportGeneratorLayersPtr    interface_layers;
+    SupportGeneratorLayersPtr    base_interface_layers;
+    SupportGeneratorLayersPtr    intermediate_layers;
+    Polygon                      bed_area;
+    size_t                       num_support_layers = 0;
+
+    void remove_undefined_layers() {
+        auto doit = [](SupportGeneratorLayersPtr& layers) {
+            layers.erase(std::remove_if(layers.begin(), layers.end(), [](const SupportGeneratorLayer* ptr) { return ptr == nullptr; }), layers.end());
+        };
+        doit(bottom_contacts);
+        doit(top_contacts);
+        doit(interface_layers);
+        doit(base_interface_layers);
+        doit(intermediate_layers);
+    }
+};
+// the group of the slice that stopped at its tips, until the next slice finishes or drops it
+static std::unique_ptr<SupportGroupLayers> s_captured_group;
+
 static void generate_support_areas(Print &print, TreeSupport* tree_support, const BuildVolume &build_volume, const std::vector<size_t> &print_object_ids, std::function<void()> throw_on_cancel)
 {
     // Settings with the indexes of meshes that use these settings.
@@ -3486,7 +3571,10 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
         std::vector<Polygons>        overhangs = generate_overhangs(config, *print.get_object(processing.second.front()), throw_on_cancel);
 #endif
         // ### Precalculate avoidances, collision etc.
-        size_t num_support_layers = precalculate(print, overhangs, processing.first, processing.second, volumes, throw_on_cancel);
+        // three_slicer: support_phase.h. A raft shifts the support layers off the object's, so it keeps upstream's path.
+        const bool external_branches = config.raft_layers.empty() && support_phase::mode == support_phase::CAPTURE;
+        s_tips_unlabelled = external_branches && ! support_phase::fullVolumes;
+        size_t num_support_layers = precalculate(print, overhangs, processing.first, processing.second, volumes, throw_on_cancel, ! external_branches || support_phase::fullVolumes);
         bool   has_support = num_support_layers > 0;
         bool   has_raft    = config.raft_layers.size() > 0;
         num_support_layers = std::max(num_support_layers, config.raft_layers.size());
@@ -3494,19 +3582,23 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
         if (num_support_layers == 0)
             continue;
 
-        SupportParameters            support_params(print_object);
+        std::unique_ptr<SupportGroupLayers> group_owner = std::make_unique<SupportGroupLayers>(config, print_object);
+        SupportGroupLayers          &group = *group_owner;
+        group.bed_area = volumes.m_bed_area;
+        SupportParameters           &support_params = group.support_params;
         support_params.with_sheath = true;
 // Don't override the support density of tree supports, as the support density is used for raft.
 // The trees will have the density zeroed in tree_supports_generate_paths()
 //        support_params.support_density = 0;
 
 
-        SupportGeneratorLayerStorage layer_storage;
-        SupportGeneratorLayersPtr    top_contacts;
-        SupportGeneratorLayersPtr    bottom_contacts;
-        SupportGeneratorLayersPtr    interface_layers;
-        SupportGeneratorLayersPtr    base_interface_layers;
-        SupportGeneratorLayersPtr    intermediate_layers(num_support_layers, nullptr);
+        SupportGeneratorLayerStorage &layer_storage         = group.layer_storage;
+        SupportGeneratorLayersPtr    &top_contacts          = group.top_contacts;
+        SupportGeneratorLayersPtr    &bottom_contacts       = group.bottom_contacts;
+        SupportGeneratorLayersPtr    &interface_layers      = group.interface_layers;
+        SupportGeneratorLayersPtr    &base_interface_layers = group.base_interface_layers;
+        SupportGeneratorLayersPtr    &intermediate_layers   = group.intermediate_layers;
+        intermediate_layers.assign(num_support_layers, nullptr);
         if (support_params.has_top_contacts || has_raft)
             top_contacts.assign(num_support_layers, nullptr);
         if (support_params.has_bottom_contacts)
@@ -3516,16 +3608,7 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
         if (support_params.has_base_interfaces() || has_raft)
             base_interface_layers.assign(num_support_layers, nullptr);
 
-        auto remove_undefined_layers = [&bottom_contacts, &top_contacts, &interface_layers, &base_interface_layers, &intermediate_layers]() {
-            auto doit = [](SupportGeneratorLayersPtr& layers) {
-                layers.erase(std::remove_if(layers.begin(), layers.end(), [](const SupportGeneratorLayer* ptr) { return ptr == nullptr; }), layers.end());
-            };
-            doit(bottom_contacts);
-            doit(top_contacts);
-            doit(interface_layers);
-            doit(base_interface_layers);
-            doit(intermediate_layers);
-        };
+        auto remove_undefined_layers = [&group]() { group.remove_undefined_layers(); };
 
         InterfacePlacer              interface_placer{
             print_object.slicing_parameters(), support_params, config,
@@ -3544,15 +3627,25 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
                     move_bounds, interface_placer, throw_on_cancel);
             auto t_gen = std::chrono::high_resolution_clock::now();
 
+            // three_slicer: CAPTURE stops at the tips (support_phase.h); slice() returns without a support.
+            //  The group is kept for finish_captured_tree_support_3D, which commits the branches made outside the kernel.
+            if (external_branches) {
+                s_tips_unlabelled = false;
+                support_phase_capture(config, volumes, move_bounds);
+                group.num_support_layers = move_bounds.size();
+                s_captured_group = std::move(group_owner);
+                return;
+            }
 
+            auto t_path = t_gen, t_place = t_gen;
             // ### Propagate the influence areas downwards. This is an inherently serial operation.
             print.set_status(60, _L("Generating support"));
             create_layer_pathing(volumes, config, move_bounds, throw_on_cancel);
-            auto t_path = std::chrono::high_resolution_clock::now();
+            t_path = std::chrono::high_resolution_clock::now();
 
             // ### Set a point in each influence area
             create_nodes_from_area(volumes, config, move_bounds, throw_on_cancel);
-            auto t_place = std::chrono::high_resolution_clock::now();
+            t_place = std::chrono::high_resolution_clock::now();
 
             // ### draw these points as circles
             // this new function give correct result when raft is also enabled
@@ -3593,17 +3686,7 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
             continue;
 
         // Produce the support G-code.
-        SupportGeneratorLayersPtr raft_layers = generate_raft_base(print_object, support_params, print_object.slicing_parameters(), top_contacts, interface_layers, base_interface_layers, intermediate_layers, layer_storage);
-        SupportGeneratorLayersPtr layers_sorted = generate_support_layers(print_object, raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers);
-
-        // BBS: This is a hack to avoid the support being generated outside the bed area. See #4769.
-        tbb::parallel_for_each(layers_sorted.begin(), layers_sorted.end(), [&](SupportGeneratorLayer *layer) {
-            if (layer) layer->polygons = intersection(layer->polygons, volumes.m_bed_area);
-        });
-
-        print.set_status(69, _L("Generating support"));
-        generate_support_toolpaths(print_object.support_layers(), print_object.config(), support_params, print_object.slicing_parameters(),
-            raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers);
+        support_group_to_toolpaths(print, print_object, group);
 
         auto t_end = std::chrono::high_resolution_clock::now();
         BOOST_LOG_TRIVIAL(info) << "Total time of organic tree support: " << 0.001 * std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count() << " ms";
@@ -3643,6 +3726,23 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
 //   storage.support.generated = true;
 }
 
+// three_slicer: upstream's last steps of generate_support_areas, moved into a function so that a group kept across a
+//  CAPTURE (support_phase.h) is finished by the same lines.
+static void support_group_to_toolpaths(Print &print, PrintObject &print_object, SupportGroupLayers &group)
+{
+    SupportGeneratorLayersPtr raft_layers = generate_raft_base(print_object, group.support_params, print_object.slicing_parameters(), group.top_contacts, group.interface_layers, group.base_interface_layers, group.intermediate_layers, group.layer_storage);
+    SupportGeneratorLayersPtr layers_sorted = generate_support_layers(print_object, raft_layers, group.bottom_contacts, group.top_contacts, group.intermediate_layers, group.interface_layers, group.base_interface_layers);
+
+    // BBS: This is a hack to avoid the support being generated outside the bed area. See #4769.
+    tbb::parallel_for_each(layers_sorted.begin(), layers_sorted.end(), [&](SupportGeneratorLayer *layer) {
+        if (layer) layer->polygons = intersection(layer->polygons, group.bed_area);
+    });
+
+    print.set_status(69, _L("Generating support"));
+    generate_support_toolpaths(print_object.support_layers(), print_object.config(), group.support_params, print_object.slicing_parameters(),
+        raft_layers, group.bottom_contacts, group.top_contacts, group.intermediate_layers, group.interface_layers, group.base_interface_layers);
+}
+
 static void recover_pending_branch_roofs(
     InterfacePlacer        &interface_placer,
     const std::vector<const SupportElement*> &branch_path,
@@ -3670,6 +3770,119 @@ static void recover_pending_branch_roofs(
 }
 
 // Organic specific: Smooth branches and produce one cumulative mesh to be sliced.
+// three_slicer: one layer's branch slices into its support layers. Upstream's code, moved out of organic_draw_branches'
+//  last loop so that branches made outside the kernel (support_phase.h) are committed by the same lines.
+static void organic_commit_layer(
+    PrintObject                     &print_object,
+    const TreeSupportSettings       &config,
+    size_t                           layer_idx,
+    Polygons                         base_layer_polygons,
+    Polygons                         bottom_contact_polygons,
+    SupportGeneratorLayersPtr       &bottom_contacts,
+    SupportGeneratorLayersPtr       &top_contacts,
+    SupportGeneratorLayersPtr       &intermediate_layers,
+    SupportGeneratorLayerStorage    &layer_storage)
+{
+            if (! base_layer_polygons.empty()) {
+                // Most of the time in this function is this union call. Can take 300+ ms when a lot of areas are to be unioned.
+                base_layer_polygons = smooth_outward(union_(base_layer_polygons), config.support_line_width); //FIXME was .smooth(50);
+                //smooth_outward(closing(std::move(bottom), closing_distance + minimum_island_radius, closing_distance, SUPPORT_SURFACES_OFFSET_PARAMETERS), smoothing_distance) :
+                // simplify a bit, to ensure the output does not contain outrageous amounts of vertices. Should not be necessary, just a precaution.
+                base_layer_polygons = polygons_simplify(base_layer_polygons, std::min(scaled<double>(0.03), double(config.resolution)), polygons_strictly_simple);
+            }
+
+            // Subtract top contact layer polygons from support base.
+            SupportGeneratorLayer *top_contact_layer = top_contacts.empty() ? nullptr : top_contacts[layer_idx];
+            if (top_contact_layer && ! top_contact_layer->polygons.empty() && ! base_layer_polygons.empty()) {
+                base_layer_polygons = diff(base_layer_polygons, top_contact_layer->polygons);
+                if (! bottom_contact_polygons.empty())
+                    //FIXME it may be better to clip bottom contacts with top contacts first after they are propagated to produce interface layers.
+                    bottom_contact_polygons = diff(bottom_contact_polygons, top_contact_layer->polygons);
+            }
+            if (! bottom_contact_polygons.empty()) {
+                base_layer_polygons = diff(base_layer_polygons, bottom_contact_polygons);
+                SupportGeneratorLayer *bottom_contact_layer = bottom_contacts[layer_idx] = &layer_allocate(
+                    layer_storage, SupporLayerType::BottomContact, print_object.slicing_parameters(), config, layer_idx);
+                bottom_contact_layer->polygons = std::move(bottom_contact_polygons);
+            }
+            if (! base_layer_polygons.empty()) {
+                SupportGeneratorLayer *base_layer = intermediate_layers[layer_idx] = &layer_allocate(
+                    layer_storage, SupporLayerType::Base, print_object.slicing_parameters(), config, layer_idx);
+                base_layer->polygons = union_(base_layer_polygons);
+            }
+
+}
+
+// three_slicer: CAPTURE (support_phase.h). The tips as generate_initial_areas placed them, and the settings the branch
+//  shape follows.
+static void support_phase_capture(const TreeSupportSettings &config, const TreeModelVolumes &volumes, const std::vector<SupportElements> &move_bounds)
+{
+    support_phase::Request &request = support_phase::request;
+    request.tips.clear();
+    for (const SupportElements &elements : move_bounds)
+        for (const SupportElement &element : elements) {
+            request.tips.emplace_back(unscaled<float>(element.state.target_position.x()));
+            request.tips.emplace_back(unscaled<float>(element.state.target_position.y()));
+            request.tips.emplace_back(float(element.state.layer_idx));
+            request.tips.emplace_back(unscaled<float>(support_element_radius(config, element)));
+        }
+    request.supportLayers = int(move_bounds.size());
+    request.layerHeight = unscaled<double>(config.layer_height);
+    request.xyDistance = unscaled<double>(config.xy_distance);
+    request.maxMove = unscaled<double>(config.maximum_move_distance);
+    request.minRadius = unscaled<double>(config.min_radius);
+    request.branchRadius = unscaled<double>(config.branch_radius);
+    request.radiusIncreasePerLayer = config.branch_radius_increase_per_layer * SCALING_FACTOR;
+    request.lineWidth = unscaled<double>(config.support_line_width);
+    request.tipLayers = int(config.tip_layers);
+    request.zDistanceTopLayers = int(config.z_distance_top_layers);
+    request.zDistanceBottomLayers = int(config.z_distance_bottom_layers);
+    const BoundingBox bed = get_extents(volumes.m_bed_area);
+    request.bedMinX = unscaled<double>(bed.min.x());
+    request.bedMinY = unscaled<double>(bed.min.y());
+    request.bedMaxX = unscaled<double>(bed.max.x());
+    request.bedMaxY = unscaled<double>(bed.max.y());
+    support_phase::captured = true;
+}
+
+// three_slicer: INJECT (support_phase.h). Every layer's support body comes from support_phase::injected; the union in
+//  organic_commit_layer settles the orientation of its rings.
+static void organic_inject_branches(
+    PrintObject                     &print_object,
+    const TreeSupportSettings       &config,
+    size_t                           num_layers,
+    SupportGeneratorLayersPtr       &bottom_contacts,
+    SupportGeneratorLayersPtr       &top_contacts,
+    SupportGeneratorLayersPtr       &intermediate_layers,
+    SupportGeneratorLayerStorage    &layer_storage,
+    std::function<void()>            throw_on_cancel)
+{
+    const support_phase::Rings &rings = support_phase::injected;
+    size_t injected_layers = 0;
+    if (! rings.layerRingStart.empty())
+        injected_layers = rings.layerRingStart.size() - 1;
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, std::min(num_layers, injected_layers), 1),
+        [&](const tbb::blocked_range<size_t> &range) {
+        for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++ layer_idx) {
+            Polygons base_layer_polygons;
+            for (unsigned ring = rings.layerRingStart[layer_idx]; ring < rings.layerRingStart[layer_idx + 1]; ++ ring) {
+                Polygon polygon;
+                polygon.points.reserve(rings.ringStart[ring + 1] - rings.ringStart[ring]);
+                for (unsigned point = rings.ringStart[ring]; point < rings.ringStart[ring + 1]; ++ point)
+                    polygon.points.emplace_back(scaled<coord_t>(double(rings.points[point * 2])), scaled<coord_t>(double(rings.points[point * 2 + 1])));
+                if (polygon.points.size() >= 3)
+                    base_layer_polygons.emplace_back(std::move(polygon));
+            }
+            if (! base_layer_polygons.empty())
+                // the rings are oriented by which side is solid, in a frame that may be mirrored
+                base_layer_polygons = union_(base_layer_polygons, ClipperLib::pftEvenOdd);
+            organic_commit_layer(print_object, config, layer_idx, std::move(base_layer_polygons), Polygons{},
+                bottom_contacts, top_contacts, intermediate_layers, layer_storage);
+            throw_on_cancel();
+        }
+    }, tbb::simple_partitioner());
+}
+
 void organic_draw_branches(
     PrintObject                     &print_object,
     TreeModelVolumes                &volumes, 
@@ -3853,253 +4066,297 @@ void organic_draw_branches(
     MeshSlicingParams mesh_slicing_params;
     mesh_slicing_params.mode = MeshSlicingParams::SlicingMode::Positive;
 
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, trees.size(), 1),
-        [&trees, &volumes, &config, &slicing_params, &move_bounds, &mesh_slicing_params, &interface_placer, &throw_on_cancel](const tbb::blocked_range<size_t> &range) {
-            indexed_triangle_set    partial_mesh;
-            std::vector<float>      slice_z;
-            std::vector<Polygons>   bottom_contacts;
-            for (size_t tree_id = range.begin(); tree_id < range.end(); ++ tree_id) {
-                Tree &tree = trees[tree_id];
-                for (const Branch &branch : tree.branches) {
-                    // Triangulate the tube.
-                    partial_mesh.clear();
-                    std::pair<float, float> zspan = extrude_branch(branch.path, config, slicing_params, move_bounds, branch.has_root, partial_mesh);
-                    LayerIndex layer_begin = branch.has_root ?
-                        branch.path.front()->state.layer_idx : 
-                        std::min(branch.path.front()->state.layer_idx, layer_idx_ceil(slicing_params, config, zspan.first));
-                    LayerIndex layer_end   = (branch.has_tip ?
-                        branch.path.back()->state.layer_idx :
-                        std::max(branch.path.back()->state.layer_idx, layer_idx_floor(slicing_params, config, zspan.second))) + 1;
-                    slice_z.clear();
-                    for (LayerIndex layer_idx = layer_begin; layer_idx < layer_end; ++ layer_idx) {
-                        const double print_z  = layer_z(slicing_params, config, layer_idx);
-                        const double bottom_z = layer_idx > 0 ? layer_z(slicing_params, config, layer_idx - 1) : 0.;
-                        slice_z.emplace_back(float(0.5 * (bottom_z + print_z)));
-                    }
-
-                    std::vector<Polygons> slices = slice_mesh(partial_mesh, slice_z, mesh_slicing_params, throw_on_cancel);
-
-                    // ORCA: guard against empty slices from meshing.
-                    if (slices.empty())
-                        continue;
-
-                    bottom_contacts.clear();
-                    // ORCA: trim tiny fragments to reduce degenerate polygon booleans.
-                    const double tiny_area = tiny_area_threshold();
-                    //FIXME parallelize?
-                    for (LayerIndex i = 0; i < LayerIndex(slices.size()); ++i) {
-                        // ORCA: safety offset when trimming collision/bed to improve robustness.
-                        slices[i] = diff_clipped(slices[i], volumes.getCollision(0, layer_begin + i, true), ApplySafetyOffset::Yes); // FIXME parent_uses_min || draw_area.element->state.use_min_xy_dist);
-                        slices[i] = intersection(slices[i], volumes.m_bed_area, ApplySafetyOffset::Yes);
-                        remove_small(slices[i], tiny_area);
-                    }
-
-                    size_t num_empty = 0;
-
-                    if (slices.front().empty()) {
-                        // Some of the initial layers are empty.
-                        num_empty = std::find_if(slices.begin(), slices.end(), [](auto &s) { return !s.empty(); }) - slices.begin();
-                    }
-
-                    // ORCA: trim leading empty slices to keep layer indices aligned.
-                    if (num_empty >= slices.size())
-                        continue;
-
-                    if (num_empty > 0) {
-                        slices.erase(slices.begin(), slices.begin() + num_empty);
-                        layer_begin += LayerIndex(num_empty);
-                    }
-
-                    // ORCA: use the trimmed front slice as the contact reference.
-                    Polygons slice_front_contact = slices.front();
-
-                    if (branch.has_root) {
-                        if (branch.path.front()->state.to_model_gracious) {
-                            if (config.settings.support_floor_layers > 0) {
-                                // If bottom Z gap is non-zero, keep bottom contacts even when not touching the model.
-                                Polygons contacts;
-
-                                // ORCA: non-zero bottom Z should not be clipped by placeable areas.
-                                if (config.support_rests_on_model && config.z_distance_bottom_layers > 0 && layer_begin > 0)
-                                    contacts = slice_front_contact;
-                                else {
-                                    Polygons placeable = volumes.getPlaceableAreas(0, layer_begin, [] {});
-                                    contacts = intersection_clipped(slice_front_contact, placeable, ApplySafetyOffset::Yes);
-                                }
-
-                                remove_small(contacts, tiny_area);
-
-                                // ORCA: ensure bottom contacts exist if clipping removed them.
-                                if (contacts.empty() && config.support_rests_on_model && layer_begin > 0 && !slice_front_contact.empty())
-                                    contacts = slice_front_contact;
-                                if (!contacts.empty())
-                                    bottom_contacts.emplace_back(std::move(contacts));
-                            }
-                        } else if (layer_begin > 0) {
-                            // Drop down areas that do rest non - gracefully on the model to ensure the branch actually rests on something.
-                            struct BottomExtraSlice {
-                                Polygons polygons;
-                                double   area;
-                            };
-                            std::vector<BottomExtraSlice>   bottom_extra_slices;
-                            Polygons                        rest_support;
-                            coord_t                         bottom_radius = support_element_radius(config, *branch.path.front());
-                            // Don't propagate further than 1.5 * bottom radius.
-                            //LayerIndex                      layers_propagate_max = 2 * bottom_radius / config.layer_height;
-                            LayerIndex                      layers_propagate_max = 5 * bottom_radius / config.layer_height;
-                            LayerIndex                      layer_bottommost = branch.path.front()->state.verylost ?
-                                // If the tree bottom is hanging in the air, bring it down to some surface.
-                                0 :
-                                //FIXME the "verylost" branches should stop when crossing another support.
-                                std::max(0, layer_begin - layers_propagate_max);
-                            double                          support_area_min_radius = M_PI * sqr(double(config.branch_radius));
-                            double                          support_area_stop = std::max(0.2 * M_PI * sqr(double(bottom_radius)), 0.5 * support_area_min_radius);
-                             // Only propagate until the rest area is smaller than this threshold.
-                            //double                          support_area_min = 0.1 * support_area_min_radius;
-                            for (LayerIndex layer_idx = layer_begin - 1; layer_idx >= layer_bottommost; -- layer_idx) {
-                                LayerIndex collision_layer = (layer_idx == layer_begin - 1) ? layer_begin : layer_idx;
-                                Polygons collision = volumes.getCollision(0, collision_layer, false);
-                                rest_support = diff_clipped(rest_support.empty() ? slice_front_contact : rest_support, collision, ApplySafetyOffset::Yes);
-                                remove_small(rest_support, tiny_area);
-                                double rest_support_area = area(rest_support);
-                                if (rest_support_area < support_area_stop)
-                                    // Don't propagate a fraction of the tree contact surface.
-                                    break;
-                                bottom_extra_slices.push_back({ rest_support, rest_support_area });
-                            }
-                            // Now remove those bottom slices that are not supported at all.
-#if 0
-                            while (! bottom_extra_slices.empty()) {
-                                Polygons this_bottom_contacts = intersection_clipped(
-                                    bottom_extra_slices.back().polygons, volumes.getPlaceableAreas(0, layer_begin - LayerIndex(bottom_extra_slices.size()), [] {}));
-                                if (area(this_bottom_contacts) < support_area_min)
-                                    bottom_extra_slices.pop_back();
-                                else {
-                                    // At least a fraction of the tree bottom is considered to be supported.
-                                    if (config.settings.support_floor_layers > 0)
-                                        // Turn this fraction of the tree bottom into a contact layer.
-                                        bottom_contacts.emplace_back(std::move(this_bottom_contacts));
-                                    break;
-                                }
-                            }
-#endif
-                            if (config.settings.support_floor_layers > 0) {
-                                Polygons contacts;
-                                if (!bottom_extra_slices.empty()) {
-                                    const int contact_idx = int(bottom_extra_slices.size()) - 1; // Use the lowest contact slice as the footprint.
-
-                                    // ORCA: non-zero bottom Z should not be clipped by placeable areas.
-                                    if (config.support_rests_on_model && config.z_distance_bottom_layers > 0 && layer_begin > 0)
-                                        contacts = intersection_clipped(bottom_extra_slices[contact_idx].polygons, Polygons{volumes.m_bed_area}, ApplySafetyOffset::Yes);
-                                    else {
-                                        Polygons placeable = volumes.getPlaceableAreas(0, layer_begin, [] {});
-                                        contacts = intersection_clipped(bottom_extra_slices[contact_idx].polygons, placeable, ApplySafetyOffset::Yes);
-                                    }
-                                } else {
-                                    // Fallback: use the current contact slice when no propagation happened.
-                                    if (config.support_rests_on_model && config.z_distance_bottom_layers > 0 && layer_begin > 0)
-                                        contacts = slice_front_contact;
-                                    else {
-                                        Polygons placeable = volumes.getPlaceableAreas(0, layer_begin, [] {});
-                                        contacts = intersection_clipped(slice_front_contact, placeable, ApplySafetyOffset::Yes);
-                                    }
-                                }
-
-                                remove_small(contacts, tiny_area);
-
-                                if (!contacts.empty())
-                                    bottom_contacts.emplace_back(std::move(contacts));
-
-                                // ORCA: ensure bottom contacts exist if clipping removed them.
-                                if (bottom_contacts.empty() && config.support_rests_on_model && layer_begin > 0 && !slice_front_contact.empty())
-                                    bottom_contacts.emplace_back(slice_front_contact);
-                            }
-                            layer_begin -= LayerIndex(bottom_extra_slices.size());
-                            slices.insert(slices.begin(), bottom_extra_slices.size(), {});
-                            auto it_dst = slices.begin();
-                            for (auto it_src = bottom_extra_slices.rbegin(); it_src != bottom_extra_slices.rend(); ++ it_src)
-                                *it_dst ++ = std::move(it_src->polygons);
-                        }
-
-                        // ORCA: retain bottom contacts even when no placeable areas intersect.
-                        if (branch.has_root && config.support_rests_on_model && branch.path.front()->state.layer_idx > 0 &&
-                            config.settings.support_floor_layers > 0 && config.z_distance_bottom_layers > 0 &&
-                            bottom_contacts.empty() && !slice_front_contact.empty())
-                            bottom_contacts.emplace_back(slice_front_contact);
-
-                    }
-                    // ORCA: bottom contacts provide the footprint; interface layers are built later.
-
-                    recover_pending_branch_roofs(interface_placer, branch.path, layer_begin, slices);
-
-                    while (! slices.empty() && slices.back().empty()) {
-                        slices.pop_back();
-                    }
-
-                    // ORCA: recompute layer_end after trimming trailing empty slices.
-                    layer_end = layer_begin + LayerIndex(slices.size());
-
-                    if (layer_begin < layer_end) {
-                        LayerIndex new_begin = tree.first_layer_id == -1 ? layer_begin : std::min(tree.first_layer_id, layer_begin);
-                        LayerIndex new_end   = tree.first_layer_id == -1 ? layer_end : std::max(tree.first_layer_id + LayerIndex(tree.slices.size()), layer_end);
-                        size_t     new_size  = size_t(new_end - new_begin);
-                        if (tree.first_layer_id == -1) {
-                        } else if (tree.slices.capacity() < new_size) {
-                            std::vector<Slice> new_slices;
-                            new_slices.reserve(new_size);
-                            if (LayerIndex dif = tree.first_layer_id - new_begin; dif > 0)
-                                new_slices.insert(new_slices.end(), dif, {});
-                            append(new_slices, std::move(tree.slices));
-                            tree.slices.swap(new_slices);
-                        } else if (LayerIndex dif = tree.first_layer_id - new_begin; dif > 0)
-                            tree.slices.insert(tree.slices.begin(), tree.first_layer_id - new_begin, {});
-                        tree.slices.insert(tree.slices.end(), new_size - tree.slices.size(), {});
-                        for (LayerIndex i = layer_begin; i != layer_end; ++ i) {
-                            int j = i - layer_begin;
-                            Polygons &src = slices[j];
-                            bool has_bottom_contacts = j < int(bottom_contacts.size()) && !bottom_contacts[j].empty();
-
-                            // ORCA: preserve bottom contacts even if base polygons are empty.
-                            if (!src.empty() || has_bottom_contacts) {
-                                Slice &dst = tree.slices[i - new_begin];
-                                if (++ dst.num_branches > 1) {
-                                    if (!src.empty())
-                                        append(dst.polygons, std::move(src));
-                                    if (has_bottom_contacts)
-                                        append(dst.bottom_contacts, std::move(bottom_contacts[j]));
-                                } else {
-                                    if (!src.empty())
-                                        dst.polygons = std::move(src);
-                                    if (has_bottom_contacts)
-                                        dst.bottom_contacts = std::move(bottom_contacts[j]);
-                                }
-                            }
-                        }
-
-                        tree.first_layer_id = new_begin;
-                    }
-                }
+    // three_slicer: every branch of every tree is computed threaded, then committed serially in tree and branch order.
+    //  Upstream threads the trees, but one tree can hold nearly every branch (measured: 1 tree of 6987 branches on a
+    //  shield plate), and a tree's own branch loop could only be threaded from a pthread, which this kernel does not do
+    //  (tbb/stub_parallel.h threaded_here). The compute half (tube, slices, bottom contacts) writes only its own entry and
+    //  reads the volumes' caches, which take their lock. The commit half (roof recovery, which appends to the interface
+    //  layers, and the merge into tree.slices) runs in the order the serial loop used, so the result does not depend on
+    //  the thread count.
+    struct BranchSlices {
+        bool                  keep { false };
+        LayerIndex            layer_begin { 0 };
+        std::vector<Polygons> slices;
+        std::vector<Polygons> bottom_contacts;
+    };
+    std::vector<const Branch*> all_branches;
+    for (const Tree &tree : trees)
+        for (const Branch &branch : tree.branches)
+            all_branches.push_back(&branch);
+    std::vector<BranchSlices> computed(all_branches.size());
+    // The bed as a box, when it is one (four axis-aligned corners), taken in by one scaled epsilon.
+    BoundingBox bed_box = get_extents(volumes.m_bed_area);
+    bool        bed_is_box = volumes.m_bed_area.points.size() == 4;
+    for (const Point &corner : volumes.m_bed_area.points)
+        bed_is_box = bed_is_box && (corner.x() == bed_box.min.x() || corner.x() == bed_box.max.x()) && (corner.y() == bed_box.min.y() || corner.y() == bed_box.max.y());
+    bed_is_box = bed_is_box && std::abs(volumes.m_bed_area.area()) == double(bed_box.size().x()) * double(bed_box.size().y());
+    bed_box.offset(- SCALED_EPSILON);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, all_branches.size()), [&](const tbb::blocked_range<size_t> &branch_range) {
+        indexed_triangle_set    partial_mesh;
+        std::vector<float>      slice_z;
+        // One branch is a small tube: slice_mesh's own loops would cost a thread each, and slice_make_lines appends its
+        //  lines under a lock in thread order, so they run serial here.
+        tbb_stub::SerialSection serial_section;
+        for (size_t branch_idx = branch_range.begin(); branch_idx < branch_range.end(); ++ branch_idx) {
+            const Branch          &branch          = *all_branches[branch_idx];
+            std::vector<Polygons> &bottom_contacts = computed[branch_idx].bottom_contacts;
+            // Triangulate the tube.
+            partial_mesh.clear();
+            std::pair<float, float> zspan = extrude_branch(branch.path, config, slicing_params, move_bounds, branch.has_root, partial_mesh);
+            LayerIndex layer_begin = branch.has_root ?
+                branch.path.front()->state.layer_idx : 
+                std::min(branch.path.front()->state.layer_idx, layer_idx_ceil(slicing_params, config, zspan.first));
+            LayerIndex layer_end   = (branch.has_tip ?
+                branch.path.back()->state.layer_idx :
+                std::max(branch.path.back()->state.layer_idx, layer_idx_floor(slicing_params, config, zspan.second))) + 1;
+            slice_z.clear();
+            for (LayerIndex layer_idx = layer_begin; layer_idx < layer_end; ++ layer_idx) {
+                const double print_z  = layer_z(slicing_params, config, layer_idx);
+                const double bottom_z = layer_idx > 0 ? layer_z(slicing_params, config, layer_idx - 1) : 0.;
+                slice_z.emplace_back(float(0.5 * (bottom_z + print_z)));
             }
-        }, tbb::simple_partitioner());
 
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, trees.size(), 1),
-        [&trees, &throw_on_cancel](const tbb::blocked_range<size_t> &range) {
-        for (size_t tree_id = range.begin(); tree_id < range.end(); ++ tree_id) {
-            Tree &tree = trees[tree_id];
-            for (Slice &slice : tree.slices)
-                if (slice.num_branches > 1) {
-                    // ORCA: avoid union_ on empty containers.
-                    if (!slice.polygons.empty())
-                        slice.polygons = union_(slice.polygons);
-                    if (!slice.bottom_contacts.empty())
-                        slice.bottom_contacts = union_(slice.bottom_contacts);
+            std::vector<Polygons> slices = slice_mesh(partial_mesh, slice_z, mesh_slicing_params, throw_on_cancel);
 
-                    slice.num_branches = 1;
+            // ORCA: guard against empty slices from meshing.
+            if (slices.empty())
+                continue;
+
+            bottom_contacts.clear();
+            // ORCA: trim tiny fragments to reduce degenerate polygon booleans.
+            const double tiny_area = tiny_area_threshold();
+            //FIXME parallelize?
+            for (LayerIndex i = 0; i < LayerIndex(slices.size()); ++i) {
+                // ORCA: safety offset when trimming collision/bed to improve robustness.
+                slices[i] = diff_clipped(slices[i], volumes.getCollision(0, layer_begin + i, true), ApplySafetyOffset::Yes); // FIXME parent_uses_min || draw_area.element->state.use_min_xy_dist);
+                // three_slicer: a slice that lies inside a rectangular bed is its own intersection with it, and it comes
+                //  out of the difference above already as Clipper writes it.
+                if (! slices[i].empty() && ! (bed_is_box && bed_box.contains(get_extents(slices[i]))))
+                    slices[i] = intersection(slices[i], volumes.m_bed_area, ApplySafetyOffset::Yes);
+                remove_small(slices[i], tiny_area);
+            }
+
+            size_t num_empty = 0;
+
+            if (slices.front().empty()) {
+                // Some of the initial layers are empty.
+                num_empty = std::find_if(slices.begin(), slices.end(), [](auto &s) { return !s.empty(); }) - slices.begin();
+            }
+
+            // ORCA: trim leading empty slices to keep layer indices aligned.
+            if (num_empty >= slices.size())
+                continue;
+
+            if (num_empty > 0) {
+                slices.erase(slices.begin(), slices.begin() + num_empty);
+                layer_begin += LayerIndex(num_empty);
+            }
+
+            // ORCA: use the trimmed front slice as the contact reference.
+            Polygons slice_front_contact = slices.front();
+
+            if (branch.has_root) {
+                if (branch.path.front()->state.to_model_gracious) {
+                    if (config.settings.support_floor_layers > 0) {
+                        // If bottom Z gap is non-zero, keep bottom contacts even when not touching the model.
+                        Polygons contacts;
+
+                        // ORCA: non-zero bottom Z should not be clipped by placeable areas.
+                        if (config.support_rests_on_model && config.z_distance_bottom_layers > 0 && layer_begin > 0)
+                            contacts = slice_front_contact;
+                        else {
+                            Polygons placeable = volumes.getPlaceableAreas(0, layer_begin, [] {});
+                            contacts = intersection_clipped(slice_front_contact, placeable, ApplySafetyOffset::Yes);
+                        }
+
+                        remove_small(contacts, tiny_area);
+
+                        // ORCA: ensure bottom contacts exist if clipping removed them.
+                        if (contacts.empty() && config.support_rests_on_model && layer_begin > 0 && !slice_front_contact.empty())
+                            contacts = slice_front_contact;
+                        if (!contacts.empty())
+                            bottom_contacts.emplace_back(std::move(contacts));
+                    }
+                } else if (layer_begin > 0) {
+                    // Drop down areas that do rest non - gracefully on the model to ensure the branch actually rests on something.
+                    struct BottomExtraSlice {
+                        Polygons polygons;
+                        double   area;
+                    };
+                    std::vector<BottomExtraSlice>   bottom_extra_slices;
+                    Polygons                        rest_support;
+                    coord_t                         bottom_radius = support_element_radius(config, *branch.path.front());
+                    // Don't propagate further than 1.5 * bottom radius.
+                    //LayerIndex                      layers_propagate_max = 2 * bottom_radius / config.layer_height;
+                    LayerIndex                      layers_propagate_max = 5 * bottom_radius / config.layer_height;
+                    LayerIndex                      layer_bottommost = branch.path.front()->state.verylost ?
+                        // If the tree bottom is hanging in the air, bring it down to some surface.
+                        0 :
+                        //FIXME the "verylost" branches should stop when crossing another support.
+                        std::max(0, layer_begin - layers_propagate_max);
+                    double                          support_area_min_radius = M_PI * sqr(double(config.branch_radius));
+                    double                          support_area_stop = std::max(0.2 * M_PI * sqr(double(bottom_radius)), 0.5 * support_area_min_radius);
+                     // Only propagate until the rest area is smaller than this threshold.
+                    //double                          support_area_min = 0.1 * support_area_min_radius;
+                    for (LayerIndex layer_idx = layer_begin - 1; layer_idx >= layer_bottommost; -- layer_idx) {
+                        LayerIndex collision_layer = (layer_idx == layer_begin - 1) ? layer_begin : layer_idx;
+                        Polygons collision = volumes.getCollision(0, collision_layer, false);
+                        rest_support = diff_clipped(rest_support.empty() ? slice_front_contact : rest_support, collision, ApplySafetyOffset::Yes);
+                        remove_small(rest_support, tiny_area);
+                        double rest_support_area = area(rest_support);
+                        if (rest_support_area < support_area_stop)
+                            // Don't propagate a fraction of the tree contact surface.
+                            break;
+                        bottom_extra_slices.push_back({ rest_support, rest_support_area });
+                    }
+                    // Now remove those bottom slices that are not supported at all.
+#if 0
+                    while (! bottom_extra_slices.empty()) {
+                        Polygons this_bottom_contacts = intersection_clipped(
+                            bottom_extra_slices.back().polygons, volumes.getPlaceableAreas(0, layer_begin - LayerIndex(bottom_extra_slices.size()), [] {}));
+                        if (area(this_bottom_contacts) < support_area_min)
+                            bottom_extra_slices.pop_back();
+                        else {
+                            // At least a fraction of the tree bottom is considered to be supported.
+                            if (config.settings.support_floor_layers > 0)
+                                // Turn this fraction of the tree bottom into a contact layer.
+                                bottom_contacts.emplace_back(std::move(this_bottom_contacts));
+                            break;
+                        }
+                    }
+#endif
+                    if (config.settings.support_floor_layers > 0) {
+                        Polygons contacts;
+                        if (!bottom_extra_slices.empty()) {
+                            const int contact_idx = int(bottom_extra_slices.size()) - 1; // Use the lowest contact slice as the footprint.
+
+                            // ORCA: non-zero bottom Z should not be clipped by placeable areas.
+                            if (config.support_rests_on_model && config.z_distance_bottom_layers > 0 && layer_begin > 0)
+                                contacts = intersection_clipped(bottom_extra_slices[contact_idx].polygons, Polygons{volumes.m_bed_area}, ApplySafetyOffset::Yes);
+                            else {
+                                Polygons placeable = volumes.getPlaceableAreas(0, layer_begin, [] {});
+                                contacts = intersection_clipped(bottom_extra_slices[contact_idx].polygons, placeable, ApplySafetyOffset::Yes);
+                            }
+                        } else {
+                            // Fallback: use the current contact slice when no propagation happened.
+                            if (config.support_rests_on_model && config.z_distance_bottom_layers > 0 && layer_begin > 0)
+                                contacts = slice_front_contact;
+                            else {
+                                Polygons placeable = volumes.getPlaceableAreas(0, layer_begin, [] {});
+                                contacts = intersection_clipped(slice_front_contact, placeable, ApplySafetyOffset::Yes);
+                            }
+                        }
+
+                        remove_small(contacts, tiny_area);
+
+                        if (!contacts.empty())
+                            bottom_contacts.emplace_back(std::move(contacts));
+
+                        // ORCA: ensure bottom contacts exist if clipping removed them.
+                        if (bottom_contacts.empty() && config.support_rests_on_model && layer_begin > 0 && !slice_front_contact.empty())
+                            bottom_contacts.emplace_back(slice_front_contact);
+                    }
+                    layer_begin -= LayerIndex(bottom_extra_slices.size());
+                    slices.insert(slices.begin(), bottom_extra_slices.size(), {});
+                    auto it_dst = slices.begin();
+                    for (auto it_src = bottom_extra_slices.rbegin(); it_src != bottom_extra_slices.rend(); ++ it_src)
+                        *it_dst ++ = std::move(it_src->polygons);
                 }
+
+                // ORCA: retain bottom contacts even when no placeable areas intersect.
+                if (branch.has_root && config.support_rests_on_model && branch.path.front()->state.layer_idx > 0 &&
+                    config.settings.support_floor_layers > 0 && config.z_distance_bottom_layers > 0 &&
+                    bottom_contacts.empty() && !slice_front_contact.empty())
+                    bottom_contacts.emplace_back(slice_front_contact);
+
+            }
+            computed[branch_idx].keep        = true;
+            computed[branch_idx].layer_begin = layer_begin;
+            computed[branch_idx].slices      = std::move(slices);
+        }
+    });
+    size_t committed = 0;
+    for (Tree &tree : trees) {
+        for (const Branch &branch : tree.branches) {
+            BranchSlices &computed_branch = computed[committed ++];
+            if (! computed_branch.keep)
+                continue;
+            LayerIndex             layer_begin     = computed_branch.layer_begin;
+            LayerIndex             layer_end;
+            std::vector<Polygons> &slices          = computed_branch.slices;
+            std::vector<Polygons> &bottom_contacts = computed_branch.bottom_contacts;
+
+            recover_pending_branch_roofs(interface_placer, branch.path, layer_begin, slices);
+
+            while (! slices.empty() && slices.back().empty()) {
+                slices.pop_back();
+            }
+
+            // ORCA: recompute layer_end after trimming trailing empty slices.
+            layer_end = layer_begin + LayerIndex(slices.size());
+
+            if (layer_begin < layer_end) {
+                LayerIndex new_begin = tree.first_layer_id == -1 ? layer_begin : std::min(tree.first_layer_id, layer_begin);
+                LayerIndex new_end   = tree.first_layer_id == -1 ? layer_end : std::max(tree.first_layer_id + LayerIndex(tree.slices.size()), layer_end);
+                size_t     new_size  = size_t(new_end - new_begin);
+                if (tree.first_layer_id == -1) {
+                } else if (tree.slices.capacity() < new_size) {
+                    std::vector<Slice> new_slices;
+                    new_slices.reserve(new_size);
+                    if (LayerIndex dif = tree.first_layer_id - new_begin; dif > 0)
+                        new_slices.insert(new_slices.end(), dif, {});
+                    append(new_slices, std::move(tree.slices));
+                    tree.slices.swap(new_slices);
+                } else if (LayerIndex dif = tree.first_layer_id - new_begin; dif > 0)
+                    tree.slices.insert(tree.slices.begin(), tree.first_layer_id - new_begin, {});
+                tree.slices.insert(tree.slices.end(), new_size - tree.slices.size(), {});
+                for (LayerIndex i = layer_begin; i != layer_end; ++ i) {
+                    int j = i - layer_begin;
+                    Polygons &src = slices[j];
+                    bool has_bottom_contacts = j < int(bottom_contacts.size()) && !bottom_contacts[j].empty();
+
+                    // ORCA: preserve bottom contacts even if base polygons are empty.
+                    if (!src.empty() || has_bottom_contacts) {
+                        Slice &dst = tree.slices[i - new_begin];
+                        if (++ dst.num_branches > 1) {
+                            if (!src.empty())
+                                append(dst.polygons, std::move(src));
+                            if (has_bottom_contacts)
+                                append(dst.bottom_contacts, std::move(bottom_contacts[j]));
+                        } else {
+                            if (!src.empty())
+                                dst.polygons = std::move(src);
+                            if (has_bottom_contacts)
+                                dst.bottom_contacts = std::move(bottom_contacts[j]);
+                        }
+                    }
+                }
+
+                tree.first_layer_id = new_begin;
+            }
+        }
+    }
+
+    // three_slicer: the trees in turn and the layers of each threaded, since one tree can hold most of the branches and
+    //  only the main thread starts threads (tbb/stub_parallel.h threaded_here). Each layer unions only its own slice.
+    for (Tree &tree : trees) {
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, tree.slices.size()), [&tree](const tbb::blocked_range<size_t> &slice_range) {
+                for (size_t slice_idx = slice_range.begin(); slice_idx < slice_range.end(); ++ slice_idx) {
+                    Slice &slice = tree.slices[slice_idx];
+                    if (slice.num_branches > 1) {
+                        // ORCA: avoid union_ on empty containers.
+                        if (!slice.polygons.empty())
+                            slice.polygons = union_(slice.polygons);
+                        if (!slice.bottom_contacts.empty())
+                            slice.bottom_contacts = union_(slice.bottom_contacts);
+
+                        slice.num_branches = 1;
+                    }
+                }
+            });
 
             throw_on_cancel();
-        }
-    }, tbb::simple_partitioner());
+    }
 
     size_t num_layers = 0;
     for (Tree &tree : trees)
@@ -4143,33 +4400,8 @@ void organic_draw_branches(
             Polygons bottom_contact_polygons = slice.bottom_contacts.empty() ? Polygons{} :
                 (slice.num_branches > 1 ? union_(slice.bottom_contacts) : std::move(slice.bottom_contacts));
 
-            if (! base_layer_polygons.empty()) {
-                // Most of the time in this function is this union call. Can take 300+ ms when a lot of areas are to be unioned.
-                base_layer_polygons = smooth_outward(union_(base_layer_polygons), config.support_line_width); //FIXME was .smooth(50);
-                //smooth_outward(closing(std::move(bottom), closing_distance + minimum_island_radius, closing_distance, SUPPORT_SURFACES_OFFSET_PARAMETERS), smoothing_distance) :
-                // simplify a bit, to ensure the output does not contain outrageous amounts of vertices. Should not be necessary, just a precaution.
-                base_layer_polygons = polygons_simplify(base_layer_polygons, std::min(scaled<double>(0.03), double(config.resolution)), polygons_strictly_simple);
-            }
-
-            // Subtract top contact layer polygons from support base.
-            SupportGeneratorLayer *top_contact_layer = top_contacts.empty() ? nullptr : top_contacts[layer_idx];
-            if (top_contact_layer && ! top_contact_layer->polygons.empty() && ! base_layer_polygons.empty()) {
-                base_layer_polygons = diff(base_layer_polygons, top_contact_layer->polygons);
-                if (! bottom_contact_polygons.empty())
-                    //FIXME it may be better to clip bottom contacts with top contacts first after they are propagated to produce interface layers.
-                    bottom_contact_polygons = diff(bottom_contact_polygons, top_contact_layer->polygons);
-            }
-            if (! bottom_contact_polygons.empty()) {
-                base_layer_polygons = diff(base_layer_polygons, bottom_contact_polygons);
-                SupportGeneratorLayer *bottom_contact_layer = bottom_contacts[layer_idx] = &layer_allocate(
-                    layer_storage, SupporLayerType::BottomContact, print_object.slicing_parameters(), config, layer_idx);
-                bottom_contact_layer->polygons = std::move(bottom_contact_polygons);
-            }
-            if (! base_layer_polygons.empty()) {
-                SupportGeneratorLayer *base_layer = intermediate_layers[layer_idx] = &layer_allocate(
-                    layer_storage, SupporLayerType::Base, print_object.slicing_parameters(), config, layer_idx);
-                base_layer->polygons = union_(base_layer_polygons);
-            }
+            organic_commit_layer(print_object, config, layer_idx, std::move(base_layer_polygons), std::move(bottom_contact_polygons),
+                bottom_contacts, top_contacts, intermediate_layers, layer_storage);
 
             throw_on_cancel();
         }
@@ -4192,7 +4424,35 @@ void generate_tree_support_3D(PrintObject &print_object, TreeSupport* tree_suppo
     std::transform(bedpts.begin(), bedpts.end(), std::back_inserter(bedptsf), [](const Point &p) { return unscale(p); });
     BuildVolume build_volume{ bedptsf, tree_support->m_print_config->printable_height, {}, {} };
 
+    // three_slicer: the organic path runs its tbb loops threaded on the mt kernel (the slim/strong/hybrid path opens the same
+    //  section loop by loop in TreeSupport.cpp). Upstream wrote these loops for real TBB: each writes per-index slots or
+    //  takes a lock that guards an unordered store (TreeModelVolumes' caches); the one loop whose locked appends follow
+    //  the thread order, organic_draw_branches' tree loop, is split there into a threaded compute and an ordered commit.
+    //  Measured on the longest plate of a 28-plate shield project (Bambu Lab P1S, tree(auto)): support 9.7 -> 2.6 s, total
+    //  11.2 -> 4.1 s, G-code byte-identical to st on that plate and on two others.
+    tbb_stub::ParallelSection parallel_section;
     TreeSupport3D::generate_support_areas(*print_object.print(), tree_support, build_volume, { idx }, throw_on_cancel);
 }
+
+// three_slicer: INJECT (support_phase.h). The group the last CAPTURE kept is finished on the support bodies in
+//  support_phase::injected: they are committed where upstream would propagate its influence areas and draw the branches,
+//  and the interfaces and toolpaths are made by upstream's own steps. False when no group is kept.
+bool finish_captured_tree_support_3D(PrintObject &print_object, std::function<void()> throw_on_cancel)
+{
+    std::unique_ptr<TreeSupport3D::SupportGroupLayers> group = std::move(TreeSupport3D::s_captured_group);
+    if (! group)
+        return false;
+    tbb_stub::ParallelSection parallel_section;
+    TreeSupport3D::organic_inject_branches(print_object, group->config, group->num_support_layers,
+        group->bottom_contacts, group->top_contacts, group->intermediate_layers, group->layer_storage, throw_on_cancel);
+    group->remove_undefined_layers();
+    std::tie(group->interface_layers, group->base_interface_layers) = generate_interface_layers(print_object.config(), group->support_params,
+        group->bottom_contacts, group->top_contacts, group->interface_layers, group->base_interface_layers, group->intermediate_layers, group->layer_storage);
+    TreeSupport3D::support_group_to_toolpaths(*print_object.print(), print_object, *group);
+    return true;
+}
+
+bool has_captured_tree_support_3D() { return TreeSupport3D::s_captured_group != nullptr; }
+void drop_captured_tree_support_3D() { TreeSupport3D::s_captured_group.reset(); }
 
 } // namespace Slic3r
