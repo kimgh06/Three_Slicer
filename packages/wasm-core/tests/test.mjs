@@ -1590,6 +1590,12 @@ ok(!rTime.error && typeof rTime.stats.time_estimate === 'number' && rTime.stats.
    `GCodeProcessor time estimate: total=${rTime.stats.time_estimate.toFixed(1)}s (>0)`)
 ok(rTime.stats.time_moves > 0 && rTime.stats.layer_times.length > 0,
    `parsed ${rTime.stats.time_moves} moves, ${rTime.stats.layer_times.length} layer times`)
+// One move per motion line. The estimator's "actual speed" moves (two or three per block, for a desktop preview this
+//  kernel does not draw) are left out: they carried no time, were inserted into the middle of the move list, and
+//  counted toward the resident move cap, so the largest plates of a 28-plate project lost their estimate (measured:
+//  emit 52.0 -> 28.4 core-seconds over the project together with the float parse, 5 plates stream-notime -> full-stream).
+const motionLineCount = (rTime.gcode.match(/^G[0-3] /gm) || []).length
+ok(rTime.stats.time_moves === motionLineCount, `the estimator holds one move per motion line (${rTime.stats.time_moves} == ${motionLineCount})`)
 // per-layer times sum to total (single write site)
 const layerTimeSum = rTime.stats.layer_times.reduce((sum, value) => sum + value, 0)
 ok(Math.abs(layerTimeSum - rTime.stats.time_estimate) / rTime.stats.time_estimate < 0.001,

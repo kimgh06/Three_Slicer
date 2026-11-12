@@ -2,7 +2,7 @@
 // The policy numbers are measured (see the module header); this pins that the code says what the measurement said.
 //   run: node viewer-package/tests/test_slice_pool.mjs
 import { isTypedRefusal } from '../src/core/slice_errors.js'
-import { resolveWorkerCount, memoryWorkerCap, makePlateRun, patchPlate, runSummary, PLATE_STATES } from '../src/core/slice_pool.js'
+import { resolveWorkerCount, threadsPerWorker, MIN_WORKER_THREADS, memoryWorkerCap, makePlateRun, patchPlate, runSummary, sliceOrder, PLATE_STATES } from '../src/core/slice_pool.js'
 
 let failures = 0
 const check = (label, condition, detail = '') => {
@@ -11,10 +11,10 @@ const check = (label, condition, detail = '') => {
 }
 
 console.log('[worker count: Auto]')
-check('mt Auto is half the cores, rounded up', resolveWorkerCount({ kernel: 'mt', cores: 15, plates: 30 }) === 8)
+check('mt Auto is the core count (each worker gets a share of the threads)', resolveWorkerCount({ kernel: 'mt', cores: 15, plates: 30 }) === 15)
 check('st Auto is cores - 1', resolveWorkerCount({ kernel: 'st', cores: 15, plates: 30 }) === 14)
-check('unknown kernel is treated as mt', resolveWorkerCount({ kernel: null, cores: 8, plates: 30 }) === 4)
-check('unknown core count falls back to 4', resolveWorkerCount({ kernel: 'mt', cores: 0, plates: 30 }) === 2)
+check('unknown kernel is treated as mt', resolveWorkerCount({ kernel: null, cores: 8, plates: 30 }) === 8)
+check('unknown core count falls back to 4', resolveWorkerCount({ kernel: 'mt', cores: 0, plates: 30 }) === 4)
 check('never more workers than plates', resolveWorkerCount({ kernel: 'st', cores: 15, plates: 3 }) === 3)
 check('one plate is one worker', resolveWorkerCount({ kernel: 'st', cores: 15, plates: 1 }) === 1)
 check('two cores on st still give one worker', resolveWorkerCount({ kernel: 'st', cores: 2, plates: 9 }) === 1)
@@ -29,12 +29,19 @@ check('a manual count is capped by memory too — past it the tab dies, not a wo
 check('the cap itself is exported for the select to mark', memoryWorkerCap(143 * MB) === 2 && memoryWorkerCap(0) === Infinity)
 
 console.log('\n[worker count: manual]')
+// A pool worker's share of the threads on the threaded kernel: twice the cores over the workers, at least two.
+check('8 workers on 8 cores run 2 threads each', threadsPerWorker({ kernel: 'mt', cores: 8, workers: 8 }) === 2)
+check('4 workers on 8 cores run 4 threads each', threadsPerWorker({ kernel: 'mt', cores: 8, workers: 4 }) === 4)
+check('the share never goes under the minimum', threadsPerWorker({ kernel: 'mt', cores: 4, workers: 30 }) === MIN_WORKER_THREADS)
+check('one worker alone has no limit', threadsPerWorker({ kernel: 'mt', cores: 8, workers: 1 }) === 0)
+check('the single-threaded kernel has no limit to set', threadsPerWorker({ kernel: 'st', cores: 8, workers: 7 }) === 0)
+check('an unknown kernel is limited as mt is', threadsPerWorker({ kernel: null, cores: 8, workers: 8 }) === 2)
 check('a manual value wins over Auto', resolveWorkerCount({ setting: 3, kernel: 'mt', cores: 15, plates: 30 }) === 3)
 check('manual is capped at the core count', resolveWorkerCount({ setting: 99, kernel: 'mt', cores: 15, plates: 30 }) === 15)
 check('manual is capped at the plate count', resolveWorkerCount({ setting: 12, kernel: 'mt', cores: 15, plates: 9 }) === 9)
-check('0 means Auto', resolveWorkerCount({ setting: 0, kernel: 'mt', cores: 15, plates: 30 }) === 8)
+check('0 means Auto', resolveWorkerCount({ setting: 0, kernel: 'mt', cores: 15, plates: 30 }) === 15)
 check('a string setting is read as a number', resolveWorkerCount({ setting: '5', kernel: 'mt', cores: 15, plates: 30 }) === 5)
-check('garbage means Auto', resolveWorkerCount({ setting: 'lots', kernel: 'mt', cores: 15, plates: 30 }) === 8)
+check('garbage means Auto', resolveWorkerCount({ setting: 'lots', kernel: 'mt', cores: 15, plates: 30 }) === 15)
 
 console.log('\n[run bookkeeping]')
 const run0 = makePlateRun([0, 2, 5], 2, 'mt')
@@ -63,6 +70,26 @@ check('a custom G-code error is a refusal', isTypedRefusal(new Error('CUSTOM_GCO
 check('an SLA capability code is a refusal', isTypedRefusal('SLA_UNSUPPORTED_HOLLOWING: hollowing is not available in this kernel'))
 check('cancellation is not', !isTypedRefusal(new Error('canceled')))
 check('a dead worker is not (it gets the classic/economy retries)', !isTypedRefusal(new Error('Worker terminated (likely out of memory): x')))
+
+// sliceOrder: the selected plate first (the selector worker's), then the largest merges first, ties by index
+{
+  const plates = [0, 1, 2, 3, 5], sizes = [10, 40, 20, 40, 5]
+  const order = sliceOrder(plates, sizes, 2)
+  check('the selected plate goes first', order[0] === 2)
+  check('the rest go largest first, ties by index', JSON.stringify(order) === JSON.stringify([2, 1, 3, 0, 5]))
+  check('every plate is in the order once', [...order].sort((a, b) => a - b).join() === plates.join())
+  check('a selected plate with no objects is not queued', JSON.stringify(sliceOrder(plates, sizes, 4)) === JSON.stringify([1, 3, 2, 0, 5]))
+  check('the inputs are left as they were', plates.join() === '0,1,2,3,5' && sizes.join() === '10,40,20,40,5')
+  // With the worker count, every worker but the first opens on one of the smallest plates (the largest plates would
+  //  reach the shared GPU together); what follows the opening is largest first again.
+  const twelve = Array.from({ length: 12 }, (unused, index) => index), twelveSizes = twelve.map(index => 100 - index * 5)
+  const staggered = sliceOrder(twelve, twelveSizes, 3, 8)
+  check('the opening is the selected plate and the smallest plates, smallest first', JSON.stringify(staggered.slice(0, 6)) === JSON.stringify([3, 11, 10, 9, 8, 7]))
+  check('the rest follow largest first', JSON.stringify(staggered.slice(6)) === JSON.stringify([0, 1, 2, 4, 5, 6]))
+  check('a staggered order holds every plate once', [...staggered].sort((a, b) => a - b).join() === twelve.join())
+  check('one worker keeps the plain order', JSON.stringify(sliceOrder(twelve, twelveSizes, 3, 1)) === JSON.stringify([3, 0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11]))
+  check('fewer plates than workers are all queued once', [...sliceOrder([0, 1, 2], [3, 2, 1], 0, 8)].sort((a, b) => a - b).join() === '0,1,2')
+}
 
 console.log(failures ? `\n${failures} failure(s)` : '\nall ok')
 process.exit(failures ? 1 : 0)

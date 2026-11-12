@@ -8,6 +8,9 @@
 //  support: the single-threaded kernel 9.8 -> 7.6 s for the union alone, the threaded kernel unchanged within run-to-run
 //  spread (the same work is already spread over its threads). So 'auto' asks for the GPU only on the single-threaded
 //  kernel. 'on' asks for it on either; 'off' never does.
+// A slice with an organic tree support takes another GPU route instead (three-slicer's support_gpu.js): the kernel
+//  stops at its support tips, the GPU makes the branches, the kernel finishes. That support has upstream's tips and
+//  other branches, so it is taken only when the mode asks for the GPU, and the stats card says so.
 // Whatever the mode, the worker decides whether it can: without a WebGPU device, or when the GPU refuses a slice, the
 //  kernel slices by itself and the result says so (kernel_stats.js `contour`). A GPU slice's contours have the CPU
 //  union's area and other vertices, so its G-code is not the CPU slice's byte for byte.
@@ -32,6 +35,13 @@ export function resolveGpuAcceleration({ mode, kernelKind }) {
   if (mode === 'on') return { engine: 'gpu', reason: 'on' }
   if (kernelKind === 'st') return { engine: 'gpu', reason: 'auto: the single-threaded kernel' }
   return { engine: 'cpu', reason: 'auto: the threaded kernel gains nothing from it' }
+}
+
+/** One line for the stats card from a result's `support` (kernel_stats.js), or null when the slice had no support for the GPU. */
+export function supportEngineText(support) {
+  if (!support) return null
+  if (support.engine === 'gpu') return 'Tree support branches on the GPU (not OrcaSlicer\'s branches)'
+  return `Tree support on the CPU (${support.reason ?? 'GPU not used'})`
 }
 
 /** One line for the stats card from a result's `contour` (kernel_stats.js), or null when the GPU was not asked for. */

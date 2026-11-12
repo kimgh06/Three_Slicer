@@ -1,6 +1,7 @@
 // Stage-13 bridge impl: the ONLY TU where the kernel meets the real GCodeProcessor + PrintConfig.
 // Everything Slic3r stays here; gcodeproc_bridge.h exposes plain types only.
 #include "gcodeproc_bridge.h"
+#include "fast_atof.h"
 #include "arachne_port/gcodeproc/GCode/GCodeProcessor.hpp"   // real GCodeProcessor (Print stub via -Igcodeproc/inc)
 #include <cmath>
 #include <cstdlib>
@@ -44,7 +45,7 @@ static void parse_filament_chunk(const std::string& gcode, double& total, double
                 }
             }
             if (e_position != std::string::npos) {
-                double value = std::atof(line.c_str() + e_position + 1);
+                double value = fast_atof(line.data() + e_position + 1, line.data() + line.size());
                 if (isG92) { e_absolute = value; }
                 else if (relative) {
                     if (value > 0 && hasXY) total += value;

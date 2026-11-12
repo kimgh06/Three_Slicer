@@ -3,8 +3,7 @@ import { effectiveSettings, plateTechnology } from '../core/plate_settings.js'
 import { statsFromKernel } from '../core/kernel_stats.js'
 import { useEffect, useRef, useState } from 'react'
 import { deriveKernelParams, deriveSlaParams, settingRaw, bedCenter, bedOrigin, partialSupport } from 'three-slicer-viewer/settings'
-import { finalizeGcode } from '../core/finalize_gcode.js'
-import { previewFromGcode } from '../core/gcode_parse.js'
+import { asExported } from '../core/exported_preview.js'
 import { DEFAULT_BED, MAX_PAINT_EXTRUDERS } from '../core/viewer_defaults.js'
 import { towerFootprint, AUTO_GAP, AUTO_EDGE_MARGIN_MM } from '../core/tower_layout.js'
 import { makeTerminationObservable, request } from '../core/worker_reply.js'
@@ -47,6 +46,8 @@ export function useSlicer(deps) {
   const [kernelLoad, setKernelLoad] = useState(null)
   const kernelKindRef = useRef(null)    // 'mt' | 'st' | null — what the selector worker's 'warm' reply said
   const gpuSliceRef = useRef(false)     // the slice being posted to the selector worker asks for the GPU contour union
+  const threadLimitRef = useRef(0)      // the most threads the selector worker's next slice may run (0: no limit), runSlice's `threads`
+  const deferPreviewRef = useRef(false)  // the selector worker's next slice leaves its read-back out, runSlice's `deferPreview`
   const cachedGpuSliceRef = useRef(false)   // ...and whether the slice the worker's stage cache came from did
   const poolRef = useRef(new Set())     // live pool contexts (an all-plates run's extra workers) — cancel and unmount reach them here
   // Where the selector worker's progress goes. Normally the component's own state; during an all-plates run the
@@ -197,27 +198,17 @@ export function useSlicer(deps) {
   }
   // Stage 30: assemble the streamed result — when streamed, g-code/layers already arrived as 'layer', so they are built from the accumulator.
   //  batch/MM keep gcode+layers in result as before. Economy mode yields an empty layers array (no toolpath) and g-code only.
-  //  Either way the G-code then gets what upstream writes once the estimate exists (finalizeGcode: M73, file totals).
+  //  Either way the slice is then shown as the G-code it exports (core/exported_preview.js) — unless the worker did that
+  //  itself (`exportedPreview` on the slice message; its result says so), which keeps the read-back off this thread.
   function assembleResult(result, a = streamAccumRef.current, paramsStr = null) {
+    if (result?.exportedPreview) return result
     if (result && result.stats && result.stats.streamed) {
       a = a || { layers: [], gcode: [] }
       // Spread first: fields beside the stream (the SLA solid meshes) must survive assembly.
-      return shownAsExported({ ...result, stats: result.stats, layers: a.layers, gcode: finalizeGcode(a.gcode.join(''), result.stats) }, paramsStr)
+      return asExported({ ...result, stats: result.stats, layers: a.layers, gcode: a.gcode.join('') }, paramsStr)
     }
-    if (result && typeof result.gcode === 'string' && result.stats) return shownAsExported({ ...result, gcode: finalizeGcode(result.gcode, result.stats) }, paramsStr)
+    if (result && typeof result.gcode === 'string' && result.stats) return asExported(result, paramsStr)
     return result
-  }
-  // An FFF slice is shown as the G-code it exports (previewFromGcode), in the frame of the params it was sliced with:
-  //  the toolpaths, and the layer, segment and filament figures counted from the same text, so a sliced plate and the
-  //  saved file opened again show the same thing. The time estimate and the bed verdicts stay the kernel's. Economy
-  //  mode keeps no toolpath to save memory, and the resin path has no G-code: both stay as they are.
-  function shownAsExported(result, paramsStr) {
-    if (!paramsStr || result.sla || !result.layers?.length || !result.gcode) return result
-    const params = JSON.parse(paramsStr)
-    const parsed = previewFromGcode(result.gcode, { center: bedCenter(params), filamentDiameter: params.filament_diameter, layerHeight: params.layer_height })
-    if (!parsed.layers.length) return result
-    const { layers, path_segments, filament_mm, filament_mm_by_tool } = parsed.stats
-    return { ...result, layers: parsed.layers, stats: { ...result.stats, layers, path_segments, filament_mm, filament_mm_by_tool } }
   }
   function handleResult(result) {
     if (result.error) { setError(String(result.error)); return }
@@ -285,16 +276,30 @@ export function useSlicer(deps) {
       kick()
       const message = { stl: buf, params: paramsStr, stall }
       if (cmd) message.cmd = cmd
-      // Only the selector worker's FFF slice: a pool worker is thrown away after its run, so a device and its buffers
-      //  there would be made for one slice.
       if (!cmd && gpuSliceRef.current) message.gpu = true
+      // The worker shows the slice as its exported G-code itself (core/exported_preview.js): the read-back used to be
+      //  the main thread's, which was busy for the whole of a slice-all.
+      if (!cmd) message.exportedPreview = true
+      if (!cmd && deferPreviewRef.current) message.deferPreview = true
+      if (threadLimitRef.current > 0) message.threads = threadLimitRef.current   // this worker's share of the cores in a pool run
       getWorker().postMessage(message)
       if (cmd !== 'sla') startP1Poll()   // real PASS1 progress (0 -> 35%) — a no-op when SAB is unsupported (st); SLA reports linearly itself
     })
   }
   function recreateWorker() { try { workerRef.current?.terminate() } catch {} ; workerRef.current = null; getWorker() }
   // The selector worker, seen through the same interface a pool context has — so the ladder below runs on either.
-  const selectorCtx = { sliceOne, recreate: recreateWorker }
+  const selectorCtx = { sliceOne, recreate: recreateWorker, readBack: (result, params) => readBackOn(workerRef.current, result, params) }
+  // The read-back a `deferPreview` slice left out (core/exported_preview.js), made by a worker once the run's last
+  //  plate is cut: the finalized G-code goes back in and the preview layers and figures come out. A worker that
+  //  cannot answer leaves the result with the kernel's own layers.
+  async function readBackOn(worker, result, params) {
+    if (!result?.previewPending) return result
+    const { previewPending, ...kept } = result
+    const answer = await request(worker, { cmd: 'readback', gcode: result.gcode, stats: result.stats, params }, { types: ['readback'] })
+    if (!answer?.layers?.length) return kept
+    return { ...kept, layers: answer.layers, stats: answer.stats }
+  }
+  const readBack = (result, params, ctx = null) => (ctx ?? selectorCtx).readBack(result, params)
 
   // ---- Plate-parallel slicing: a worker of its own for one plate at a time (core/slice_pool.js sizes the pool) ----
   // The selector worker's state is spread over the hook (the brush, the SAB bands, the incremental cache) because it
@@ -380,7 +385,15 @@ export function useSlicer(deps) {
       accum = { layers: [], gcode: [] }; rate = null; lastD = 0; lastT = 0; onRate?.(0)
       pending = { resolve, reject, sla: cmd === 'sla', paramsStr }
       kick()
-      wk.postMessage({ ...(cmd ? { cmd } : {}), stl: buf, params: paramsStr })
+      const message = { stl: buf, params: paramsStr }
+      if (cmd) message.cmd = cmd
+      // The same rule as the selector worker's slice (resolveGpuAcceleration), decided per plate in runSlice. Every
+      //  worker of a tab shares the browser's one adapter, so this spreads the run over that GPU, not over more GPUs.
+      if (!cmd && ctx.gpuSlice) message.gpu = true
+      if (!cmd) message.exportedPreview = true   // as the selector worker's slice does
+      if (!cmd && ctx.deferPreview) message.deferPreview = true
+      if (ctx.threads > 0) message.threads = ctx.threads
+      wk.postMessage(message)
       if (cmd !== 'sla') {   // the two SAB bands between progress messages, as the selector path polls them
         stopPoll()
         poll = setInterval(() => {
@@ -392,6 +405,7 @@ export function useSlicer(deps) {
       }
     })
     ctx.recreate = () => { try { wk?.terminate() } catch {} ; wk = null; sab = null; loaded = false; spawn() }
+    ctx.readBack = (result, params) => readBackOn(wk, result, params)
     ctx.cancel = () => { if (sab?.cancel) { try { Atomics.store(sab.cancel, 0, 1) } catch { sab.cancel[0] = 1 } } }
     ctx.terminate = () => { settle()?.reject(new Error('canceled')); try { wk?.terminate() } catch {} ; wk = null; sab = null; poolRef.current.delete(ctx) }
     poolRef.current.add(ctx)
@@ -563,7 +577,13 @@ export function useSlicer(deps) {
   // `ctx` is a pool context for a plate sliced beside the selected one; null is the selector worker itself.
   // `resyncPaint` (selector worker only): puts the plate's paint back into a recreated selector worker — the caller
   //  owns the selector (support_paint.js); a pool context re-syncs itself (ctx.syncPaint).
-  async function runSlice(merged, ctx = null, { syncPaint = null, resyncPaint = null } = {}) {
+  // `threads`: the most threads this slice may run at once, a pool run's share per worker (core/slice_pool.js
+  //  threadsPerWorker); 0 leaves the kernel free to use every core, which is what a single slice wants.
+  // `deferPreview`: the result comes back without its read-back (`previewPending`), which the caller asks for with
+  //  `readBack` when it has cores to spare — a slice-all, after its last plate.
+  async function runSlice(merged, ctx = null, { syncPaint = null, resyncPaint = null, threads = 0, deferPreview = false } = {}) {
+    if (ctx) { ctx.threads = threads; ctx.deferPreview = deferPreview }
+    else { threadLimitRef.current = threads; deferPreviewRef.current = deferPreview }
     // SLA routing: the technology key sends the merge to the pure-JS contour slicer instead of the kernel. No
     //  retry ladder and no incremental cache — there is no Arachne to crash and no stage cache to reuse — and the
     //  derived params ride on the result so the SL1 writer rasterizes with the values this slice actually used.
@@ -602,15 +622,17 @@ export function useSlicer(deps) {
         if (out?.r) out.r.towerParams = { prime_tower_x: params.prime_tower_x, prime_tower_y: params.prime_tower_y }
         return { ...out, params }
       }
+      const gpuMode = gpuAccelerationMode(effectiveSettings(settings, plateSettings, merged.plate))
       if (ctx) {
         // A pool worker is thrown away after the run, so a stage cache in it is heap for nothing — and the digest
         //  bookkeeping belongs to the selector worker, which is the only one that ever slices the same plate twice.
         params.keep_stages = false; params.reuse_stages = 0
+        // ctx.kernel is known once the worker has warmed; before that it is the selector worker's, from the same factory
+        ctx.gpuSlice = resolveGpuAcceleration({ mode: gpuMode, kernelKind: ctx.kernel ?? kernelKindRef.current }).engine === 'gpu'
         return withTower(await sliceLadder(merged.buf, params, ctx, () => ctx.syncPaint(merged.buf, storedPaint)))
       }
       treeSupportRef.current = params.support_style === 'tree'
-      const plateSettingsMap = effectiveSettings(settings, plateSettings, merged.plate)
-      gpuSliceRef.current = resolveGpuAcceleration({ mode: gpuAccelerationMode(plateSettingsMap), kernelKind: kernelKindRef.current }).engine === 'gpu'
+      gpuSliceRef.current = resolveGpuAcceleration({ mode: gpuMode, kernelKind: kernelKindRef.current }).engine === 'gpu'
       applyIncremental(params, dig)
       // The stage cache holds the contours of the slice that filled it. A slice that asks for the other engine must
       //  compute its own, or switching the GPU on would change nothing until the model moved.
@@ -628,5 +650,5 @@ export function useSlicer(deps) {
     } finally { releaseSelector() }
   }
 
-  return { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef, kernelLoad }
+  return { getWorker, cancelSlice, runSlice, readBack, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef, kernelLoad }
 }

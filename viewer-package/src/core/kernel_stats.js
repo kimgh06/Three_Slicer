@@ -14,9 +14,16 @@ function contourOf(s) {
   return { engine: s.contour_engine, reason: s.contour_engine_reason ?? null, fallbackLayers: s.contour_fallback_layers ?? 0, gpuMs: s.contour_gpu_ms ?? null,
     front: s.contour_front ?? null }
 }
+// What the worker reported about the tree support when the slice stopped at its support tips for the GPU
+//  (three-slicer's support_slice.js); null when it did not.
+function supportOf(s) {
+  if (!s.support_engine) return null
+  return { engine: s.support_engine, reason: s.support_engine_reason ?? null, gpuMs: s.support_gpu?.totalMs ?? null }
+}
 export function statsFromKernel(s, throughput = null) {
   return {
     contour: contourOf(s),
+    support: supportOf(s),
     layers: s.layers, segments: s.path_segments, filament: s.filament_mm, timeSec: s.time_estimate,
     engine: s.time_engine, limits: s.machine_limits, throughput,
     overBedBy: { x: s.over_bed_x ?? 0, y: s.over_bed_y ?? 0, z: s.over_bed_z ?? 0 },

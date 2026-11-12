@@ -154,7 +154,7 @@ TreeModelVolumes::TreeModelVolumes(
 #endif
 }
 
-void TreeModelVolumes::precalculate(const PrintObject& print_object, const coord_t max_layer, std::function<void()> throw_on_cancel)
+void TreeModelVolumes::precalculate(const PrintObject& print_object, const coord_t max_layer, std::function<void()> throw_on_cancel, bool tips_only)
 {
     auto t_start = std::chrono::high_resolution_clock::now();
     m_precalculated = true;
@@ -189,7 +189,11 @@ void TreeModelVolumes::precalculate(const PrintObject& print_object, const coord
     std::unordered_map<coord_t, LayerIndex> radius_until_layer;
     // while it is possible to calculate, up to which layer the avoidance should be calculated, this simulation is easier to understand, and does not need to be adjusted if something of the radius calculation is changed.
     // Overhead with an assumed worst case of 6600 layers was about 2ms
-    for (LayerIndex distance_to_top = 0; distance_to_top <= max_layer; ++ distance_to_top) {
+    // three_slicer: a tip may sit on any layer, so with tips_only its radius is needed up to max_layer and no other is.
+    LayerIndex last_distance_to_top = max_layer;
+    if (tips_only)
+        last_distance_to_top = 0;
+    for (LayerIndex distance_to_top = 0; distance_to_top <= last_distance_to_top; ++ distance_to_top) {
         const LayerIndex current_layer = max_layer - distance_to_top;
         auto update_radius_until_layer = [&radius_until_layer, current_layer](coord_t r) {
             auto it = radius_until_layer.find(r);
@@ -199,9 +203,12 @@ void TreeModelVolumes::precalculate(const PrintObject& print_object, const coord
                 assert(it->second >= current_layer);
         };
         // regular radius
+        // three_slicer: with tips_only the one radius read is the tip's under the min xy distance, the line after this one
+        if (! tips_only)
         update_radius_until_layer(ceilRadius(config.getRadius(distance_to_top, 0) + m_current_min_xy_dist_delta));
         // the maximum radius that the radius with the min_xy_dist can achieve
         update_radius_until_layer(ceilRadius(config.getRadius(distance_to_top, 0)));
+        if (! tips_only)
         update_radius_until_layer(ceilRadius(config.recommendedMinRadius(current_layer) + m_current_min_xy_dist_delta));
     }
 
@@ -213,10 +220,12 @@ void TreeModelVolumes::precalculate(const PrintObject& print_object, const coord
 
     // Append additional radiis needed for collision.
     // To calculate collision holefree for every radius, the collision of radius m_increase_until_radius will be required.
+    // three_slicer: with tips_only nothing reads a hole-free collision
+    if (! tips_only)
     radius_until_layer[ceilRadius(m_increase_until_radius + m_current_min_xy_dist_delta)] = max_layer;
     // Collision for radius 0 needs to be calculated everywhere, as it will be used to ensure valid xy_distance in drawAreas.
     radius_until_layer[0] = max_layer;
-    if (m_current_min_xy_dist_delta != 0)
+    if (m_current_min_xy_dist_delta != 0 && ! tips_only)
         radius_until_layer[m_current_min_xy_dist_delta] = max_layer;
 
     // Now that required_avoidance_limit contains the maximum of ild and regular required radius just copy.
@@ -232,9 +241,10 @@ void TreeModelVolumes::precalculate(const PrintObject& print_object, const coord
             relevant_hole_collision_radiis.emplace_back(key);
 
     // Calculate collisions without holes, built from regular collision
+    if (! tips_only)
     calculateCollisionHolefree(relevant_hole_collision_radiis, throw_on_cancel);
     // Let placables be calculated from calculateAvoidance() for better parallelization.
-    if (m_support_rests_on_model)
+    if (m_support_rests_on_model && ! tips_only)
         calculatePlaceables(relevant_avoidance_radiis, throw_on_cancel);
 
     auto t_coll = std::chrono::high_resolution_clock::now();
@@ -242,7 +252,14 @@ void TreeModelVolumes::precalculate(const PrintObject& print_object, const coord
     // Calculate the relevant avoidances in parallel as far as possible
     {
         tbb::task_group task_group;
+        // three_slicer: with tips_only a point is placed by one volume (s_tips_unlabelled in TreeSupport3D.cpp): the
+        //  collision when the support may rest on the model, which is made above, and the Fast avoidance to the bed when
+        //  it may not. No other avoidance and no wall restriction is made; one asked for anyway is computed on demand.
+        if (! tips_only)
         task_group.run([this, relevant_avoidance_radiis, throw_on_cancel]{ calculateAvoidance(relevant_avoidance_radiis, true, m_support_rests_on_model, throw_on_cancel); });
+        if (tips_only && ! m_support_rests_on_model)
+        task_group.run([this, relevant_avoidance_radiis, throw_on_cancel]{ calculateAvoidance(relevant_avoidance_radiis, true, false, throw_on_cancel, true); });
+        if (! tips_only)
         task_group.run([this, relevant_avoidance_radiis, throw_on_cancel]{ calculateWallRestrictions(relevant_avoidance_radiis, throw_on_cancel); });
         task_group.wait();
     }
@@ -611,7 +628,7 @@ void TreeModelVolumes::calculateCollisionHolefree(const std::vector<RadiusLayerP
     });
 }
 
-void TreeModelVolumes::calculateAvoidance(const std::vector<RadiusLayerPair> &keys, bool to_build_plate, bool to_model, std::function<void()> throw_on_cancel)
+void TreeModelVolumes::calculateAvoidance(const std::vector<RadiusLayerPair> &keys, bool to_build_plate, bool to_model, std::function<void()> throw_on_cancel, bool fast_only)
 {
     // For every RadiusLayer pair there are 3 avoidances that have to be calculated.
     // Prepare tasks for parallelization.
@@ -642,6 +659,9 @@ void TreeModelVolumes::calculateAvoidance(const std::vector<RadiusLayerPair> &ke
             BOOST_LOG_TRIVIAL(debug) << "Calculation requested for value already calculated?";
             continue;
         }
+        // three_slicer: fast_only, see precalculate
+        if (fast_only && task.type != AvoidanceType::Fast)
+            continue;
         if ((task.to_model ? to_model : to_build_plate) &&
             (! task.holefree() || task.radius < m_increase_until_radius + m_current_min_xy_dist_delta))
             avoidance_tasks.emplace_back(task);

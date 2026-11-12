@@ -80,6 +80,9 @@ Regenerate: `python3 web/extract_all.py` (paths are derived from `__file__` — 
   `src/settings_panel.jsx` — rather than importing package source files or raw JSON.
 - Run: one `npm i` at the repo root, then `cd web && make dev` (rebuilds the package dist and the bundled demos,
   then starts Vite with browser routing).
+  `npm run dev` in `web/` fails with `sh: 1: vite: not found` (exit 127) when the root `npm i` has not run: the
+  workspaces install into the root `node_modules`, and `web/viewer` has none of its own. Even with Vite installed,
+  `npm run dev` serves whatever `viewer-package/dist` was last built, while `make dev` rebuilds it first.
 - Routes: `/` is a crawlable landing page, `/slice` is the slicer, `/demos` hosts the built `examples/` demos, and
   `/testbed` is a scratch page. The old deep-link routes (`/tab/:builder`, `/option/:key`, `/search`) are gone.
 - The slicer screen is the packaged `<Viewport/>` (desktop-style shell: top bar, gizmo rail, sidebar cards) sharing

@@ -50,6 +50,7 @@
 //   layer_data · slice_mm · stream_sink · stage_cache              — layer data, multi-material, streaming sink, cache
 //   pass1 · surfaces · support · preamble · raft · pass2 · finish  — the slice() phases (slice_ctx.h is the shared context)
 //   bindings                                                      — the embind block (declares slice() via slice_api.h)
+#include "thread_limit.h"
 #include "seam_paint.h"
 #include "clipper.hpp"
 #include "pe_bridge.h"        // stage 8: bridge to the real ported OrcaSlicer PressureEqualizer (segment splitting)
@@ -63,6 +64,7 @@
 #include "layer_data.h"
 #include "params.h"
 #include "contour_phase.h"
+#include "support_phase.h"
 #include "selector_bridge.h"  // stage 20 -> MMU painting: the painted facet states decide whether a layer is multi-tool
 #include "slice_api.h"
 #include "cooling_bridge.h"
@@ -215,7 +217,15 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   double treeZMaxResidual = -1.0;
   int treeSupportLayers = 0;
   std::vector<LayerData> layersOwn;
-  if (!reuseSupport) layersOwn.resize(layerCount);
+  // support_phase.h INJECT / RESUME: the layers of the slice that stopped at its support tips; PASS1 and the surfaces are
+  //  not run again. Anything else drops them.
+  static std::vector<LayerData> keptSupportLayers;
+  const bool resumeAtSupport = (support_phase::mode == support_phase::INJECT || support_phase::mode == support_phase::RESUME) &&
+    support_phase::layersKept && (int)keptSupportLayers.size() == layerCount && !reuseSupport;
+  if (resumeAtSupport) layersOwn = std::move(keptSupportLayers);
+  else if (!reuseSupport) layersOwn.resize(layerCount);
+  support_phase::layersKept = false;
+  std::vector<LayerData>().swap(keptSupportLayers);
   std::vector<LayerData>* layerSource = nullptr;
   if (reuseSupport) {
     layerSource = &g_stage_cache.layers;
@@ -249,6 +259,11 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     report(layerCount, total);
     report(layerCount+1, total);
   } else {
+    if (resumeAtSupport) {
+      timePass1 = timePass15 = emscripten_get_now();
+      report(layerCount, total);
+      report(layerCount+1, total);
+    } else {
     contour_phase::captured = false;
     if (!pass1_run(context)) {
       em::val response=em::val::object();
@@ -270,8 +285,20 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   timePass15 = emscripten_get_now();
   report(layerCount+1, total);                            // surface detection completion tick (signals entering support generation)
 
+    }                                            // end of the resumeAtSupport skip (PASS1 and the surfaces)
+
   // ---- PASS 1.6: support (overhang detection -> vertical projection -> interface/base) ----
+  support_phase::captured = false;
   support_run(context);
+  // the tree support stopped at its tips, for its branches to be made outside the kernel (support_phase.h)
+  if (support_phase::captured) {
+    keptSupportLayers = std::move(layersOwn);
+    support_phase::layersKept = true;
+    em::val response=em::val::object();
+    response.set("supportCaptured", true);
+    response.set("layers", layerCount);
+    return response;
+  }
 
   // ---- Preamble ----
   }                                              // G003: end of the reuseSupport skip block (only PASS1~1.6 is skipped — preamble, raft and emission are shared)
@@ -458,7 +485,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
   std::mutex precomputeMutex;
   std::condition_variable precomputeDoneCondition, precomputeRoomCondition;
   int nextPrecompute = 0, lastConsumedPrecompute = -1;
-  unsigned precomputeHardwareThreads = std::thread::hardware_concurrency();
+  unsigned precomputeHardwareThreads = thread_limit::hardware_threads();
   if (!precomputeHardwareThreads) precomputeHardwareThreads = 4;
   const bool parallelEmit = !params.spiral_mode && !scarfOn && writer.pe_slope <= 0.0 && !writer.emit_pe_tags
                        && !realPE;   // conditions under which G003 parallel emission is possible (otherwise serial fallback)
@@ -531,7 +558,7 @@ em::val slice(em::val stl_bytes, std::string params_json, em::val onProgress) {
     base.filament = 0;
     base.segments = 0;
     base.wall_crossings = 0;
-    unsigned writerHardwareThreads = std::thread::hardware_concurrency();
+    unsigned writerHardwareThreads = thread_limit::hardware_threads();
     if (!writerHardwareThreads) writerHardwareThreads = 4;
     unsigned writerCount = std::max(1u, writerHardwareThreads / 2);
     auto writerWork = [&]{

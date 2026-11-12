@@ -1,8 +1,10 @@
 // Ported verbatim from OrcaSlicer src/libslic3r/GCode/CoolingBuffer.cpp, except the constructor (see the header) and
-// the includes that stood in for GCode.hpp.
+// the includes that stood in for GCode.hpp, and the axis values of parse_layer_gcode, which are read with fast_atof
+// (../../../fast_atof.h: the same double as upstream's atof, measured 7% of an st slice in libc's long double scanner).
 #include "../GCodeWriter.hpp"
 #include "../Circle.hpp"
 #include "CoolingBuffer.hpp"
+#include "../../../fast_atof.h"
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/log/trivial.hpp>
@@ -404,7 +406,7 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                               (*c == 'E') ? 3 : (*c == 'F') ? 4 :
                               (*c == 'I') ? 5 : (*c == 'J') ? 6 : size_t(-1);
                 if (axis != size_t(-1)) {
-                    new_pos[axis] = float(atof(++c));
+                    new_pos[axis] = float(fast_atof(++c, sline.data() + sline.size()));
                     if (axis == 4) {
                         // Convert mm/min to mm/sec.
                         new_pos[4] /= 60.f;

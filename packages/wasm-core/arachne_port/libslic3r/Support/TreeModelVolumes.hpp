@@ -84,7 +84,9 @@ public:
      * Knowledge about branch angle is used to only calculate avoidances and collisions that may actually be needed.
      * Not calling precalculate() will cause the class to lazily calculate avoidances and collisions as needed, which will be a lot slower on systems with more then one or two cores!
      */
-    void precalculate(const PrintObject& print_object, const coord_t max_layer, std::function<void()> throw_on_cancel);
+    // three_slicer: tips_only keeps the radii to the tip's own (support_phase.h: the branches are made outside the kernel,
+    //  so only generate_initial_areas reads these volumes).
+    void precalculate(const PrintObject& print_object, const coord_t max_layer, std::function<void()> throw_on_cancel, bool tips_only = false);
 
     /*!
      * \brief Provides the areas that have to be avoided by the tree's branches to prevent collision with the model on this layer.
@@ -367,7 +369,7 @@ private:
      * collide with the model. Result is saved in the cache.
      * \param keys RadiusLayerPairs of all requested areas. Every radius will be calculated up to the provided layer.
      */
-    void calculateAvoidance(const std::vector<RadiusLayerPair> &keys, bool to_build_plate, bool to_model, std::function<void()> throw_on_cancel);
+    void calculateAvoidance(const std::vector<RadiusLayerPair> &keys, bool to_build_plate, bool to_model, std::function<void()> throw_on_cancel, bool fast_only = false);
 
     /*!
      * \brief Creates the areas that have to be avoided by the tree's branches to prevent collision with the model.
