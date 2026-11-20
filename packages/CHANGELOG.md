@@ -1,16 +1,41 @@
 # Changelog
 
-## Unreleased
+## 0.4.4 — 2026-11-20
+
+Slice-all of a 28-plate project (Hylian Shield, Bambu Lab P1S, organic tree support) in Chrome, 8 workers, GPU on,
+classic walls: 19.3-19.9 s -> 7.1-7.5 s to the last plate's G-code, previews ready at 8.4-8.8 s, Chrome memory peak
+8.4 -> 7.1-7.7 GB.
+
+### Added
+
+- With the GPU on, an organic tree support's branches are made on the GPU: the kernel stops after upstream's overhang
+  detection and tip placement, `support_gpu.js` builds every layer's support body, and the kernel finishes the slice
+  with upstream's interfaces and toolpaths. These branches are this package's own, not upstream's, and the stats card
+  says so. A GPU failure after the capture finishes with upstream's support, byte for byte. Rafts, other tree styles
+  and multi-material keep upstream's support.
+- `set_thread_limit` on the kernel and `threads` on the slice message: each pool worker runs with a share of the cores.
 
 ### Changed
 
+- Organic tree support runs threaded on the mt kernel, and the slim, strong and hybrid tree loops are threaded; each
+  gives the serial G-code (`test_tree_support_mt.mjs`).
+- The tip capture precalculates only the volumes tip placement reads (the project's captures 34.3 -> 10.9 s, every tip
+  the same).
+- Slice-all queues the selected plate first, then the largest plates, with the other workers opening on small plates.
+  Auto uses every core on mt, each worker with a thread budget. The G-code read-back for the previews runs in the
+  workers, and in a slice-all after the last plate is cut.
+- Kernel CPU work with byte-identical output: `FastInt` as the big integer of boost's Voronoi predicates, `fast_atof`
+  in the cooling buffer, no "actual speed" moves in the time estimator (the five largest plates of that project now
+  keep their time estimate), nothrow moves for `Polygon` / `Polyline`.
+- `build.sh` builds outside macOS Homebrew with an activated emsdk and `WASM_DEPS_INCLUDE`.
 - The kernel wasm is 12% smaller: `slicer_core.wasm` 6,506,892 -> 5,741,239 bytes (brotli 1,457,481 -> 1,305,653),
   `slicer_core.mt.wasm` 6,750,898 -> 5,988,970. Three build changes, G-code byte-identical on every path the golden
   and wide dumps cover (st and mt): the nlopt algorithms the SLA support chain never selects are stubbed instead of
   linked (-187 KB), `PrintConfig.cpp` is compiled without its tooltip, label, sidetext and category strings (-236 KB),
   and the TUs that run once per slice (the config subsystem, GCodeProcessor, WipeTower, PressureEqualizer, the
   PlaceholderParser group) are compiled at -Os (-355 KB). `test_kernel_size.mjs` keeps each wasm under a byte budget
-  and fails when a stripped string comes back.
+  and fails when a stripped string comes back. The GPU support phase and `FastInt` in this release add part of it
+  back: `slicer_core.wasm` ships at 5,876,528 bytes and `slicer_core.mt.wasm` at 6,118,191.
 
 ## 0.4.3 — 2026-11-07
 
