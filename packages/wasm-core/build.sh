@@ -273,7 +273,9 @@ em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
 
 # webpack compatibility: webpack tries to statically resolve the dynamic import("node:module") inside the ENVIRONMENT_IS_NODE guard
 # and fails (node: scheme) -> excluded with a webpackIgnore magic comment. Runtime behavior is unchanged (no effect on Vite/Node).
-sed -i.orig 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.js && rm ../engine/src/slicer_core.js.orig
+# The pattern leaves out the `await`: emscripten writes `await import(...)` or `await(import(...))` depending on its version
+#  (measured: the glue of the 0.4.4 kernel had the second, the old pattern matched nothing and a Next build failed).
+sed -i.orig 's|import("node:module")|import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.js && rm ../engine/src/slicer_core.js.orig
 
 echo "built -> ../engine/src/slicer_core.js + slicer_core.wasm"
 ls -la ../engine/src/slicer_core.js ../engine/src/slicer_core.wasm
@@ -318,9 +320,9 @@ em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -o ../engine/src/slicer_core.mt.js \
   $(objs /tmp/ws_obj/mt $MAIN_SRC) /tmp/ts_group_mt.o /tmp/sla_group_mt.o
 
-sed -i.orig 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.mt.js
+sed -i.orig 's|import("node:module")|import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.mt.js
 # The same case applies to the pthread bootstrap in the mt glue: the dynamic import("node:worker_threads") inside the Node guard
-sed -i.orig 's|await import("node:worker_threads")|await import(/* webpackIgnore: true */ "node:worker_threads")|' ../engine/src/slicer_core.mt.js && rm ../engine/src/slicer_core.mt.js.orig
+sed -i.orig 's|import("node:worker_threads")|import(/* webpackIgnore: true */ "node:worker_threads")|' ../engine/src/slicer_core.mt.js && rm ../engine/src/slicer_core.mt.js.orig
 
 echo "built -> ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm"
 ls -la ../engine/src/slicer_core.mt.js ../engine/src/slicer_core.mt.wasm
