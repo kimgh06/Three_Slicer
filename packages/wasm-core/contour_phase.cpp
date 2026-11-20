@@ -1,4 +1,5 @@
 // contour_phase.cpp — see contour_phase.h.
+#include "thread_limit.h"
 #include "contour_phase.h"
 #include "slice_planes.h"
 
@@ -22,7 +23,7 @@ std::vector<int> result;
 
 void parallel(int count, void (*task)(int index, void* context), void* context) {
 #ifdef __EMSCRIPTEN_PTHREADS__
-  const unsigned threadCount = std::min<unsigned>(std::max(1u, std::thread::hardware_concurrency()), (unsigned)std::max(1, count));
+  const unsigned threadCount = std::min<unsigned>(std::max(1u, thread_limit::hardware_threads()), (unsigned)std::max(1, count));
   std::atomic<int> next{0};
   auto work = [&] {
     int index;

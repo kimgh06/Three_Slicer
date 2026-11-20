@@ -21,7 +21,10 @@ import { withSliceWarnings } from './warnings.js'
 import { withSliceThroughput } from './throughput.js'
 import { acquireContourDevice, makeContourGpu } from './contour_gpu.js'
 import { kernelHasContourPhase, sliceWithContourGpu } from './contour_slice.js'
+import { makeSupportGpu } from './support_gpu.js'
+import { kernelHasSupportPhase, sliceWithSupportGpu, slicesOrganicSupport } from './support_slice.js'
 import { FILL_TOOLS } from 'three-slicer-viewer/paint'
+import { asExported, finalizedExport, hasReadBack, readBack } from 'three-slicer-viewer/gcode'
 import { KERNEL_WASM_BYTES } from './kernel_wasm_bytes.js'
 
 // The kernel parses `params` as JSON text, so the raw protocol used to require a string — while the direct handle
@@ -102,24 +105,44 @@ const loadCore = async () => {
 
 let modPromise = null
 
-// The contour union on the GPU (contour_gpu.js), made on the first slice that asks for it. `false` once this worker
-//  found no usable device, so the next slice does not ask again; a lost device is asked for again.
-let contourGpu = null
-const contourGpuOf = async () => {
-  if (contourGpu !== null) return contourGpu
-  try {
-    const device = await acquireContourDevice(self.navigator?.gpu)
-    if (!device) { contourGpu = false; return contourGpu }
-    contourGpu = await makeContourGpu(device)
-    device.lost.then(() => { contourGpu = null })
-  } catch (error) {
-    say('warn', '[slicer.worker] contour GPU unavailable:', error)
-    contourGpu = false
-  }
-  return contourGpu
+// One WebGPU device per worker, asked for by the first slice that wants the GPU, and what is built on it: the contour
+//  union (contour_gpu.js) and the tree support's branches (support_gpu.js), each made by the first slice that takes
+//  its path. Each is a promise, so a slice can start one and go on: a worker that found no usable device answers null
+//  from then on without asking again (`gpuReason` says why), and a lost device is asked for again.
+let gpuDevicePromise = null
+let contourGpuPromise = null
+let supportGpuPromise = null
+let gpuReason = null
+let gpuAbsent = false
+const forgetGpu = () => { gpuDevicePromise = null; contourGpuPromise = null; supportGpuPromise = null }
+const gpuFailed = (error) => {
+  say('warn', '[slicer.worker] GPU unavailable:', error)
+  gpuReason = `no WebGPU device: ${error?.message ?? error}`
+  return null
 }
+const gpuDeviceOf = () => {
+  gpuDevicePromise ??= acquireContourDevice(self.navigator?.gpu).then(({ device, reason }) => {
+    if (!device) { gpuReason = reason; gpuAbsent = true; return null }
+    device.lost.then(forgetGpu)
+    return device
+  }).catch(gpuFailed)
+  return gpuDevicePromise
+}
+const contourGpuOf = () => {
+  contourGpuPromise ??= gpuDeviceOf().then(device => device && makeContourGpu(device)).catch(gpuFailed)
+  return contourGpuPromise
+}
+const supportGpuOf = () => {
+  supportGpuPromise ??= gpuDeviceOf().then(device => device && makeSupportGpu(device)).catch(gpuFailed)
+  return supportGpuPromise
+}
+// The most threads this slice may run at once (`threads` on the message, the kernel's thread_limit.h); absent means no
+//  limit, and every slice sets it, so a limit never outlives the run that asked for it. A kernel without the binding
+//  runs as it always did.
+const applyThreadLimit = (Module, d) => Module.set_thread_limit?.(Number(d.threads) || 0)
 // A slice's kernel call, through the GPU when the host asked for it (`gpu: true`) and this worker can.
 const runSlice = async (Module, d, onProgress) => {
+  applyThreadLimit(Module, d)
   const stl = new Uint8Array(d.stl), text = paramsText(d.params)
   if (!d.gpu) return Module.slice(stl, text, onProgress)
   const cpu = (reason) => {
@@ -128,14 +151,45 @@ const runSlice = async (Module, d, onProgress) => {
     return result
   }
   if (!kernelHasContourPhase(Module)) return cpu('this kernel build has no contour phase')
-  const gpu = await contourGpuOf()
-  if (!gpu) return cpu('no WebGPU device')
   const canceled = () => { const flag = Module.cancel_flag_view?.(); return !!flag && flag[0] !== 0 }
+  // An organic tree support is most of such a slice (measured: 63 % of a 28-plate project's kernel time), so that slice
+  //  has its branches made on the GPU and its contours left to the kernel; any other slice takes the contour path.
+  //  The device and the pipelines are asked for here and awaited after the kernel has run up to the support tips:
+  //  awaited first, eight workers asking at once each waited ~1.2 s before their kernel started (measured, Chrome 157,
+  //  a 28-plate project: slice-all 13.7-14.0 s). A worker that already knows it has no device slices plainly.
+  if (!gpuAbsent && self.navigator?.gpu && kernelHasSupportPhase(Module) && slicesOrganicSupport(text)) {
+    return sliceWithSupportGpu({ kernel: Module, supportGpu: supportGpuOf(), unavailableReason: () => gpuReason, stl, paramsText: text, onProgress, canceled })
+  }
+  const gpu = await contourGpuOf()
+  if (!gpu) return cpu(gpuReason)
   // The mesh route (the GPU cuts and chains the layers too) only on the single-threaded kernel. Measured on a 3M-facet
   //  model (node, Dawn): st's own cut and chain is 419-442 ms against 34-154 ms of mesh hand-over + 64-153 ms on the GPU;
   //  mt's is 64-77 ms on its threads, and the mesh route came out 20 ms slower in the front and 0.02-0.18 s in the slice.
   const meshRoute = kernelKind === 'st'
   return sliceWithContourGpu({ kernel: Module, contourGpu: gpu, stl, paramsText: text, onProgress, canceled, meshRoute })
+}
+
+// A slice made what the viewer shows (three-slicer-viewer/gcode asExported), here beside the kernel rather than on the
+//  page's main thread: a streamed slice's text and layers were kept by the sink, a batch one (multi-material) carries
+//  them. A result with no text to read back is returned as it came, unmarked, and the viewer assembles it itself.
+//  With `deferPreview` (a slice-all) the read-back is left for the `readback` command the run sends once its last plate
+//  is cut: the result is then the finalized G-code with the kernel's own layers, marked `previewPending`.
+const exportedResult = (result, layers, gcodeChunks, params, deferPreview) => {
+  let assembled = result
+  if (result?.stats?.streamed) assembled = { ...result, layers, gcode: gcodeChunks.join('') }
+  if (typeof assembled?.gcode !== 'string' || !assembled.stats) return result
+  if (!deferPreview) return { ...asExported(assembled, paramsText(params)), exportedPreview: true }
+  const finalized = finalizedExport(assembled)
+  return { ...finalized, exportedPreview: true, previewPending: hasReadBack(finalized) }
+}
+// The toolpath buffers of a result's layers, each once (a transfer list naming one buffer twice is refused).
+const layerBuffers = (layers) => {
+  const buffers = new Set()
+  for (const layer of layers ?? []) {
+    if (layer.paths?.buffer?.byteLength) buffers.add(layer.paths.buffer)
+    if (layer.widths?.buffer?.byteLength) buffers.add(layer.widths.buffer)
+  }
+  return [...buffers]
 }
 
 // Stage 20 painting states = upstream's EnforcerBlockerType (see packages/wasm-core/selector_bridge.h):
@@ -268,6 +322,7 @@ const handleMessage = async (e) => {
       const job = parseSlaJob(d.job)
       if (!modPromise) modPromise = loadCore()
       const Kernel = await modPromise
+      applyThreadLimit(Kernel, d)
       const onProgress = (done, total) => reply({ type: 'progress', done, total })
       if (Kernel.slice_sla_job) {
         Kernel.set_layer_sink((z, idx, gcode, paths, widths) => {
@@ -294,6 +349,7 @@ const handleMessage = async (e) => {
       const params = paramsText(d.params)
       if (!modPromise) modPromise = loadCore()
       const Kernel = await modPromise
+      applyThreadLimit(Kernel, d)
       const onProgress = (done, total) => reply({ type: 'progress', done, total })
       if (Kernel.slice_sla) {
         Kernel.set_layer_sink((z, idx, gcode, paths, widths) => {
@@ -333,6 +389,12 @@ const handleMessage = async (e) => {
     const Module = await modPromise
     // Warmup: only load the kernel (+ spawn the mt pthread pool) ahead of time — removes the perceived load on the first slice
     if (d.cmd === 'warmup') { reply({ type: 'warm', kernel: kernelKind }); return }
+    // The read-back a `deferPreview` slice left out: the finalized G-code back in, its preview layers and figures out.
+    if (d.cmd === 'readback') {
+      const shown = readBack({ gcode: d.gcode, stats: d.stats }, paramsText(d.params))
+      reply({ type: 'readback', layers: shown.layers ?? null, stats: shown.stats }, layerBuffers(shown.layers))
+      return
+    }
     // Stage 20: manual support painting — selector state persists in this worker Module (slicing uses the same Module).
     // `keepPaint` says the mesh is the same model in a new place, so the marks carry over — the reply reports whether
     //  they actually did, since a face-count change makes the kernel fall back to a clean registration.
@@ -486,8 +548,18 @@ const handleMessage = async (e) => {
     }
     // Default: slice. Register the layer sink -> the kernel calls back per layer (z, idx, gcodeChunk, pathsF32, widthsF32).
     //  Each layer is transferred to main immediately (toolpath buffers moved) -> the worker copy is freed -> heap headroom before the next layer.
+    //  With `exportedPreview` the layers stay here instead: the result is made what the viewer shows (asExported) in
+    //  this worker, and each layer posts only its index for the progress and the watchdog.
     const onProgress = (done, total) => reply({ type: 'progress', done, total })
+    const exportedPreview = d.exportedPreview === true
+    const streamedLayers = [], streamedGcode = []
     Module.set_layer_sink((z, idx, gcode, paths, widths) => {
+      if (exportedPreview) {
+        streamedLayers.push({ z, paths, widths })
+        if (gcode) streamedGcode.push(gcode)
+        reply({ type: 'layer', z, idx })
+        return
+      }
       const transfer = []
       if (paths && paths.buffer) transfer.push(paths.buffer)     // economy mode yields empty arrays (no .buffer) -> nothing to transfer
       if (widths && widths.buffer) transfer.push(widths.buffer)
@@ -504,7 +576,13 @@ const handleMessage = async (e) => {
     // withSliceWarnings names what the slice got away with (an off-bed model) on the result itself, and
     //  withSliceThroughput how fast it ran — the raw protocol carries both, so createSlicerClient's callers get
     //  them without the client having to re-derive anything.
-    reply({ type: 'done', result: withSliceThroughput(withSliceWarnings(r), performance.now() - started) })
+    const result = withSliceThroughput(withSliceWarnings(r), performance.now() - started)
+    if (exportedPreview) {
+      const shown = exportedResult(result, streamedLayers, streamedGcode, d.params, d.deferPreview === true)
+      reply({ type: 'done', result: shown }, layerBuffers(shown.layers))
+      return
+    }
+    reply({ type: 'done', result })
   } catch (err) {
     // Includes the WASM abort("memory access out of bounds") — the main thread's OOM ladder decides on re-creation / economy retry.
     const errorReply = { type: 'error', error: String((err && err.message) || err) }

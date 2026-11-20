@@ -12,11 +12,13 @@
 //   [open layer] a layer whose chain does not close (a box with a missing facet) is cut, chained and unioned by the
 //                kernel from the mesh it kept, and counted
 //   [refusal]    a device that fails leaves the kernel's own slice
+//   [adapter]    acquireContourDevice asks for the high-performance adapter and names why it has no device: no API, no
+//                adapter, a software adapter, too few storage buffers (fake adapters, so it runs without a GPU)
 // The GPU checks run only with a device (Dawn under node: CONTOUR_GPU_WEBGPU_PATH=<webgpu index.js>, or the `webgpu`
 //  package when installed); without one they SKIP — the CPU slice is the contract, the GPU the bonus.
 import { strict as assert } from 'node:assert'
 import createSlicer from '../src/slicer_core.js'
-import { makeContourGpu } from '../src/contour_gpu.js'
+import { acquireContourDevice, CONTOUR_DEVICE_REASON, makeContourGpu } from '../src/contour_gpu.js'
 import { kernelHasContourPhase, sliceWithContourGpu } from '../src/contour_slice.js'
 
 let passed = 0, skipped = 0
@@ -63,6 +65,27 @@ try {
     maxStorageBufferBindingSize: Math.min(adapter.limits.maxStorageBufferBindingSize, 1 << 30),
     maxBufferSize: Math.min(adapter.limits.maxBufferSize, 1 << 30), maxStorageBuffersPerShaderStage: 10 } })
 } catch { device = null }
+
+{
+  const requests = []
+  const gpuWith = (adapter) => ({ requestAdapter: async (options) => { requests.push(options); return adapter } })
+  const adapterWith = ({ fallback = false, storageBuffers = 10 } = {}) => ({
+    info: { isFallbackAdapter: fallback },
+    limits: { maxStorageBuffersPerShaderStage: storageBuffers, maxStorageBufferBindingSize: 1 << 28, maxBufferSize: 1 << 28 },
+    requestDevice: async (descriptor) => ({ descriptor }),
+  })
+  assert.deepEqual(await acquireContourDevice(undefined), { device: null, reason: CONTOUR_DEVICE_REASON.noApi })
+  assert.deepEqual(await acquireContourDevice(gpuWith(null)), { device: null, reason: CONTOUR_DEVICE_REASON.noAdapter })
+  assert.deepEqual(await acquireContourDevice(gpuWith(adapterWith({ fallback: true }))), { device: null, reason: CONTOUR_DEVICE_REASON.fallback })
+  const fewBuffers = await acquireContourDevice(gpuWith(adapterWith({ storageBuffers: 8 })))
+  assert.equal(fewBuffers.device, null)
+  assert.match(fewBuffers.reason, /8 storage buffers/)
+  const usable = await acquireContourDevice(gpuWith(adapterWith()))
+  assert.equal(usable.reason, null)
+  assert.equal(usable.device.descriptor.requiredLimits.maxStorageBuffersPerShaderStage, 10)
+  assert.ok(requests.every(options => options?.powerPreference === 'high-performance'), 'every adapter request asks for high-performance')
+  ok('[adapter] high-performance adapter; no API, no adapter, software adapter and too few buffers each named')
+}
 
 const filamentOf = (result) => Number(result.stats.filament_mm ?? result.stats.filament)
 if (!device) {

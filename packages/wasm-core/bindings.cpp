@@ -1,9 +1,12 @@
 // bindings.cpp — extracted verbatim from slicer_core.cpp (pure code move; no behavior change).
 //  The embind block plus the small wrappers it binds (heap/config probes + the stage-20 painting selector wiring).
+#include "thread_limit.h"
+#include <algorithm>
 #include "mesh_boolean.h"
 #include "arachne_bridge.h"
 #include "config_bridge.h"
 #include "contour_phase.h"
+#include "support_phase.h"
 #include "emit.h"
 #include "fill_bridge.h"
 #include "selector_bridge.h"
@@ -204,6 +207,62 @@ static em::val selector_project_counts(em::val planeHeightsValue, bool enforcer)
   return selector_project_counts_state(planeHeightsValue, selector_state_of(enforcer));
 }
 
+// ---- the tree support's branches outside the kernel (support_phase.h); the worker drives these around two slice() calls
+static void support_phase_mode(int mode) {
+  if (mode == support_phase::OFF) support_phase::reset();
+  else support_phase::mode = mode;
+}
+static void support_phase_full_volumes(bool on) { support_phase::fullVolumes = on; }
+// tests: the hash of the Voronoi diagrams built with FastInt (voronoi_fast_int_hash.cpp)
+void voronoi_fast_int_hash(int outlines, long &vertices, char hash_hex[17]);
+static em::val voronoi_fast_int_hash_value(int outlines) {
+  long vertices = 0;
+  char hash_hex[17];
+  voronoi_fast_int_hash(outlines, vertices, hash_hex);
+  em::val result = em::val::object();
+  result.set("vertices", double(vertices));
+  result.set("hash", std::string(hash_hex));
+  return result;
+}
+static em::val rings_view(const support_phase::Rings& rings) {
+  em::val out = em::val::object();
+  out.set("layerRingStart", em::val(em::typed_memory_view(rings.layerRingStart.size(), rings.layerRingStart.data())));
+  out.set("ringStart", em::val(em::typed_memory_view(rings.ringStart.size(), rings.ringStart.data())));
+  out.set("points", em::val(em::typed_memory_view(rings.points.size(), rings.points.data())));
+  return out;
+}
+// views into the kernel's heap (no copy): valid until the next kernel call that allocates
+static em::val support_phase_request() {
+  const support_phase::Request& request = support_phase::request;
+  em::val out = em::val::object();
+  out.set("outlines", rings_view(request.outlines));
+  out.set("layerZ", em::val(em::typed_memory_view(request.layerZ.size(), request.layerZ.data())));
+  out.set("tips", em::val(em::typed_memory_view(request.tips.size(), request.tips.data())));
+  out.set("supportLayers", request.supportLayers);
+  out.set("layerHeight", request.layerHeight);
+  out.set("xyDistance", request.xyDistance);
+  out.set("maxMove", request.maxMove);
+  out.set("minRadius", request.minRadius);
+  out.set("branchRadius", request.branchRadius);
+  out.set("radiusIncreasePerLayer", request.radiusIncreasePerLayer);
+  out.set("lineWidth", request.lineWidth);
+  out.set("tipLayers", request.tipLayers);
+  out.set("zDistanceTopLayers", request.zDistanceTopLayers);
+  out.set("zDistanceBottomLayers", request.zDistanceBottomLayers);
+  out.set("bedMinX", request.bedMinX);
+  out.set("bedMinY", request.bedMinY);
+  out.set("bedMaxX", request.bedMaxX);
+  out.set("bedMaxY", request.bedMaxY);
+  return out;
+}
+// the support body per layer, in the request's frame and ring layout; the next slice() is the INJECT one
+static void support_phase_inject(em::val layerRingStart, em::val ringStart, em::val points) {
+  support_phase::injected.layerRingStart = em::convertJSArrayToNumberVector<unsigned>(layerRingStart);
+  support_phase::injected.ringStart = em::convertJSArrayToNumberVector<unsigned>(ringStart);
+  support_phase::injected.points = em::convertJSArrayToNumberVector<float>(points);
+  support_phase::mode = support_phase::INJECT;
+}
+
 // ---- PASS1's union outside the kernel (contour_phase.h); the worker drives these around two slice() calls
 static void contour_phase_mode(int mode) {
   contour_phase::mode = mode;
@@ -280,6 +339,11 @@ static em::val mesh_boolean(em::val first, em::val second, int operation) {
 
 EMSCRIPTEN_BINDINGS(slicer) {
   em::function("mesh_boolean", &mesh_boolean);               // Boolean, Cut and negative parts: CGAL corefinement
+  em::function("support_phase_mode", &support_phase_mode);         // 0 off, 1 capture, 3 resume (support_phase.h)
+  em::function("support_phase_full_volumes", &support_phase_full_volumes);   // tests: a CAPTURE with every volume precalculated
+  em::function("voronoi_fast_int_hash", &voronoi_fast_int_hash_value);       // tests: {vertices, hash} of the FastInt builder's diagrams
+  em::function("support_phase_request", &support_phase_request);
+  em::function("support_phase_inject", &support_phase_inject);
   em::function("contour_phase_mode", &contour_phase_mode);         // 0 off, 1 capture (contour_phase.h)
   em::function("contour_gpu_input", &contour_gpu_input);
   em::function("contour_result_buffer", &contour_result_buffer);
@@ -292,6 +356,8 @@ EMSCRIPTEN_BINDINGS(slicer) {
 
   em::function("set_layer_sink", &set_layer_sink);           // stage 30: register cb(z,idx,gcodeChunk,pathsF32,widthsF32) -> streaming
   em::function("clear_layer_sink", &clear_layer_sink);       //  unregister it (the next slice runs in batch mode)
+  em::function("set_thread_limit", +[](int limit) {         // the most threads a slice runs at once, 0 = no limit (thread_limit.h)
+    thread_limit::value().store((unsigned)std::max(0, limit)); });
   em::function("heap_size", &heap_size);                     // stage 30: for measuring the WASM heap peak (bytes)
   em::function("sup_progress_ptr", +[]() -> double {         // heap address of the real support progress counter (u32) — for SAB polling under mt
     return (double)treesupport_bridge::progress_addr(); });

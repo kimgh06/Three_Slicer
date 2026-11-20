@@ -19,6 +19,7 @@
 //  All support/pad regions stay DISJOINT from the model contour (Clipper diff) because the SL1 rasterizer
 //  fills even-odd — an overlap would punch a hole.
 // =============================================================================
+#include "thread_limit.h"
 #include "clip_util.h"
 #include "params.h"
 #include "slasupport_bridge.h"
@@ -131,7 +132,7 @@ static void sla_no_tick(int) {}
 template <class Fn, class Tick = void(*)(int)>
 static void sla_for_each_layer(int layer_count, const Fn& run_layer, const Tick& tick = sla_no_tick) {
 #ifdef __EMSCRIPTEN_PTHREADS__
-  const unsigned hardware_threads = std::thread::hardware_concurrency();
+  const unsigned hardware_threads = thread_limit::hardware_threads();
   if (layer_count > 3 && hardware_threads > 1) {
     const unsigned thread_count = std::min<unsigned>(hardware_threads - 1, (unsigned)layer_count);
     const int chunk = std::max(1, layer_count / int(thread_count * 8));
@@ -269,7 +270,7 @@ em::val slice_sla(em::val stl_bytes, std::string params_json, em::val onProgress
     unsigned thread_count = 1;
 #ifdef __EMSCRIPTEN_PTHREADS__
     {
-      const unsigned hardware_threads = std::thread::hardware_concurrency();
+      const unsigned hardware_threads = thread_limit::hardware_threads();
       if (triangle_count > 65536 && hardware_threads > 1) thread_count = std::min<unsigned>(hardware_threads, (unsigned)(triangle_count / 32768));
     }
 #endif

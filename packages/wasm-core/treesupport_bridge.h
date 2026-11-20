@@ -96,6 +96,9 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
 //  top = faces exposed upward (upstream stTop, the kernel's topSurface), bottom = faces exposed downward (stBottom, the kernel's bottomSurface).
 struct LayerSurfaces { std::vector<Ring> top, bottom; };
 
+// support_phase.h: releases what a CAPTURE slice kept for its INJECT (the facade print and the tree support's layers).
+void drop_captured();
+
 // WP2: the upstream normal (grid/snug) support — PrintObjectSupportMaterial::generate() (a port of the upstream
 //  SupportMaterial.cpp; the stage-11 pipeline: top/bottom contact -> intermediate layers -> SupportGridPattern (AGG) -> interfaces -> toolpaths).
 //  layer_surfaces has the same length as the slices (when empty it runs without stTop/stBottom — no bottom contact is generated).

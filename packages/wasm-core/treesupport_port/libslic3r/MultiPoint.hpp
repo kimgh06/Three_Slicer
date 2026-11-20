@@ -19,11 +19,17 @@ public:
     
     MultiPoint() {}
     MultiPoint(const MultiPoint &other) : points(other.points) {}
-    MultiPoint(MultiPoint &&other) : points(std::move(other.points)) {}
+    // [PORT] Two additions to upstream, which change no value. (1) MultiPoint(Points&&) below: without it
+    //  Polygon(Polygon&&) and Polyline(Polyline&&), written as MultiPoint(std::move(other.points)), bound to the
+    //  const Points& constructor and copied the points they were moving. (2) noexcept on the move members: std::vector
+    //  relocates with a move only when the move constructor cannot throw, so growing a Polygons copied every polygon.
+    //  Measured on three plates of a 28-plate project (st, 35.1 s): 0.66 s in MultiPoint's copying constructor.
+    MultiPoint(MultiPoint &&other) noexcept : points(std::move(other.points)) {}
     MultiPoint(std::initializer_list<Point> list) : points(list) {}
     explicit MultiPoint(const Points &_points) : points(_points) {}
+    explicit MultiPoint(Points &&_points) noexcept : points(std::move(_points)) {}
     MultiPoint& operator=(const MultiPoint &other) { points = other.points; return *this; }
-    MultiPoint& operator=(MultiPoint &&other) { points = std::move(other.points); return *this; }
+    MultiPoint& operator=(MultiPoint &&other) noexcept { points = std::move(other.points); return *this; }
     void scale(double factor);
     void scale(double factor_x, double factor_y);
     void translate(double x, double y) { this->translate(Point(coord_t(x), coord_t(y))); }

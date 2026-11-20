@@ -2,6 +2,7 @@
 //  Model normalization (bbox -> center/seat -> over_bed) and PASS 1 (per-layer contours, walls, infill regions).
 //  The two cancel sites inside PASS 1 return `false` instead of building the canceled em::val — slice() builds it
 //  at the call site, so the observable result is unchanged.
+#include "thread_limit.h"
 #include "slice_ctx.h"
 #include "contour_phase.h"
 
@@ -177,7 +178,7 @@ bool pass1_run(SliceContext& context) {
         }
       };
 #ifdef __EMSCRIPTEN_PTHREADS__
-      unsigned hardwareThreads = std::thread::hardware_concurrency();
+      unsigned hardwareThreads = thread_limit::hardware_threads();
       if (!hardwareThreads) hardwareThreads = 4;
       unsigned threadCount = (unsigned)std::min<size_t>(hardwareThreads, std::max<size_t>(1, triangles.size() / 4096));
       if (threadCount > 1) {
@@ -305,7 +306,7 @@ bool pass1_run(SliceContext& context) {
     };
 #ifdef __EMSCRIPTEN_PTHREADS__
     {
-      unsigned hardwareThreads = std::thread::hardware_concurrency();
+      unsigned hardwareThreads = thread_limit::hardware_threads();
       if (hardwareThreads == 0) hardwareThreads = 4;
       unsigned threadCount = std::max(1u, std::min<unsigned>(hardwareThreads, (unsigned)layerCount));
       std::atomic<int> nextLayer{0};

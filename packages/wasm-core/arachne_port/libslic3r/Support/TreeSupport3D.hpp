@@ -329,6 +329,10 @@ void organic_draw_branches(
 } // namespace TreeSupport3D
 
 void generate_tree_support_3D(PrintObject &print_object, TreeSupport* tree_support, std::function<void()> throw_on_cancel = []{});
+// three_slicer: support_phase.h. A CAPTURE slice keeps its group; INJECT finishes it, any other slice drops it.
+bool finish_captured_tree_support_3D(PrintObject &print_object, std::function<void()> throw_on_cancel = []{});
+bool has_captured_tree_support_3D();
+void drop_captured_tree_support_3D();
 
 } // namespace Slic3r
 

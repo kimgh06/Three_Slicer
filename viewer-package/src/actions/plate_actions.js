@@ -5,7 +5,7 @@ import { MAX_PLATES } from '../core/plate_layout.js'
 import { frameCoalesce } from '../core/frame_coalesce.js'
 import { effectiveSettings, truncatePlateSettings } from '../core/plate_settings.js'
 import { slaPreviewPayload } from '../core/sla_preview.js'
-import { resolveWorkerCount, makePlateRun, patchPlate, runSummary, PLATE_STATES } from '../core/slice_pool.js'
+import { resolveWorkerCount, threadsPerWorker, sliceOrder, makePlateRun, patchPlate, runSummary, PLATE_STATES, RUN_PROGRESS_INTERVAL_MS } from '../core/slice_pool.js'
 import { isTypedRefusal } from '../core/slice_errors.js'
 import { makeSL1 } from '../core/sl1_write.js'
 import { parseSl1, sl1DisplayAffine, sl1SettingsFrom } from '../core/sl1_read.js'
@@ -47,7 +47,7 @@ export function makePlateActions(deps) {
     apiRef, selectedPlateRef, plateCountRef, placeXRef, plateResultsRef, plateOffsetsRef, plateTpRef,
     layersDataRef, toolpathRef, segDataRef, layerLoRef, layerHiRef, lineWidthRef, downgradeRef,
     settings, plateSettings, setPlateSettings, canvasMode, downgradeOffer, onExport,
-    runSlice, createPoolContext, kernelKindRef, progressSinkRef, setPlateRun, setSliceRate,
+    runSlice, readBack, createPoolContext, kernelKindRef, progressSinkRef, setPlateRun, setSliceRate,
     ensurePlateToolpaths, buildPlateToolpath, showFocusedColorRange, disposePlateToolpath,
     setStats, setOverBed, setLayerCount, setSegCount, setColorRange, setRoleLegend, setGcodeResult, setExporting, setSl1Ready,
     beforeSliceRef,
@@ -496,21 +496,38 @@ export function makePlateActions(deps) {
         plates.push(i); sizes.push(m.buf.byteLength)
       }
       if (!plates.length) { setError('No plate has objects'); return }
-      const queue = plates.filter(i => i !== idx0)
-      if (plates.includes(idx0)) queue.unshift(idx0)
       const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 0
       const largestBytes = Math.max(...sizes)
       const pool = resolveWorkerCount({ setting: settings?.slice_workers, kernel: kernelKindRef.current, cores, plates: plates.length, largestBytes })
+      const queue = sliceOrder(plates, sizes, idx0, pool)
+      // Each worker's share of the threads while the pool drains; a plate re-run alone afterwards takes every core.
+      let workerThreads = threadsPerWorker({ kernel: kernelKindRef.current, cores, workers: pool })
       let run = makePlateRun(plates, pool, kernelKindRef.current)
       // The one button and the rate line show the run as a whole; the tabs and the per-plate row read the map.
-      const published = frameCoalesce(() => { setPlateRun(run); const sum = runSummary(run); setProgress(sum.progress); setSliceRate(sum.rate) }, requestAnimationFrame, cancelAnimationFrame)
+      const published = frameCoalesce(() => { setPlateRun(run); const sum = runSummary(run); setProgress(sum.progress); setSliceRate(sum.rate) }, (apply) => setTimeout(apply, RUN_PROGRESS_INTERVAL_MS), clearTimeout)
       const patch = (i, p) => { run = patchPlate(run, i, p); published.request() }
       setSlicing(true); published.flush()
       const started = performance.now()
       let sliced = 0, anyEconomy = false, anyClassic = false, canceled = false; const failed = []
+      let sliceSeconds = 0   // until the last plate's G-code; the read-backs for the previews follow
       // Plates whose pool worker died (memory, most likely): re-run alone on the selector worker after the pool
       //  has drained, with the full ladder. The dead worker is dropped, so the pool shrinks by itself.
       const deferred = []
+      // Plates whose result came back without its read-back (`previewPending`): the pool keeps every core busy, so
+      //  the read-backs run once the last plate is cut, spread over the workers that are still alive.
+      const pendingPreviews = []
+      const finishPreviews = async (contexts) => {
+        const jobs = [...pendingPreviews.filter(job => job.plate === idx0), ...pendingPreviews.filter(job => job.plate !== idx0)]
+        const work = async (ctx) => {
+          for (let job = jobs.shift(); job; job = jobs.shift()) {
+            const held = plateResultsRef.current[job.plate]
+            const shown = await readBack(held, job.params, ctx)
+            if (plateResultsRef.current[job.plate] === held) plateResultsRef.current[job.plate] = shown
+            announceSlice(job.plate, plateResultsRef.current[job.plate])
+          }
+        }
+        await Promise.all(contexts.map(work))
+      }
       const slicePlate = async (i, ctx) => {
         const merged = apiRef.current?.buildMergedSTL(i)
         if (!merged) { failed.push(i + 1); patch(i, { state: PLATE_STATES.failed, error: 'plate is empty' }); return }
@@ -522,10 +539,13 @@ export function makePlateActions(deps) {
         patch(i, { state: PLATE_STATES.busy })
         try {
           // Inside the try: a paint that fails to load fails THIS plate (the catch below), not the whole run.
-          const { r, economy, classicWalls } = await runSlice(merged, ctx, {
-            syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged) })
+          const { r, economy, classicWalls, params } = await runSlice(merged, ctx, {
+            syncPaint: () => syncPaintSelector?.(merged, { holdForSlice: true }), resyncPaint: () => syncPaintSelector?.(merged), threads: workerThreads, deferPreview: !!readBack })
           plateLineWidth(i)
-          plateResultsRef.current[i] = r; refreshSlicedCount(); announceSlice(i, r); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
+          plateResultsRef.current[i] = r; refreshSlicedCount(); sliced++   // no automatic download — switch tabs to inspect, save via an explicit export
+          // The host gets the result as it is shown, so a plate waiting for its read-back is announced after it.
+          if (r?.previewPending) pendingPreviews.push({ plate: i, params })
+          else announceSlice(i, r)
           if (economy) anyEconomy = true
           if (classicWalls) anyClassic = true
           patch(i, { state: PLATE_STATES.done })
@@ -555,7 +575,10 @@ export function makePlateActions(deps) {
       try {
         await Promise.all([drain(null), ...extras.map(drain)])
         // A dead pool worker can leave plates in the queue too (it stopped draining); everything left runs alone.
+        workerThreads = 0
         for (const job of [...deferred, ...queue.splice(0)]) { if (canceled) break; await slicePlate(job, null) }
+        sliceSeconds = (performance.now() - started) / 1000
+        await finishPreviews([null, ...extras.filter(ctx => !ctx.dead)])
       }
       finally { progressSinkRef.current = null; for (const ctx of extras) ctx.terminate(); published.flush(); setSliceRate(0) }
       setSlicing(false)
@@ -570,7 +593,7 @@ export function makePlateActions(deps) {
       else { clearError(); setDowngradeOffer(null) }
       if (anyEconomy) setSliceNotice('Memory pressure — some plates finished in economy mode (no preview, G-code is fine)')
       else if (anyClassic) setSliceNotice('Arachne wall generation failed (degenerate geometry) — finished with classic walls (G-code is fine)')
-      else if (!canceled && !failed.length) setSliceNotice(`Sliced ${sliced} plate${sliced === 1 ? '' : 's'} in ${((performance.now() - started) / 1000).toFixed(1)}s with ${pool} worker${pool === 1 ? '' : 's'}`
+      else if (!canceled && !failed.length) setSliceNotice(`Sliced ${sliced} plate${sliced === 1 ? '' : 's'} in ${sliceSeconds.toFixed(1)}s with ${pool} worker${pool === 1 ? '' : 's'}`
         + (deferred.length ? ` — ${deferred.length} re-run alone after a worker ran out of memory (pick fewer workers for this model)` : ''))
       // Show the selected plate's result, or the first plate that produced one if the selected plate failed.
       const landOn = plateResultsRef.current[idx0] ? idx0 : Object.keys(plateResultsRef.current).map(Number)[0]

@@ -60,21 +60,42 @@ export function makeToolpathView(deps) {
   }
   // Ensures a real toolpath exists for every cached plate result — so all plates can be inspected after slice-all.
   //  If the source layer reference changed (re-slice), the stale object is rebuilt.
+  // One plate per task, so the page stays responsive between plates; the focused plate's own toolpath is built by
+  //  showPlateResult before this gets to it. A later call starts over from the results as they are then.
+  //  Not while the other plates slice: built as each plate's result landed, the toolpaths were ~9.5 s of main-thread
+  //  work inside a run that already keeps every core busy (measured on a 28-plate project, 8 cores: slice-all
+  //  21.4 -> 19.8-20.0 s with no preview work in the run), and built in one go after the run they held the main thread
+  //  for ~7 s.
+  let ensureRound = 0
   function ensurePlateToolpaths() {
-    for (const [k, r] of Object.entries(plateResultsRef.current)) {
-      const idx = Number(k)
-      if (!r || r.error || !r.layers || !r.layers.length) continue
-      // A resin result previews as solid meshes, not as outline toolpaths — and if this plate's PREVIOUS result
-      //  was FFF, its toolpath entry is still in the scene and must go, or the two render together. Every resin
-      //  plate gets a static (unclipped) preview here; showPlateResult swaps the focused one for the clipped slot.
-      if (r.stats?.sla) {
-        disposePlateToolpath(idx)
-        apiRef.current?.setSlaStatic?.(idx, slaPreviewPayload(r, plateOffsetsRef.current[idx]))
-        continue
-      }
-      const e = plateTpRef.current[idx]
-      if (!e || e.layers !== r.layers) buildPlateToolpath(idx, r.layers)
+    ensureRound += 1
+    const round = ensureRound
+    const waiting = []
+    for (const key of Object.keys(plateResultsRef.current)) {
+      // A resin plate's static preview is set now: showPlateResult takes the focused one back off right after this.
+      if (plateResultsRef.current[key]?.stats?.sla) ensurePlateToolpath(Number(key))
+      else waiting.push(Number(key))
     }
+    const buildNext = () => {
+      if (round !== ensureRound || !waiting.length) return
+      ensurePlateToolpath(waiting.shift())
+      if (waiting.length) setTimeout(buildNext)
+    }
+    if (waiting.length) setTimeout(buildNext)
+  }
+  function ensurePlateToolpath(idx) {
+    const r = plateResultsRef.current[idx]
+    if (!r || r.error || !r.layers || !r.layers.length) return
+    // A resin result previews as solid meshes, not as outline toolpaths — and if this plate's PREVIOUS result
+    //  was FFF, its toolpath entry is still in the scene and must go, or the two render together. Every resin
+    //  plate gets a static (unclipped) preview here; showPlateResult swaps the focused one for the clipped slot.
+    if (r.stats?.sla) {
+      disposePlateToolpath(idx)
+      apiRef.current?.setSlaStatic?.(idx, slaPreviewPayload(r, plateOffsetsRef.current[idx]))
+      return
+    }
+    const e = plateTpRef.current[idx]
+    if (!e || e.layers !== r.layers) buildPlateToolpath(idx, r.layers)
   }
   // The CPU builds no geometry — buildSegmentData only prepares the texture stream -> makeToolpath creates the instanced mesh.
   //  Even 1.77M+ segments render in one go with O(1) geometry (a 24-vertex template) + O(n) textures (no chunking or fallback needed).

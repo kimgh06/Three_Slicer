@@ -66,3 +66,10 @@ export function parseGcode(text: string, opts?: ParseGcodeOptions): ParseGcodeRe
  * moved from printer coordinates into the slice's plate-local frame by taking the bed centre off.
  */
 export function previewFromGcode(gcode: string, opts?: { center?: { x: number; y: number }; filamentDiameter?: number; layerHeight?: number }): ParseGcodeResult
+/**
+ * A finished FFF slice as the viewer shows it: the G-code finalized (finalizeGcode), and the layers and figures read
+ * back from it (previewFromGcode) in the frame of the kernel params it was sliced with. A resin result, a result with no
+ * layers (economy) or a null `params` keeps its own layers. The slicer worker runs this when a slice message carries
+ * `exportedPreview: true`, and marks its result `exportedPreview`.
+ */
+export function asExported<T extends { stats: object; gcode: string; layers?: unknown[]; sla?: boolean }>(result: T, params: object | string | null): T

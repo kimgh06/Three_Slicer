@@ -4,6 +4,7 @@
 #include "clip_util.h"
 #include "selector_bridge.h"
 #include "treesupport_bridge.h"
+#include "support_phase.h"
 
 #include <algorithm>
 #include <cmath>
@@ -126,7 +127,27 @@ void support_run(SliceContext& context) {
       }
       treeLayers = treesupport_bridge::generate_normal(slices, layerZs, layerSurfaces, treeParams);
     } else {
+      // support_phase.h CAPTURE: the outlines the tree support is about to read, in the frame it reads them in
+      if (support_phase::mode == support_phase::CAPTURE) {
+        support_phase::Request& request = support_phase::request;
+        request.outlines.clear();
+        request.layerZ = layerZs;
+        request.outlines.layerRingStart.push_back(0);
+        request.outlines.ringStart.push_back(0);
+        for (const std::vector<treesupport_bridge::Ring>& layerRings : slices) {
+          for (const treesupport_bridge::Ring& ring : layerRings) {
+            for (const auto& point : ring) {
+              request.outlines.points.push_back((float)point.first);
+              request.outlines.points.push_back((float)point.second);
+            }
+            request.outlines.ringStart.push_back((unsigned)(request.outlines.points.size() / 2));
+          }
+          request.outlines.layerRingStart.push_back((unsigned)(request.outlines.ringStart.size() - 1));
+        }
+      }
       treeLayers = treesupport_bridge::generate(slices, layerZs, treeParams);
+      // the tree support stopped at its tips: nothing was generated, and slice() returns to its caller
+      if (support_phase::captured) return;
     }
     for (const treesupport_bridge::LayerOut& treeLayer : treeLayers) {
       // Stage 19 z alignment: support layers are synchronized with the object layers (layer_z uses the same slicing_params), so

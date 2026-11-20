@@ -1,3 +1,6 @@
+// Organic tree support runs its tbb loops threaded on mt (TreeSupport3D.cpp generate_tree_support_3D), with the
+//  branch loop of organic_draw_branches split into a threaded compute and a commit in the serial order. Its G-code has
+//  to be the st G-code too; organic is the style a tree(auto) type left on 'default' resolves to.
 // Tree support (slim / strong / hybrid) runs its loops threaded on mt: detect_overhangs' layer passes, draw_circles,
 //  generate_toolpaths, the avoidance precompute, and drop_nodes' spanning trees and move pass. Each has to give the
 //  serial loop's result, so the mt G-code must equal the st G-code, run after run. The move pass is where this broke first: the SupportNode constructor also points
@@ -28,7 +31,7 @@ const params = {
 const singleThreadSlicer = await createSlicer()
 const threadedSlicer = await createSlicerMt()
 let failures = 0
-for (const treeStyle of ['slim', 'strong', 'hybrid']) {
+for (const treeStyle of ['organic', 'slim', 'strong', 'hybrid']) {
   const styled = JSON.stringify({ ...params, tree_style: treeStyle })
   const serial = singleThreadSlicer.slice(model, styled, () => {})
   assert.ok(!serial.error, `${treeStyle}: st slices (${serial.error})`)
@@ -68,6 +71,58 @@ const layerBytes = (result) => result.layers.map((layer) => [layer.z, Array.from
   let layersWord = 'equal'
   if (!sameLayers) layersWord = 'differ'
   console.log(`  ${verdict}: arachne walls, mt G-code ${textWord} st, toolpaths and widths ${layersWord}`)
+}
+// Only the runtime's main thread starts threads (tbb/stub_parallel.h threaded_here). A loop entered on a pthread that
+//  started its own threads hung or aborted one slice in two of three runs with four kernels slicing at once in one
+//  browser tab, while node never showed it, so the rule is checked in the source rather than by a slice.
+{
+  const { readFileSync } = await import('node:fs')
+  const stub = readFileSync(new URL('../treesupport_port/tbb/stub_parallel.h', import.meta.url), 'utf8')
+  const parallelFor = readFileSync(new URL('../treesupport_port/tbb/parallel_for.h', import.meta.url), 'utf8')
+  const threadedHere = stub.slice(stub.indexOf('inline bool threaded_here()'))
+  let verdict = 'ok'
+  if (!/emscripten_is_main_runtime_thread\(\)/.test(threadedHere.slice(0, 400)) || /tbb_stub::enabled\(\)\.load/.test(parallelFor)) {
+    verdict = 'FAIL'
+    failures++
+  }
+  console.log(`  ${verdict}: parallel_for asks threaded_here(), which starts threads from the main runtime thread only`)
+}
+// The host's thread limit (thread_limit.h, set_thread_limit): a pool run gives each worker a share of the cores. It
+//  changes how many threads share the work and nothing else, so the G-code is the st G-code at every limit, and 0
+//  takes the limit off again.
+{
+  const organic = JSON.stringify({ ...params, tree_style: 'organic', wall_generator: 'arachne' })
+  const serial = singleThreadSlicer.slice(model, organic, () => {})
+  assert.ok(!serial.error, `thread limit: st slices (${serial.error})`)
+  for (const limit of [1, 2, 3, 0]) {
+    threadedSlicer.set_thread_limit(limit)
+    const threaded = threadedSlicer.slice(model, organic, () => {})
+    let verdict = 'ok'
+    if (threaded.gcode !== serial.gcode) {
+      verdict = 'FAIL'
+      failures++
+    }
+    console.log(`  ${verdict}: organic + arachne at thread limit ${limit} equals st`)
+  }
+  assert.equal(typeof singleThreadSlicer.set_thread_limit, 'function', 'the st kernel takes the call too')
+}
+// generate_initial_areas' layer loop stays serial: a layer adds tips and roofs to the layers below it under a lock, so
+//  threaded, a layer's vector came out in thread order and the tip de-duplication kept whichever of two near-equal tips
+//  arrived first (measured on one plate of a 28-plate project: 9 of 54 mt runs gave another support polygon on one
+//  layer than st, 0 of 40 with the loop serial). The model above does not reach it, so the source is checked.
+{
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync(new URL('../treesupport_port/libslic3r/Support/TreeSupport3D.cpp', import.meta.url), 'utf8')
+  const initialAreas = source.slice(source.indexOf('static void generate_initial_areas('))
+  const loop = initialAreas.indexOf('tbb::parallel_for(tbb::blocked_range<size_t>(0, raw_overhangs.size())')
+  const serialSection = initialAreas.lastIndexOf('tbb_stub::SerialSection', loop)
+  const rawOverhangs = initialAreas.indexOf('RichInterfacePlacer rich_interface_placer')
+  let verdict = 'ok'
+  if (loop < 0 || serialSection < rawOverhangs) {
+    verdict = 'FAIL'
+    failures++
+  }
+  console.log(`  ${verdict}: generate_initial_areas opens a SerialSection before its layer loop`)
 }
 if (failures) {
   console.log(`${failures} TREE SUPPORT MT CHECK(S) FAILED`)

@@ -92,8 +92,8 @@ export default function SliceBar({
         </label>
         {plates && (
           <>
-            {/* How many plates slice at once. Auto is half the cores on the threaded kernel (most of the measured
-                gain for half the memory) and one per core on the single-threaded one; each worker holds its own
+            {/* How many plates slice at once. Auto is one per core on the threaded kernel, each with a share of the
+                threads (core/slice_pool.js), and one per core less one on the single-threaded one; each worker holds its own
                 copy of the model, which is the only reason to go lower. Not a plain button row: this is a value. */}
             <label className="slice-workers" data-testid="slice-workers"
               title={`Plates sliced at the same time. Auto = ${autoWorkers} on this machine. Each worker keeps its own copy of the model in memory.`}>

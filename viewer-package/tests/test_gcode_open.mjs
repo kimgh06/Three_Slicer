@@ -97,4 +97,70 @@ console.log('  ok: one colour list for toolpath, legends and export')
   assert.strictEqual(read.layers[1].widths[extrusion], 0.5, 'LINE_WIDTH: gives the width')
 }
 console.log('  ok: Bambu Lab reserved tags (FEATURE / CHANGE_LAYER / Z_HEIGHT / LINE_WIDTH)')
+
+// Word separators: tabs, runs of blanks, a carriage return and a non-ASCII space all read as a single space does
+//  (the parser splits ASCII blanks itself and hands any other line to /\s+/), and a layer grows past its first buffer.
+{
+  const header = ';LAYER_CHANGE\n;Z:0.2\nG1 X0 Y0 Z0.2\n'
+  const plain = parseGcode(header + 'G1 X10 Y0 E1\nG1 X10 Y10 E2\n')
+  for (const [label, separator] of [['a tab', '\t'], ['two spaces', '  '], ['a non-breaking space', '\u00a0']]) {
+    const read = parseGcode(header + `G1${separator}X10${separator}Y0${separator}E1\r\nG1${separator}X10${separator}Y10${separator}E2\r\n`)
+    assert.deepStrictEqual(Array.from(read.layers[0].paths), Array.from(plain.layers[0].paths), `${label} separates words`)
+    assert.deepStrictEqual(read.stats, plain.stats)
+  }
+  const MOVES = 5000   // well past one layer's first buffer
+  const moves = Array.from({ length: MOVES }, (_unused, index) => `G1 X${index % 2} Y${index + 1} E${index + 1}`)
+  const long = parseGcode(header + moves.join('\n'))
+  const segments = long.layers[0].widths.length
+  assert.strictEqual(long.stats.path_segments, MOVES, 'every extrusion of a long layer is counted')
+  assert.strictEqual(segments, MOVES + long.stats.travel_segments, 'and kept, beside the travel to the layer')
+  assert.strictEqual(long.layers[0].paths.length, segments * STRIDE)
+  assert.strictEqual(long.layers[0].paths[(segments - 1) * STRIDE + 5], MOVES, 'the last segment ends where the last move does')
+  assert.ok(long.layers[0].paths instanceof Float32Array && long.layers[0].widths instanceof Float32Array)
+}
+console.log('  ok: word separators and a layer longer than its first buffer')
+
+// A motion line is read in place when it is plain ("G1 " and words of a letter and a decimal), and the general way
+//  otherwise; both have to give what parseFloat gives. Each line below ends at the x it names.
+{
+  const header = ';LAYER_CHANGE\n;Z:0.2\nG1 X0 Y0 Z0.2\n'
+  const endX = (line) => {
+    const read = parseGcode(header + line + '\n')
+    const paths = read.layers[0].paths
+    return paths[paths.length - STRIDE + 4]
+  }
+  for (const [line, expected] of [
+    ['G1 X5 Y1 E1', 5], ['G1 X+5 Y1 E1', 5], ['G1 X-5 Y1 E1', -5], ['G1 X.5 Y1 E1', 0.5], ['G1 X5. Y1 E1', 5],
+    ['G1 X1e1 Y1 E1', 10], ['g1 x5 y1 e1', 5], ['G1 X5 Y1 E1*71', 5], ['G1 X5 Y1 E1 ; X9', 5], ['G1 X5;X9', 5],
+    ['G1 X0.50000000000000000001 Y1 E1', 0.5], ['G1  X5\tY1 E1', 5], ['G1 X Y1 E1', 0], ['G1 X--5 Y1 E1', 0],
+    ['G0 X5 Y1', 5], ['G2 X5 Y0 I2.5 J0 E1', 5], ['G3 X5 Y0 I2.5 J0 E1', 5],
+  ]) assert.strictEqual(endX(line), expected, `"${line}" ends at x ${expected}`)
+  // The decimals themselves, at double precision: relative E values sum into stats.filament_mm unrounded.
+  let seed = 12345
+  const nextRandom = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
+  const values = Array.from({ length: 3000 }, () => {
+    const digits = 1 + Math.floor(nextRandom() * 14), decimals = Math.floor(nextRandom() * (digits + 1))
+    let text = ''
+    for (let index = 0; index < digits; index++) text += Math.floor(nextRandom() * 10)
+    return `${text.slice(0, digits - decimals)}.${text.slice(digits - decimals)}`
+  })
+  const lines = values.map((value, index) => `G1 X${index + 1} E${value}`)
+  const read = parseGcode(header + 'M83\n' + lines.join('\n') + '\n')
+  let expected = 0
+  for (const value of values) { const parsed = parseFloat(value); if (parsed > 1e-6) expected += parsed }
+  assert.strictEqual(read.stats.filament_mm, expected, 'decimals read in place are the doubles parseFloat gives')
+}
+console.log('  ok: motion lines read in place and the general way agree with parseFloat')
+
+// The read-back keeps its numbers in typed arrays and walks the text line by line: plain arrays and one array of every
+//  line put a large plate's read-back on the JS heap, which all of a tab's workers share (measured: a 21.5 MB plate
+//  held 265 MB there, and slice-all of a 28-plate project crashed the tab 4 times in 23 runs).
+{
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync(new URL('../src/core/gcode_parse.js', import.meta.url), 'utf8')
+  const parser = source.slice(source.indexOf('export function parseGcode'))
+  assert.ok(!/text\.split\(/.test(parser), 'parseGcode does not split the whole text into an array of lines')
+  assert.ok(!/\.push\([^)]*x0/.test(parser), 'parseGcode does not collect segments in plain arrays')
+}
+console.log('  ok: the parser holds no per-line or per-number JS array')
 console.log('gcode_open: ALL OK')

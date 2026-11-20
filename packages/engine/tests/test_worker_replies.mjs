@@ -86,8 +86,50 @@ const gpuAsked = await send({ stl: cubeSTL, params: { layer_height: 0.2 }, gpu: 
 const gpuDone = gpuAsked.find(answer => answer.type === 'done')
 assert.ok(gpuDone, `gpu slice: answers 'done' (got ${gpuAsked.map(answer => answer.type)})`)
 assert.equal(gpuDone.result.stats.contour_engine, 'cpu')
-assert.equal(gpuDone.result.stats.contour_engine_reason, 'no WebGPU device')
+const { CONTOUR_DEVICE_REASON } = await import('../src/contour_gpu.js')
+assert.equal(gpuDone.result.stats.contour_engine_reason, CONTOUR_DEVICE_REASON.noApi)
 console.log('  ok a slice that asks for the GPU without a device is the CPU slice, with the reason')
+
+// `exportedPreview`: the worker makes the slice what the viewer shows (three-slicer-viewer/gcode asExported) beside the
+//  kernel instead of the page's main thread. Its result has to be what the viewer made from the plain stream, and its
+//  layers post only their index (measured on a 28-plate project: the main thread was busy 33 s of a 25 s run).
+{
+  const { asExported } = await import('three-slicer-viewer/gcode')
+  const sliceParams = { layer_height: 0.2, gcode_role_tags: true }
+  const plainReplies = await send({ stl: cubeSTL, params: sliceParams, requestId: 1002 })
+  const plainDone = plainReplies.find(answer => answer.type === 'done')
+  const plainLayers = plainReplies.filter(answer => answer.type === 'layer')
+  assert.ok(plainDone && plainLayers.length > 0, 'a plain slice streams its layers')
+  const expected = asExported({ ...plainDone.result, layers: plainLayers.map(({ z, paths, widths }) => ({ z, paths, widths })), gcode: plainLayers.map(layer => layer.gcode).join('') }, JSON.stringify(sliceParams))
+  const shownReplies = await send({ stl: cubeSTL, params: sliceParams, exportedPreview: true, requestId: 1003 })
+  const shown = shownReplies.find(answer => answer.type === 'done')?.result
+  assert.ok(shown, `exportedPreview slice: answers 'done' (got ${shownReplies.map(answer => answer.type)})`)
+  assert.equal(shown.exportedPreview, true, 'the result says the worker made it')
+  assert.equal(shown.gcode, expected.gcode, 'the finalized G-code is the one the viewer made')
+  const layerValues = (layers) => layers.map(layer => [layer.z, Array.from(layer.paths), Array.from(layer.widths)])
+  assert.deepStrictEqual(layerValues(shown.layers), layerValues(expected.layers), 'the read-back layers are the ones the viewer made')
+  for (const key of ['layers', 'path_segments', 'filament_mm', 'time_estimate']) assert.deepStrictEqual(shown.stats[key], expected.stats[key], `stats.${key}`)
+  const shownLayerReplies = shownReplies.filter(answer => answer.type === 'layer')
+  assert.equal(shownLayerReplies.length, plainLayers.length, 'every layer still reports for the progress and the watchdog')
+  assert.ok(shownLayerReplies.every(answer => answer.gcode === undefined && answer.paths === undefined), 'a layer posts its index only')
+  console.log('  ok an exportedPreview slice is what the viewer made from the stream, and its layers carry no payload')
+
+  // `deferPreview` (a slice-all): the result comes back with the finalized G-code and the kernel's own layers, marked
+  //  `previewPending`; the `readback` command then gives the layers and figures the inline read-back gives.
+  const deferredReplies = await send({ stl: cubeSTL, params: sliceParams, exportedPreview: true, deferPreview: true, requestId: 1004 })
+  const deferred = deferredReplies.find(answer => answer.type === 'done')?.result
+  assert.ok(deferred, `deferPreview slice: answers 'done' (got ${deferredReplies.map(answer => answer.type)})`)
+  assert.equal(deferred.previewPending, true, 'the result says its read-back is still to come')
+  assert.equal(deferred.gcode, expected.gcode, 'the deferred result already holds the finalized G-code')
+  assert.deepStrictEqual(layerValues(deferred.layers), layerValues(plainLayers), 'its layers are the kernel stream until the read-back')
+  const readbackReplies = await send({ cmd: 'readback', gcode: deferred.gcode, stats: deferred.stats, params: sliceParams, requestId: 1005 })
+  const readback = readbackReplies.find(answer => answer.type === 'readback')
+  assert.ok(readback, `readback: answers 'readback' (got ${readbackReplies.map(answer => answer.type)})`)
+  assert.equal(readback.requestId, 1005, 'the readback reply echoes its request id')
+  assert.deepStrictEqual(layerValues(readback.layers), layerValues(expected.layers), 'the deferred read-back layers are the inline ones')
+  for (const key of ['layers', 'path_segments', 'filament_mm', 'time_estimate']) assert.deepStrictEqual(readback.stats[key], expected.stats[key], `readback stats.${key}`)
+  console.log('  ok a deferPreview slice plus its readback is the exportedPreview slice')
+}
 
 console.log('\nworker_replies: ok')
 process.exit(0)

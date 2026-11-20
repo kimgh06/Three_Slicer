@@ -34,14 +34,6 @@ function layerHeights(layers) {
 const pathsOf = (layer) => (layer?.paths?.length ? layer.paths : null)
 const segCountOf = (layer) => { const p = pathsOf(layer); return p ? Math.floor(p.length / STRIDE) : 0 }
 
-const headingOf = (position, s) => {
-  const a = s * 8, b = a + 4
-  return Math.atan2(position[b + 1] - position[a + 1], position[b] - position[a])
-}
-const lengthOf = (position, s) => {
-  const a = s * 8, b = a + 4
-  return Math.hypot(position[b] - position[a], position[b + 1] - position[a + 1])
-}
 const samePoint = (position, a, b) =>
   position[a] === position[b] && position[a + 1] === position[b + 1] && position[a + 2] === position[b + 2]
 
@@ -51,14 +43,14 @@ const samePoint = (position, a, b) =>
  *  meet instead of leaving a wedge on the outside of every turn and a corner sticking out of every short
  *  segment. Joined means consecutive in the stream, in one layer, sharing the exact endpoint (both values come
  *  from the same stream float, so equality is exact), and neither zero-length (it has no heading). */
-function linkJoins(position, hwa, vLayer, nSeg) {
+function linkJoins(position, hwa, vLayer, nSeg, heading, planarLength) {
   const join = (s, t) => {
-    hwa[s * 8 + 4 + 2] = headingOf(position, t)
-    hwa[t * 8 + 2] = headingOf(position, s)
+    hwa[s * 8 + 4 + 2] = heading[t]
+    hwa[t * 8 + 2] = heading[s]
   }
   const joinable = (s, t) =>
     vLayer[s * 2] === vLayer[t * 2] && samePoint(position, s * 8 + 4, t * 8)
-    && lengthOf(position, s) > 0 && lengthOf(position, t) > 0
+    && planarLength[s] > 0 && planarLength[t] > 0
   let runFirst = 0
   for (let s = 0; s < nSeg; s++) {
     if (s + 1 < nSeg && joinable(s, s + 1)) { join(s, s + 1); continue }
@@ -111,6 +103,10 @@ export function buildSegmentData(layers, defaultLineWidth) {
   const movePos = new Float32Array(nMove * 3)   // the move endpoint at its TRUE path z, for the scrub cursor
   const moveKind = new Uint8Array(nMove)        // 0 = travel, 1 = extrusion
   const typeLengths = new Float64Array(16)
+  // Each extrusion's heading and length in the plane, kept for linkJoins: it read both back from `position` with an
+  //  atan2 and up to four hypot calls per segment (measured on a 28-plate project: 1.9 s of the main thread).
+  const heading = new Float64Array(nSeg)
+  const planarLength = new Float64Array(nSeg)
 
   let hasNaN = false, maxAbs = 0
   let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
@@ -125,13 +121,35 @@ export function buildSegmentData(layers, defaultLineWidth) {
     const height = heights[li]
     const halfHeight = height / 2
 
+    // One endpoint of the extrusion being filled (segment `si`, role, tool, width, angle and colour below).
+    //  The path z is the NOZZLE, and plastic is laid below it — so the bead centre sits half a layer height down,
+    //  and the shader expands +/- halfHeight around it.
+    let role = 0, tool = 0, width = 0, angle = 0, colour = 0
+    const putVertex = (px, py, pz) => {
+      const p = vi * 4, cz = pz - halfHeight
+      position[p] = px; position[p + 1] = py; position[p + 2] = cz; position[p + 3] = 0
+      hwa[p] = height; hwa[p + 1] = width; hwa[p + 2] = angle; hwa[p + 3] = colour
+      segIndex[vi * 2] = si; segIndex[vi * 2 + 1] = li
+      vType[vi] = role; vTool[vi] = tool
+      vWidth[vi] = width; vHeight[vi] = height; vLayer[vi] = li
+      vi++
+      if (px < minX) minX = px
+      if (px > maxX) maxX = px
+      if (py < minY) minY = py
+      if (py > maxY) maxY = py
+      if (cz < minZ) minZ = cz
+      if (cz > maxZ) maxZ = cz
+      const reach = Math.max(Math.abs(px), Math.abs(py), Math.abs(cz))
+      if (reach > maxAbs) maxAbs = reach
+    }
+
     for (let s = 0; s < count; s++) {
       const o = s * STRIDE
       const x0 = paths[o], y0 = paths[o + 1], z0 = paths[o + 2]
       const x1 = paths[o + 4], y1 = paths[o + 5], z1 = paths[o + 6]
       const enc = paths[o + 3] | 0
-      const role = roleOf(enc)
-      const tool = toolOf(enc)
+      role = roleOf(enc)
+      tool = toolOf(enc)
 
       if (!Number.isFinite(x0 + y0 + z0 + x1 + y1 + z1)) hasNaN = true
 
@@ -150,36 +168,23 @@ export function buildSegmentData(layers, defaultLineWidth) {
       }
 
       const rawWidth = widths ? Number(widths[s]) : NaN
-      const width = Number.isFinite(rawWidth) && rawWidth > 0 ? rawWidth : fallbackWidth
+      width = fallbackWidth
+      if (Number.isFinite(rawWidth) && rawWidth > 0) width = rawWidth
       const dx = x1 - x0, dy = y1 - y0
-      const angle = Math.atan2(dy, dx)
+      angle = Math.atan2(dy, dx)
       const length = Math.hypot(dx, dy, z1 - z0)
       if (Number.isFinite(length)) typeLengths[role] += length
 
-      const colour = packedTypeColor[role] ?? packedTypeColor[1]
-      // The path z is the NOZZLE, and plastic is laid below it — so the bead centre sits half a layer
-      //  height down, and the shader expands +/- halfHeight around it.
-      for (const [px, py, pz] of [[x0, y0, z0], [x1, y1, z1]]) {
-        const p = vi * 4
-        position[p] = px; position[p + 1] = py; position[p + 2] = pz - halfHeight; position[p + 3] = 0
-        hwa[p] = height; hwa[p + 1] = width; hwa[p + 2] = angle; hwa[p + 3] = colour
-        segIndex[vi * 2] = si; segIndex[vi * 2 + 1] = li
-        vType[vi] = role; vTool[vi] = tool
-        vWidth[vi] = width; vHeight[vi] = height; vLayer[vi] = li
-        vi++
-
-        const cz = pz - halfHeight
-        if (px < minX) minX = px; if (px > maxX) maxX = px
-        if (py < minY) minY = py; if (py > maxY) maxY = py
-        if (cz < minZ) minZ = cz; if (cz > maxZ) maxZ = cz
-        const a = Math.max(Math.abs(px), Math.abs(py), Math.abs(cz))
-        if (a > maxAbs) maxAbs = a
-      }
+      colour = packedTypeColor[role] ?? packedTypeColor[1]
+      heading[si] = angle
+      planarLength[si] = Math.hypot(dx, dy)
+      putVertex(x0, y0, z0)
+      putVertex(x1, y1, z1)
       si++
     }
   }
 
-  linkJoins(position, hwa, vLayer, nSeg)
+  linkJoins(position, hwa, vLayer, nSeg, heading, planarLength)
 
   const bbox = nV > 0 && Number.isFinite(minX)
     ? { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] }

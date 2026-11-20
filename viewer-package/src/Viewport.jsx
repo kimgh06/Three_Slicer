@@ -388,7 +388,7 @@ export default function Viewport({
   } = makeToolpathView({ ...wiring, three })
 
   // ---- Worker lifecycle + progress (SAB polling) + streaming/watchdog/OOM ladder (stage 30) ----
-  const { getWorker, cancelSlice, runSlice, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef, kernelLoad } = useSlicer({
+  const { getWorker, cancelSlice, runSlice, readBack, pendingSliceRef, downgradeRef, createPoolContext, kernelKindRef, progressSinkRef, kernelLoad } = useSlicer({
     ...wiring, paintStateCountsRef, setKernelKind, rebuildToolpaths,
     // Deferred through a lambda: makeSupportPaint is built below and cannot be in `wiring` yet.
     rebuildPaintOverlay: (enf, blk, overlays) => rebuildPaintOverlay(enf, blk, overlays),
@@ -416,7 +416,7 @@ export default function Viewport({
     showPlateResult, refreshSlicedCount, exportAllGcode, exportPlateGcode3mf, exportPlainGcode, exportPlateSl1, importSl1, onSlice, retryDowngrade, addPlate, deletePlate, selectPlate,
   } = makePlateActions({
     ...wiring, canvasMode, downgradeOffer, onExport, downgradeRef,
-    runSlice, createPoolContext, kernelKindRef, progressSinkRef,
+    runSlice, readBack, createPoolContext, kernelKindRef, progressSinkRef,
     ensurePlateToolpaths, buildPlateToolpath, showFocusedColorRange, disposePlateToolpath,
     // The selector worker's kernel reads its painting from the selector, so before it cuts ANY plate the selector
     //  must hold that plate's mesh — loaded from the per-object store when it is another one. A move can also reach

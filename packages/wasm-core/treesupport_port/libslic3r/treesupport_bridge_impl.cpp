@@ -32,6 +32,8 @@ unsigned long cancel_addr() { return (unsigned long)(uintptr_t)&tbb_stub::cancel
 #include "Surface.hpp"
 #include "selector_state.hpp"   // (stage 20) painted enforcer/blocker its from the selector (port world)
 #include "Support/TreeSupport.hpp"
+#include "Support/TreeSupport3D.hpp"
+#include "../../support_phase.h"
 #include "Support/SupportMaterial.hpp"  // WP2: upstream normal (grid/snug) support
 
 using namespace Slic3r;
@@ -297,6 +299,17 @@ std::vector<treesupport_bridge::LayerOut> collect_output(const PrintObject &prin
 
 } // namespace
 
+namespace {
+// support_phase.h: the facade print of a slice that stopped at its support tips, with the layer count it was built for
+struct CapturedFacade {
+    Print       print;
+    PrintRegion region;
+    PrintObject print_object;
+    size_t      layer_count = 0;
+};
+std::unique_ptr<CapturedFacade> s_captured_facade;
+} // namespace
+
 namespace treesupport_bridge {
 
 std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slices_mm,
@@ -311,10 +324,22 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
     //  shows a stale constant instead of starting from zero.
     tbb_stub::prog().store(0);
 
-    Print facade_print;
-    PrintRegion facade_region;
-    PrintObject print_object;
-    build_facade(facade_print, facade_region, print_object, object_slices_mm, layer_print_z_mm, params);
+    // support_phase.h INJECT: the facade of the slice that stopped at its tips is finished on the injected branches.
+    //  Any other slice drops it, and so does an INJECT that does not match it (it then gets upstream's support).
+    std::unique_ptr<CapturedFacade> kept = std::move(s_captured_facade);
+    if (support_phase::mode == support_phase::INJECT && kept && kept->layer_count == layer_count &&
+        ! support_phase::injected.layerRingStart.empty() && has_captured_tree_support_3D()) {
+        finish_captured_tree_support_3D(kept->print_object);
+        return collect_output(kept->print_object);
+    }
+    kept.reset();
+    drop_captured_tree_support_3D();
+
+    // on the heap, so that a CAPTURE can keep it: the support layers point into it
+    std::unique_ptr<CapturedFacade> facade = std::make_unique<CapturedFacade>();
+    facade->layer_count = layer_count;
+    PrintObject &print_object = facade->print_object;
+    build_facade(facade->print, facade->region, print_object, object_slices_mm, layer_print_z_mm, params);
     if (params.support_auto)   // manual => only painted enforcers
         print_object.m_config.support_type.value = stTreeAuto;
     else
@@ -329,7 +354,17 @@ std::vector<LayerOut> generate(const std::vector<std::vector<Ring>>& object_slic
     TreeSupport tree_support(print_object, print_object.m_slicing_params);
     tree_support.throw_on_cancel = [](){};
     tree_support.generate();
+    if (support_phase::captured) {
+        s_captured_facade = std::move(facade);
+        return {};
+    }
     return collect_output(print_object);
+}
+
+void drop_captured()
+{
+    s_captured_facade.reset();
+    drop_captured_tree_support_3D();
 }
 
 std::vector<LayerOut> generate_normal(const std::vector<std::vector<Ring>>& object_slices_mm,

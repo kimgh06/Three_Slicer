@@ -14,6 +14,7 @@
 #include "SupportCommon.hpp"
 
 #include <algorithm>
+#include <mutex>   // std::lock_guard below; newer libc++ (emscripten 7) no longer reaches it transitively
 #include <string_view>
 
 namespace Slic3r

@@ -10,8 +10,12 @@
 #  - Requires: brew boost (header-only voronoi) + brew eigen. Stubbed: tbb/boost-log/cereal/SVG/Flow/Config, etc.
 set -euo pipefail
 
-export EMSDK_PYTHON=/opt/homebrew/bin/python3.14
+# The toolchain and headers default to the macOS Homebrew layout. Elsewhere, put an activated emsdk on PATH and set
+#  WASM_DEPS_INCLUDE to a directory holding only boost/, eigen3/ and CGAL/ (6.x): pointing at /usr/include itself would
+#  put the host's libc headers ahead of emscripten's sysroot.
+if [ -x /opt/homebrew/bin/python3.14 ]; then export EMSDK_PYTHON=/opt/homebrew/bin/python3.14; fi
 export PATH="/opt/homebrew/opt/emscripten/bin:$PATH"
+DEPS_INCLUDE="${WASM_DEPS_INCLUDE:-/opt/homebrew/include}"
 # ccache wrapping: unchanged TUs are reused -> a single-file rebuild goes from minutes to tens of seconds. (brew install ccache)
 command -v ccache >/dev/null && export EM_COMPILER_WRAPPER=ccache
 
@@ -125,11 +129,11 @@ TS_UNIQUE_SRC="
   $TL/Fill/Lightning/DistanceField.cpp $TL/Fill/Lightning/Generator.cpp $TL/Fill/Lightning/Layer.cpp $TL/Fill/Lightning/TreeNode.cpp
   $COLD_TS_SRC
 "
-TS_INC="-Iarachne_port/cgal_stubs -I$TS -I$TL -I$TL/Support -Ithird_party/deps_src -Ithird_party/deps_src/libnest2d/include -Ithird_party/deps_src/libigl -Ithird_party/deps_src/clipper2/Clipper2Lib/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
+TS_INC="-Iarachne_port/cgal_stubs -I$TS -I$TL -I$TL/Support -Ithird_party/deps_src -Ithird_party/deps_src/libnest2d/include -Ithird_party/deps_src/libigl -Ithird_party/deps_src/clipper2/Clipper2Lib/include -I$DEPS_INCLUDE/eigen3 -I$DEPS_INCLUDE"
 # ---- Parallel compile helper: compile one .o per source, as many at a time as there are cores (previously: a single em++ call = sequential compilation) ----
 #  ccache (EM_COMPILER_WRAPPER) handles caching including header dependencies, so everything is invoked every time with no mtime-based incremental logic
 #  — unchanged TUs hit the cache in ~0.1s. The link passes the .o files in source order to stay deterministic (golden).
-NCPU=$(sysctl -n hw.ncpu 2>/dev/null || echo 8)
+NCPU=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 8)
 # Native wasm exception handling on every C++ TU and link. Without it emscripten aborts the module on any `throw` and drops
 #  every `catch`, so an upstream error reported by exception (PlaceholderParser on a malformed custom G-code, measured:
 #  "Aborted(undefined)" instead of "Parsing error at line 88: Not a variable name") reached the viewer as a dead worker.
@@ -218,7 +222,7 @@ echo "compiling SLA support chain (isolated, parallel x$NCPU) -> $SLA_GROUP_OBJ"
 pcompile /tmp/ws_obj/sla_st "$SLA_CFLAGS" $SLA_SRC
 em++ -O2 $EXCEPTION_FLAGS -r $(objs /tmp/ws_obj/sla_st $SLA_SRC) $LIBTESS_OBJ_ST $NLOPT_OBJ_ST -o $SLA_GROUP_OBJ
 
-ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachne_port -I$AP -Ithird_party/deps_src -I$C2/include -I/opt/homebrew/include/eigen3 -I/opt/homebrew/include"
+ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachne_port -I$AP -Ithird_party/deps_src -I$C2/include -I$DEPS_INCLUDE/eigen3 -I$DEPS_INCLUDE"
 
 # Speed flags, measured (2026-07-29, big_cyl arachne+support): -O3 -msimd128 gives 5183ms vs -O2 5149ms —
 #  a 0.7% (noise-level) gain for +9% size (3.43 -> 3.74MB), so -O2 stays. -flto hits a wasm-ld SIGSEGV (conflict with -r partial linking).
@@ -231,7 +235,7 @@ ARACHNE_INC="-Iarachne_port/cgal_stubs $CONFIG_INC -Iarachne_port/stubs -Iarachn
 #  preamble -> raft -> PASS2 precompute -> finish stats, leaving slice() as the orchestrator. Same rule — listed in
 #  the order their code had inside slicer_core.cpp.
 #  (clip_util.h / slice_planes.h / gcode_writer.h / layer_data.h / slice_api.h / slice_ctx.h are header-only.)
-MAIN_SRC="mesh_boolean.cpp seam_paint.cpp contour_phase.cpp slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
+MAIN_SRC="mesh_boolean.cpp seam_paint.cpp contour_phase.cpp support_phase.cpp slicer_core.cpp custom_gcode.cpp slice_sla.cpp params.cpp stl_parse.cpp geom_helpers.cpp emit.cpp slice_mm.cpp stream_sink.cpp emit_layer.cpp stage_cache.cpp pass1.cpp surfaces.cpp support.cpp preamble.cpp raft.cpp pass2.cpp finish.cpp bindings.cpp voronoi_fast_int_hash.cpp clipper.cpp $ARACHNE_SRC $FILL_SRC $PE_SRC $TIME_SRC $CONFIG_SRC $WIPETOWER_SRC $GCODEPROC_SRC"
 # -DNDEBUG: turns off assert() exactly like an upstream OrcaSlicer release build (CMAKE_BUILD_TYPE=Release).
 #  Without it, asserts upstream treats as "debug-only invariants" kill the worker in a shipped build — e.g. meshes with unwelded vertices and
 #  sliver triangles, such as OCCT tessellations (STEP import), hit Voronoi.cpp:334 (*inside* the recovery routine),
@@ -269,7 +273,7 @@ em++ -O2 $EXCEPTION_FLAGS --bind -std=c++17 \
 
 # webpack compatibility: webpack tries to statically resolve the dynamic import("node:module") inside the ENVIRONMENT_IS_NODE guard
 # and fails (node: scheme) -> excluded with a webpackIgnore magic comment. Runtime behavior is unchanged (no effect on Vite/Node).
-sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.js
+sed -i.orig 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.js && rm ../engine/src/slicer_core.js.orig
 
 echo "built -> ../engine/src/slicer_core.js + slicer_core.wasm"
 ls -la ../engine/src/slicer_core.js ../engine/src/slicer_core.wasm
@@ -314,9 +318,9 @@ em++ -O2 $EXCEPTION_FLAGS -pthread --bind -std=c++17 \
   -o ../engine/src/slicer_core.mt.js \
   $(objs /tmp/ws_obj/mt $MAIN_SRC) /tmp/ts_group_mt.o /tmp/sla_group_mt.o
 
-sed -i '' 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.mt.js
+sed -i.orig 's|await import("node:module")|await import(/* webpackIgnore: true */ "node:module")|' ../engine/src/slicer_core.mt.js
 # The same case applies to the pthread bootstrap in the mt glue: the dynamic import("node:worker_threads") inside the Node guard
-sed -i '' 's|await import("node:worker_threads")|await import(/* webpackIgnore: true */ "node:worker_threads")|' ../engine/src/slicer_core.mt.js
+sed -i.orig 's|await import("node:worker_threads")|await import(/* webpackIgnore: true */ "node:worker_threads")|' ../engine/src/slicer_core.mt.js && rm ../engine/src/slicer_core.mt.js.orig
 
 echo "built -> ../engine/src/slicer_core.mt.js + slicer_core.mt.wasm"
 ls -la ../engine/src/slicer_core.mt.js ../engine/src/slicer_core.mt.wasm
@@ -324,4 +328,4 @@ ls -la ../engine/src/slicer_core.mt.js ../engine/src/slicer_core.mt.wasm
 # The worker shows the kernel download as a percentage (slicer.worker.js fetchKernel). A CDN that compresses on the fly
 #  sends no Content-Length, so the total comes from here; test_mt_glue.mjs fails when it no longer matches the files.
 printf '// Generated by packages/wasm-core/build.sh: the size of each kernel wasm, the total of its download progress.\nexport const KERNEL_WASM_BYTES = { "slicer_core.wasm": %s, "slicer_core.mt.wasm": %s }\n' \
-  "$(stat -f%z ../engine/src/slicer_core.wasm)" "$(stat -f%z ../engine/src/slicer_core.mt.wasm)" > ../engine/src/kernel_wasm_bytes.js
+  "$(wc -c < ../engine/src/slicer_core.wasm | tr -d ' ')" "$(wc -c < ../engine/src/slicer_core.mt.wasm | tr -d ' ')" > ../engine/src/kernel_wasm_bytes.js

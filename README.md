@@ -66,7 +66,8 @@ Headless (no UI): `const s = await createSlicer(); s.slice(stl, params)`, or `s.
 - **`slicers/`** — untracked reference clones (each its own git remote): upstream OrcaSlicer at `slicers/slicer` (the extraction/porting source) and PrusaSlicer at `slicers/PrusaSlicer` (comparison only).
 
 ```bash
-# demo viewer (committed WASM — no emscripten needed)
+# demo viewer (committed WASM — no emscripten needed); `npm i` once at the root first
+npm i
 cd web && make dev
 
 # full gate: kernel invariants (FFF + SLA), the generated param table, the viewer's pure modules

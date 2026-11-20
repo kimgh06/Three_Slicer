@@ -8,8 +8,19 @@
 #include "libslic3r/Geometry/VoronoiUtilsCgal.hpp"
 #include "libslic3r/MultiMaterialSegmentation.hpp"
 #include "libslic3r/Line.hpp"
+// [PORT] boost's builder with FastInt as the big integer of its exact predicates (../../../voronoi_fast_int.h).
+#include "../../../voronoi_fast_int.h"
 
 namespace Slic3r::Geometry {
+
+// [PORT] boost::polygon::construct_voronoi for segments, with voronoi_fast::CtypeTraits in place of the default traits.
+template<typename SegmentIterator, typename Diagram>
+static void construct_segment_voronoi(const SegmentIterator segment_begin, const SegmentIterator segment_end, Diagram *diagram)
+{
+    boost::polygon::voronoi_builder<boost::polygon::detail::int32, voronoi_fast::CtypeTraits> builder;
+    boost::polygon::insert(segment_begin, segment_end, &builder);
+    builder.construct(diagram);
+}
 
 using PolygonsSegmentIndexConstIt = std::vector<Arachne::PolygonsSegmentIndex>::const_iterator;
 using LinesIt                     = Lines::iterator;
@@ -26,7 +37,7 @@ typename boost::polygon::enable_if<
         typename boost::polygon::geometry_concept<typename std::iterator_traits<SegmentIterator>::value_type>::type>::type>::type,
     void>::type
 VoronoiDiagram::construct_voronoi(const SegmentIterator segment_begin, const SegmentIterator segment_end, const bool try_to_repair_if_needed) {
-    boost::polygon::construct_voronoi(segment_begin, segment_end, &m_voronoi_diagram);
+    construct_segment_voronoi(segment_begin, segment_end, &m_voronoi_diagram);
     if (try_to_repair_if_needed) {
         if (m_issue_type = detect_known_issues(*this, segment_begin, segment_end); m_issue_type != IssueType::NO_ISSUE_DETECTED) {
             if (m_issue_type == IssueType::MISSING_VORONOI_VERTEX) {
@@ -304,7 +315,7 @@ VoronoiDiagram::try_to_repair_degenerated_voronoi_diagram_by_rotation(const Segm
     }
 
     VoronoiDiagram::voronoi_diagram_type voronoi_diagram_rotated;
-    boost::polygon::construct_voronoi(segments_rotated.begin(), segments_rotated.end(), &voronoi_diagram_rotated);
+    construct_segment_voronoi(segments_rotated.begin(), segments_rotated.end(), &voronoi_diagram_rotated);
 
     this->copy_to_local(voronoi_diagram_rotated);
     const IssueType issue_type = detect_known_issues(*this, segments_rotated.begin(), segments_rotated.end());

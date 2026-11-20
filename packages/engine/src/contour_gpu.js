@@ -48,17 +48,39 @@ const EVENTS_PER_SEGMENT = [1, 3]
 const WANTED_BINDING_BYTES = 1 << 30
 const WANTED_STORAGE_BUFFERS = 10
 
-/** A device for makeContourGpu from a GPU entry point (navigator.gpu in a worker), or null when there is none. */
+// Why a worker has no device, as the result's `contour_engine_reason` reports it. Chrome 157 on Linux (measured on a
+//  machine with two RTX 3090s and an AMD iGPU) exposes navigator.gpu but returns no adapter by default; with
+//  #enable-unsafe-webgpu alone it returns SwiftShader, a CPU renderer (`info.isFallbackAdapter` true); with
+//  #enable-vulkan as well, the GPU.
+export const CONTOUR_DEVICE_REASON = {
+  noApi: 'no WebGPU: navigator.gpu is missing',
+  noAdapter: 'no WebGPU adapter: the browser offers none (Chrome on Linux: chrome://flags/#enable-unsafe-webgpu and #enable-vulkan)',
+  fallback: 'the WebGPU adapter is a software renderer (Chrome on Linux: chrome://flags/#enable-vulkan)',
+}
+
+/**
+ * A device for makeContourGpu from a GPU entry point (navigator.gpu in a worker).
+ * @returns {Promise<{ device: GPUDevice|null, reason: string|null }>} reason says why device is null
+ */
 export async function acquireContourDevice(gpu) {
-  if (!gpu) return null
-  const adapter = await gpu.requestAdapter()
-  if (!adapter) return null
-  if (adapter.limits.maxStorageBuffersPerShaderStage < WANTED_STORAGE_BUFFERS) return null
-  return adapter.requestDevice({ requiredLimits: {
+  if (!gpu) return { device: null, reason: CONTOUR_DEVICE_REASON.noApi }
+  // A browser hands a page one adapter per preference, never a list. 'high-performance' asks for the discrete GPU
+  //  where the default may be an integrated one (measured, Chrome 157 Linux with Vulkan: 'low-power' gave the AMD
+  //  iGPU, 'high-performance' an RTX 3090). Which of several discrete GPUs it is, the browser decides.
+  const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' })
+  if (!adapter) return { device: null, reason: CONTOUR_DEVICE_REASON.noAdapter }
+  // A software adapter runs the shaders on the CPU the kernel would use itself.
+  if (adapter.info?.isFallbackAdapter) return { device: null, reason: CONTOUR_DEVICE_REASON.fallback }
+  const storageBuffers = adapter.limits.maxStorageBuffersPerShaderStage
+  if (storageBuffers < WANTED_STORAGE_BUFFERS) {
+    return { device: null, reason: `the WebGPU adapter allows ${storageBuffers} storage buffers per stage, the union needs ${WANTED_STORAGE_BUFFERS}` }
+  }
+  const device = await adapter.requestDevice({ requiredLimits: {
     maxStorageBufferBindingSize: Math.min(adapter.limits.maxStorageBufferBindingSize, WANTED_BINDING_BYTES),
     maxBufferSize: Math.min(adapter.limits.maxBufferSize, WANTED_BINDING_BYTES),
     maxStorageBuffersPerShaderStage: WANTED_STORAGE_BUFFERS,
   } })
+  return { device, reason: null }
 }
 
 /**
